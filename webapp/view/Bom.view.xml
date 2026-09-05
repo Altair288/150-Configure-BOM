@@ -1,0 +1,262 @@
+<mvc:View
+  controllerName="com.company.superbom.controller.Bom"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  xmlns:core="sap.ui.core"
+  xmlns:u="sap.ui.unified"
+  xmlns:t="sap.ui.table"
+  xmlns:f="sap.ui.layout.form"
+  xmlns:l="sap.ui.layout"
+  displayBlock="true"
+  height="100%">
+  <Page id="bomPage" showHeader="false" enableScrolling="false" class="bomPage">
+    <content>
+      <VBox id="bomWorkbench" height="100%" fitContainer="true" class="bomWorkbench">
+        <Toolbar class="bomObjectToolbar">
+          <Button
+            type="Transparent"
+            icon="sap-icon://navigation-left-arrow"
+            tooltip="{i18n>back}"
+            press=".onNavBack" />
+          <Text text="{i18n>breadcrumbProducts}" class="bomBreadcrumb" />
+          <Text text="›" class="bomBreadcrumbSeparator" />
+          <Text text="{i18n>breadcrumbDesign}" class="bomBreadcrumb" />
+          <ToolbarSeparator />
+          <core:Icon src="sap-icon://product" class="bomObjectIcon" />
+          <Title text="{bom>/name}" level="H3" class="bomObjectTitle" />
+          <Text text="{bom>/revision}" class="bomObjectRevision" />
+          <Text text="({bom>/viewName})" class="bomObjectRevision" />
+          <ObjectStatus text="{i18n>released}" state="Success" icon="sap-icon://status-positive" />
+          <ToolbarSpacer />
+          <Button
+            type="Transparent"
+            icon="sap-icon://favorite"
+            tooltip="{i18n>addFavorite}"
+            press=".onToggleFavorite" />
+          <Button
+            type="Transparent"
+            icon="sap-icon://action-settings"
+            tooltip="{i18n>settings}"
+            press=".onSettings" />
+        </Toolbar>
+
+        <IconTabBar
+          id="bomTabs"
+          selectedKey="structure"
+          expandable="false"
+          applyContentPadding="false"
+          class="bomTopTabs">
+          <items>
+            <IconTabFilter key="details" text="{i18n>tabDetails}" />
+            <IconTabFilter key="structure" text="{i18n>tabStructure}" />
+            <IconTabFilter key="related" text="{i18n>tabRelated}" />
+            <IconTabFilter key="changes" text="{i18n>tabChanges}" />
+            <IconTabFilter key="history" text="{i18n>tabHistory}" />
+            <IconTabFilter key="visualization" text="{i18n>tabVisualization}" />
+            <IconTabFilter key="effectivity" text="{i18n>tabEffectivity}" />
+            <IconTabFilter key="variant" text="{i18n>tabVariant}" />
+          </items>
+        </IconTabBar>
+
+        <Toolbar class="bomCommandToolbar">
+          <u:FileUploader
+            id="modelUploader"
+            name="model-file"
+            buttonOnly="true"
+            buttonText="{i18n>loadModel}"
+            sameFilenameAllowed="true"
+            fileType="step,stp,iges,igs,stl,brep"
+            change=".onModelSelected" />
+          <ToolbarSeparator />
+          <Button text="{i18n>insertExisting}" icon="sap-icon://add" type="Transparent" />
+          <Button text="{i18n>insertNew}" icon="sap-icon://create" type="Transparent" />
+          <ToolbarSeparator />
+          <Button text="{i18n>checkOut}" icon="sap-icon://locked" type="Transparent" />
+          <Button text="{i18n>revise}" icon="sap-icon://copy" type="Transparent" />
+          <ToolbarSeparator />
+          <Button text="{i18n>clipboard}" icon="sap-icon://paste" type="Transparent" />
+          <ToolbarSeparator />
+          <Button text="{i18n>expandAll}" icon="sap-icon://expand-group" type="Transparent" press=".onExpandAll" />
+          <Button text="{i18n>collapseAll}" icon="sap-icon://collapse-group" type="Transparent" press=".onCollapseAll" />
+          <ToolbarSeparator />
+          <Button text="{i18n>openViewer}" icon="sap-icon://dimension" type="Emphasized" press=".onOpenViewer" />
+        </Toolbar>
+
+        <Toolbar class="bomFilterToolbar">
+          <Label text="{i18n>findInStructure}" labelFor="bomFilter" />
+          <SearchField
+            id="bomFilter"
+            width="15rem"
+            value="{bom>/filterText}"
+            placeholder="{i18n>searchBom}"
+            liveChange=".onBomFilter" />
+          <ToolbarSeparator />
+          <Button text="{i18n>all}" type="Transparent" />
+          <Button text="{i18n>advanced}" type="Transparent" icon="sap-icon://slim-arrow-down" />
+          <ToolbarSpacer />
+          <Text text="{i18n>viewLabel}" class="bomFilterLabel" />
+          <Button text="{bom>/viewName}" type="Transparent" icon="sap-icon://slim-arrow-down" />
+          <ToolbarSeparator />
+          <ObjectStatus text="{bom>/loadedCount}" state="Success" icon="sap-icon://accept" />
+          <Text text="{i18n>objectsLoaded}" class="bomFilterLabel" />
+        </Toolbar>
+
+        <l:Splitter id="bomMainSplitter" height="100%" class="bomMainSplitter">
+          <l:contentAreas>
+            <VBox height="100%" class="bomStructurePane">
+              <layoutData>
+                <l:SplitterLayoutData size="48%" />
+              </layoutData>
+              <Toolbar class="bomPaneToolbar">
+                <core:Icon src="sap-icon://tree" class="bomPaneIcon" />
+                <Title text="{i18n>bomTreeTitle}" level="H4" />
+                <ToolbarSpacer />
+                <Text text="{bom>/name}" class="bomPaneContext" />
+              </Toolbar>
+              <t:TreeTable
+                id="bomTable"
+                rows="{bom>/visibleNodes}"
+                arrayNames="children"
+                selectionMode="Single"
+                selectionBehavior="Row"
+                visibleRowCountMode="Auto"
+                minAutoRowCount="12"
+                enableSelectAll="false"
+                rowSelectionChange=".onSelectionChange"
+                class="bomTreeTable">
+                <t:columns>
+                  <t:Column width="18rem" sortProperty="number">
+                    <Label text="{i18n>identity}" />
+                    <t:template>
+                      <HBox alignItems="Center" class="bomIdentityCell">
+                        <core:Icon src="sap-icon://product" class="bomTreeIcon" />
+                        <Text text="{bom>number}" wrapping="false" class="bomIdentityNumber" />
+                        <Text text="{bom>name}" wrapping="false" class="bomIdentityName" />
+                      </HBox>
+                    </t:template>
+                  </t:Column>
+                  <t:Column width="6rem" hAlign="Center">
+                    <Label text="{i18n>changeStatus}" />
+                    <t:template>
+                      <ObjectStatus text="{bom>changeStatus}" state="Warning" />
+                    </t:template>
+                  </t:Column>
+                  <t:Column width="5rem" hAlign="End">
+                    <Label text="{i18n>quantity}" />
+                    <t:template>
+                      <HBox justifyContent="End" class="bomQuantityCell">
+                        <Text text="{bom>quantity}" />
+                        <Text text="{bom>unit}" class="bomUnitText" />
+                      </HBox>
+                    </t:template>
+                  </t:Column>
+                  <t:Column width="7rem">
+                    <Label text="{i18n>state}" />
+                    <t:template>
+                      <ObjectStatus text="{bom>state}" state="Success" />
+                    </t:template>
+                  </t:Column>
+                </t:columns>
+              </t:TreeTable>
+            </VBox>
+
+            <VBox height="100%" class="bomVisualizationPane">
+              <layoutData>
+                <l:SplitterLayoutData size="52%" />
+              </layoutData>
+              <Toolbar class="bomPaneToolbar bomVisualizationToolbar">
+                <core:Icon src="sap-icon://dimension" class="bomPaneIcon" />
+                <Title text="{i18n>visualization}" level="H4" />
+                <ToolbarSpacer />
+                <ObjectStatus text="{i18n>visualizationReady}" state="Success" icon="sap-icon://accept" />
+              </Toolbar>
+              <IconTabBar
+                selectedKey="visualization"
+                expandable="false"
+                applyContentPadding="false"
+                class="bomSecondaryTabs">
+                <items>
+                  <IconTabFilter key="attributes" text="{i18n>attributes}" />
+                  <IconTabFilter key="classification" text="{i18n>classification}" />
+                  <IconTabFilter key="visualization" text="{i18n>visualization}" />
+                  <IconTabFilter key="traces" text="{i18n>traces}" />
+                  <IconTabFilter key="locators" text="{i18n>locators}" />
+                  <IconTabFilter key="uses" text="{i18n>uses}" />
+                </items>
+              </IconTabBar>
+              <Toolbar class="bomViewportToolbar">
+                <Button type="Transparent" icon="sap-icon://zoom-in" tooltip="{i18n>zoomIn}" press=".onZoomIn" />
+                <Button type="Transparent" icon="sap-icon://zoom-out" tooltip="{i18n>zoomOut}" press=".onZoomOut" />
+                <Button type="Transparent" icon="sap-icon://full-screen" tooltip="{i18n>fullScreen}" press=".onFullScreen" />
+                <ToolbarSeparator />
+                <Button type="Transparent" icon="sap-icon://refresh" tooltip="{i18n>resetView}" press=".onFit" />
+                <Button text="{i18n>explode}" type="Transparent" icon="sap-icon://flight" press=".onToggleExploded" />
+                <Button text="{i18n>section}" type="Transparent" icon="sap-icon://scissors" press=".onToggleSection" />
+                <Button text="{i18n>measure}" type="Transparent" icon="sap-icon://measure" press=".onMeasure" />
+                <ToolbarSpacer />
+                <Label text="{i18n>selectionMode}" class="bomFilterLabel" />
+                <SegmentedButton
+                  id="selectionMode"
+                  selectedKey="part"
+                  selectionChange=".onSelectionModeChange">
+                  <items>
+                    <SegmentedButtonItem key="part" text="{i18n>part}" />
+                    <SegmentedButtonItem key="face" text="{i18n>face}" />
+                    <SegmentedButtonItem key="edge" text="{i18n>edge}" />
+                    <SegmentedButtonItem key="vertex" text="{i18n>vertex}" />
+                  </items>
+                </SegmentedButton>
+                <Text text="{i18n>demoVisualization}" class="bomViewportMode" />
+              </Toolbar>
+              <VBox width="100%" height="100%" fitContainer="true" class="bomViewportStage">
+                <VBox id="bomChiliHost" width="100%" height="100%" fitContainer="true" class="bomChiliHost">
+                  <HBox class="bomAxisLegend">
+                    <Text text="X" class="bomAxisX" />
+                    <Text text="Y" class="bomAxisY" />
+                    <Text text="Z" class="bomAxisZ" />
+                  </HBox>
+                  <ObjectStatus text="{i18n>previewSource}" icon="sap-icon://product" class="bomPreviewCaption" />
+                </VBox>
+              </VBox>
+              <Toolbar class="bomPropertyToolbar">
+                <Title text="{i18n>attributes}" level="H5" />
+                <ToolbarSpacer />
+                <ObjectStatus text="{bom>/selectedNode/state}" state="Success" />
+                <Button type="Transparent" icon="sap-icon://hide" tooltip="{i18n>toggleVisibility}" press=".onToggleSelectedVisibility" />
+                <Text text="{bom>/measurement}" class="bomMeasurementText" />
+              </Toolbar>
+              <f:SimpleForm
+                editable="false"
+                layout="ResponsiveGridLayout"
+                columnsL="2"
+                columnsM="2"
+                columnsXL="2"
+                class="bomPropertyForm">
+                <f:content>
+                  <Label text="{i18n>partNumber}" />
+                  <Text text="{bom>/selectedNode/number}" />
+                  <Label text="{i18n>partName}" />
+                  <Text text="{bom>/selectedNode/name}" />
+                  <Label text="{i18n>materialId}" />
+                  <Text text="{bom>/selectedNode/materialId}" />
+                  <Label text="{i18n>quantity}" />
+                  <Text text="{bom>/selectedNode/quantity}" />
+                </f:content>
+              </f:SimpleForm>
+            </VBox>
+          </l:contentAreas>
+        </l:Splitter>
+
+        <Toolbar class="bomStatusToolbar">
+          <ObjectStatus text="{i18n>loadedStatus}" icon="sap-icon://status-positive" state="Success" />
+          <ToolbarSpacer />
+          <Text text="{i18n>lastUpdated}" />
+          <Text text="{bom>/lastUpdated}" />
+          <ToolbarSeparator />
+          <Text text="{i18n>bomIdentifier}" />
+          <Text text="{bom>/id}" />
+        </Toolbar>
+      </VBox>
+    </content>
+  </Page>
+</mvc:View>

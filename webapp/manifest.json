@@ -1,0 +1,127 @@
+{
+  "_version": "1.65.0",
+  "sap.app": {
+    "id": "com.company.superbom",
+    "type": "application",
+    "title": "{{appTitle}}",
+    "description": "{{appDescription}}",
+    "applicationVersion": {
+      "version": "0.1.0"
+    },
+    "i18n": "i18n/i18n.properties"
+  },
+  "sap.ui": {
+    "technology": "UI5",
+    "deviceTypes": {
+      "desktop": true,
+      "tablet": true,
+      "phone": false
+    }
+  },
+  "sap.ui5": {
+    "rootView": {
+      "viewName": "com.company.superbom.view.App",
+      "type": "XML",
+      "async": true,
+      "id": "rootView"
+    },
+    "dependencies": {
+      "minUI5Version": "1.152.0",
+      "libs": {
+        "sap.f": {},
+        "sap.m": {},
+        "sap.tnt": {},
+        "sap.ui.core": {},
+        "sap.ui.layout": {},
+        "sap.ui.table": {},
+        "sap.ui.unified": {}
+      }
+    },
+    "models": {
+      "i18n": {
+        "type": "sap.ui.model.resource.ResourceModel",
+        "settings": {
+          "bundleName": "com.company.superbom.i18n.i18n",
+          "async": true
+        }
+      }
+    },
+    "contentDensities": {
+      "compact": true,
+      "cozy": true
+    },
+    "routing": {
+      "config": {
+        "routerClass": "sap.m.routing.Router",
+        "viewType": "XML",
+        "viewPath": "com.company.superbom.view",
+        "controlId": "pages",
+        "controlAggregation": "pages",
+        "async": true
+      },
+      "routes": [
+        {
+          "pattern": "",
+          "name": "bom",
+          "target": "bom"
+        },
+        {
+          "pattern": "bom/{bomId}",
+          "name": "bomDetail",
+          "target": "bom"
+        },
+        {
+          "pattern": "home",
+          "name": "home",
+          "target": "home"
+        },
+        {
+          "pattern": "configurator/{configId}",
+          "name": "configurator",
+          "target": "configurator"
+        },
+        {
+          "pattern": "product/{productId}",
+          "name": "product",
+          "target": "product"
+        },
+        {
+          "pattern": "rules",
+          "name": "rules",
+          "target": "rules"
+        },
+        {
+          "pattern": "viewer/{modelId}",
+          "name": "viewer",
+          "target": "viewer"
+        }
+      ],
+      "targets": {
+        "home": {
+          "viewName": "Home",
+          "viewId": "home"
+        },
+        "bom": {
+          "viewName": "Bom",
+          "viewId": "bom"
+        },
+        "configurator": {
+          "viewName": "Configurator",
+          "viewId": "configurator"
+        },
+        "product": {
+          "viewName": "Product",
+          "viewId": "product"
+        },
+        "rules": {
+          "viewName": "Rule",
+          "viewId": "rules"
+        },
+        "viewer": {
+          "viewName": "Viewer",
+          "viewId": "viewer"
+        }
+      }
+    }
+  }
+}

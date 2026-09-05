@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<edmx:Edmx Version="1.0" xmlns:edmx="http://schemas.microsoft.com/ado/2007/06/edmx">
+  <edmx:DataServices>
+    <Schema Namespace="com.company.superbom" xmlns="http://schemas.microsoft.com/ado/2008/09/edm" />
+  </edmx:DataServices>
+</edmx:Edmx>

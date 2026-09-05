@@ -1,0 +1,18 @@
+<mvc:View
+  controllerName="com.company.superbom.controller.Viewer"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  displayBlock="true"
+  height="100%">
+  <Page title="{i18n>viewerTitle}" enableScrolling="false">
+    <content>
+      <VBox fitContainer="true" width="100%" height="100%" class="chiliViewerPage">
+        <MessageStrip
+          text="{i18n>viewerInfo}"
+          type="Information"
+          showIcon="true" />
+        <VBox id="viewerHost" width="100%" height="100%" class="chiliViewerHost" />
+      </VBox>
+    </content>
+  </Page>
+</mvc:View>

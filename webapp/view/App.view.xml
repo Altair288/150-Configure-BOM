@@ -1,0 +1,39 @@
+<mvc:View
+  controllerName="com.company.superbom.controller.App"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  xmlns:tnt="sap.tnt"
+  displayBlock="true"
+  height="100%">
+  <tnt:ToolPage id="toolPage" sideExpanded="{ui>/sideExpanded}">
+    <tnt:header>
+      <tnt:ToolHeader>
+        <Button
+          type="Transparent"
+          icon="sap-icon://menu2"
+          tooltip="{i18n>toggleNavigation}"
+          press=".onToggleSideNavigation" />
+        <Title text="{i18n>appTitle}" level="H2" />
+        <ToolbarSpacer />
+        <ObjectStatus text="{i18n>environmentLabel}" state="Information" />
+      </tnt:ToolHeader>
+    </tnt:header>
+    <tnt:sideContent>
+      <tnt:SideNavigation
+        selectedKey="{ui>/selectedNavigationKey}"
+        itemSelect=".onNavigationSelect">
+        <tnt:NavigationList>
+          <tnt:NavigationListItem key="home" text="{i18n>navHome}" icon="sap-icon://home" />
+          <tnt:NavigationListItem key="products" text="{i18n>navProducts}" icon="sap-icon://product" />
+          <tnt:NavigationListItem key="bom" text="{i18n>navBom}" icon="sap-icon://tree" />
+          <tnt:NavigationListItem key="configurator" text="{i18n>navConfigurator}" icon="sap-icon://action-settings" />
+          <tnt:NavigationListItem key="rules" text="{i18n>navRules}" icon="sap-icon://decision" />
+          <tnt:NavigationListItem key="viewer" text="{i18n>navViewer}" icon="sap-icon://dimension" />
+        </tnt:NavigationList>
+      </tnt:SideNavigation>
+    </tnt:sideContent>
+    <tnt:mainContents>
+      <NavContainer id="pages" />
+    </tnt:mainContents>
+  </tnt:ToolPage>
+</mvc:View>

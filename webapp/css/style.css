@@ -1,0 +1,402 @@
+html,
+body,
+#content,
+#container {
+  height: 100%;
+  margin: 0;
+}
+
+.bomPage .sapMPageCont {
+  overflow: hidden;
+  padding: 0;
+}
+
+.bomWorkbench {
+  min-width: 70rem;
+  background: var(--sapBackgroundColor);
+}
+
+.bomObjectToolbar {
+  min-height: 3.5rem;
+  padding: 0 1rem;
+  border-bottom: 1px solid var(--sapList_BorderColor);
+  background: var(--sapShellColor);
+}
+
+.bomObjectIcon {
+  margin: 0 0.6rem 0 0.2rem;
+  color: var(--sapContent_IconColor);
+  font-size: 1.25rem;
+}
+
+.bomObjectTitle {
+  margin-right: 0.75rem;
+  color: var(--sapShell_TextColor);
+}
+
+.bomObjectRevision,
+.bomBreadcrumb,
+.bomBreadcrumbSeparator {
+  color: var(--sapContent_LabelColor);
+}
+
+.bomBreadcrumbSeparator {
+  margin: 0 0.45rem;
+  font-size: 1.1rem;
+}
+
+.bomTopTabs {
+  min-height: 2.5rem;
+  border-bottom: 1px solid var(--sapList_BorderColor);
+  background: var(--sapShellColor);
+}
+
+.bomTopTabs .sapMITBHead {
+  margin: 0;
+  padding-left: 0.8rem;
+}
+
+.bomTopTabs .sapMITBFilter {
+  height: 2.5rem;
+  padding: 0 0.75rem;
+}
+
+.bomTopTabs .sapMITBText {
+  font-size: 0.78rem;
+}
+
+.bomCommandToolbar,
+.bomFilterToolbar,
+.bomViewportToolbar,
+.bomStatusToolbar {
+  min-height: 2.5rem;
+  border-bottom: 1px solid var(--sapList_BorderColor);
+  background: var(--sapToolbar_Background);
+}
+
+.bomCommandToolbar {
+  padding: 0 0.75rem;
+}
+
+.bomCommandToolbar .sapMBtnInner,
+.bomFilterToolbar .sapMBtnInner {
+  border-radius: 0.15rem;
+}
+
+.bomFilterToolbar {
+  padding: 0 1rem;
+  background: var(--sapGroup_ContentBackground);
+}
+
+.bomFilterToolbar .sapMLabel,
+.bomFilterLabel {
+  margin-right: 0.5rem;
+  color: var(--sapContent_LabelColor);
+  font-size: 0.75rem;
+}
+
+.bomMainSplitter {
+  min-height: 0;
+  flex: 1 1 auto;
+  background: var(--sapBackgroundColor);
+}
+
+.bomStructurePane,
+.bomVisualizationPane {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.bomStructurePane {
+  border-right: 1px solid var(--sapList_BorderColor);
+  background: var(--sapGroup_ContentBackground);
+}
+
+.bomVisualizationPane {
+  background: var(--sapBackgroundColor);
+}
+
+.bomPaneToolbar {
+  min-height: 2.65rem;
+  padding: 0 0.85rem;
+  border-bottom: 1px solid var(--sapList_BorderColor);
+  background: var(--sapGroup_ContentBackground);
+}
+
+.bomPaneIcon {
+  margin-right: 0.5rem;
+  color: var(--sapContent_IconColor);
+}
+
+.bomPaneContext,
+.bomViewportMode {
+  color: var(--sapContent_LabelColor);
+  font-size: 0.72rem;
+}
+
+.bomTreeTable {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.bomTreeTable .sapUiTableColHdrCnt {
+  background: var(--sapList_HeaderBackground);
+}
+
+.bomTreeTable .sapUiTableColCell {
+  border-right-color: var(--sapList_BorderColor);
+}
+
+.bomTreeTable .sapUiTableCell {
+  border-right-color: var(--sapList_BorderColor);
+}
+
+.bomTreeTable .sapUiTableRowSel .sapUiTableCell {
+  background: var(--sapList_SelectionBackgroundColor);
+}
+
+.bomIdentityCell {
+  min-width: 0;
+}
+
+.bomTreeIcon {
+  width: 1rem;
+  margin-right: 0.5rem;
+  color: var(--sapContent_IconColor);
+}
+
+.bomIdentityNumber {
+  flex-shrink: 0;
+  margin-right: 0.45rem;
+  color: var(--sapTextColor);
+  font-family: "72Mono", "72", sans-serif;
+  font-size: 0.75rem;
+}
+
+.bomIdentityName {
+  min-width: 0;
+  max-width: 13rem;
+  overflow: hidden;
+  color: var(--sapContent_LabelColor);
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bomQuantityCell {
+  gap: 0.3rem;
+}
+
+.bomUnitText {
+  color: var(--sapContent_LabelColor);
+  font-size: 0.7rem;
+}
+
+.bomVisualizationToolbar {
+  border-bottom: 0;
+}
+
+.bomSecondaryTabs {
+  min-height: 2.35rem;
+  border-bottom: 1px solid var(--sapList_BorderColor);
+  background: var(--sapGroup_ContentBackground);
+}
+
+.bomSecondaryTabs .sapMITBHead {
+  margin: 0;
+  padding-left: 0.55rem;
+}
+
+.bomSecondaryTabs .sapMITBFilter {
+  height: 2.3rem;
+  padding: 0 0.55rem;
+}
+
+.bomSecondaryTabs .sapMITBText {
+  font-size: 0.72rem;
+}
+
+.bomViewportToolbar {
+  min-height: 2.35rem;
+  padding: 0 0.5rem;
+  border-bottom: 1px solid var(--sapList_BorderColor);
+}
+
+.bomViewportStage {
+  min-height: 18rem;
+  flex: 1 1 auto;
+  overflow: hidden;
+  background: #dfe5e2;
+}
+
+.bomChiliHost,
+.chiliViewerHost {
+  position: relative;
+  min-height: 18rem;
+  flex: 1 1 auto;
+  overflow: hidden;
+  background: #dfe5e2;
+}
+
+.bomChiliHost > canvas,
+.chiliViewerHost > canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.bomChiliHost > div:not(.sapMFlexBox),
+.chiliViewerHost > div:not(.sapMFlexBox) {
+  pointer-events: none;
+}
+
+.bomChiliHost .sapMObjStatus,
+.bomChiliHost .sapMFlexBox {
+  z-index: 3;
+}
+
+.chiliViewerPage {
+  min-height: 0;
+}
+
+.chiliViewerHost {
+  min-height: 32rem;
+  background: #1b252c;
+}
+
+.bomCommandToolbar .sapUiFup {
+  margin-right: 0.25rem;
+}
+
+.bomMeasurementText {
+  margin-left: 0.75rem;
+  color: var(--sapContent_LabelColor);
+  font-family: "72Mono", "72", sans-serif;
+  font-size: 0.7rem;
+}
+
+.bomViewportCanvas {
+  position: relative;
+  overflow: hidden;
+  background-color: #e8edeb;
+  background-image:
+    linear-gradient(rgba(93, 111, 106, 0.12) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(93, 111, 106, 0.12) 1px, transparent 1px);
+  background-position: center center;
+  background-size: 2.25rem 2.25rem;
+}
+
+.bomViewportCanvas::after {
+  position: absolute;
+  inset: 18% 12% 13%;
+  border: 1px solid rgba(64, 82, 77, 0.14);
+  content: "";
+  pointer-events: none;
+}
+
+.bomVehicleImage {
+  z-index: 1;
+  max-height: 68%;
+  object-fit: contain;
+  filter: drop-shadow(0 1rem 1rem rgba(30, 42, 39, 0.27));
+}
+
+.bomAxisLegend {
+  position: absolute;
+  bottom: 0.8rem;
+  left: 1rem;
+  z-index: 2;
+  gap: 0.75rem;
+  font-family: "72Mono", "72", sans-serif;
+  font-size: 0.7rem;
+}
+
+.bomAxisX {
+  color: #b52e35;
+}
+
+.bomAxisY {
+  color: #287b4c;
+}
+
+.bomAxisZ {
+  color: #3e65a2;
+}
+
+.bomPreviewCaption {
+  position: absolute;
+  right: 1rem;
+  bottom: 0.8rem;
+  z-index: 2;
+  font-size: 0.7rem;
+}
+
+.bomPropertyToolbar {
+  min-height: 2.3rem;
+  padding: 0 0.85rem;
+  border-top: 1px solid var(--sapList_BorderColor);
+  border-bottom: 1px solid var(--sapList_BorderColor);
+  background: var(--sapGroup_ContentBackground);
+}
+
+.bomPropertyForm {
+  min-height: 5.5rem;
+  padding: 0.3rem 0.75rem;
+  background: var(--sapGroup_ContentBackground);
+}
+
+.bomPropertyForm .sapUiFormResGridCont {
+  padding-bottom: 0;
+}
+
+.bomStatusToolbar {
+  min-height: 2rem;
+  padding: 0 1rem;
+  border-top: 1px solid var(--sapList_BorderColor);
+  border-bottom: 0;
+  background: var(--sapShellColor);
+  color: var(--sapContent_LabelColor);
+  font-size: 0.72rem;
+}
+
+@media (max-width: 1100px) {
+  .bomWorkbench {
+    min-width: 62rem;
+  }
+
+  .bomObjectRevision,
+  .bomPaneContext,
+  .bomViewportMode {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .bomWorkbench {
+    min-width: 52rem;
+  }
+
+  .bomCommandToolbar .sapMBtnText,
+  .bomTopTabs .sapMITBText {
+    display: none;
+  }
+}
+
+.superBomWorkspaceColumn,
+.superBomPropertiesColumn {
+  min-width: 0;
+}
+
+.superBomPropertiesColumn {
+  overflow: auto;
+  padding: 1rem;
+  background: var(--sapBackgroundColor);
+}
+
+.superBomViewerHost {
+  min-height: 28rem;
+  background: var(--sapGroup_ContentBackground);
+}

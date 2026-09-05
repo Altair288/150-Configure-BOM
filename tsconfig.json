@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": ["ESNext", "DOM"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "experimentalDecorators": true,
+    "useDefineForClassFields": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["@sapui5/types"],
+    "paths": {
+      "@chili3d/core": ["../chili3d/packages/core/src/index.ts"],
+      "@chili3d/element": ["../chili3d/packages/element/src/index.ts"],
+      "@chili3d/app-document": ["../chili3d/packages/app/src/document.ts"],
+      "@chili3d/three-factory": ["../chili3d/packages/three/src/threeVisualFactory.ts"],
+      "@chili3d/three-view": ["../chili3d/packages/three/src/threeView.ts"],
+      "@chili3d/three-visual": ["../chili3d/packages/three/src/threeVisual.ts"],
+      "@chili3d/wasm": ["../chili3d/packages/wasm/src/index.ts"],
+      "three": ["./node_modules/@types/three/index.d.ts"],
+      "three/*": ["./node_modules/@types/three/*"]
+    }
+  },
+  "include": ["webapp/**/*.ts", "viewer/**/*.ts", "viewer/**/*.d.ts"],
+  "exclude": ["node_modules", "dist"]
+}

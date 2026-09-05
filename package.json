@@ -1,0 +1,32 @@
+{
+  "name": "super-bom",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SAPUI5 Super BOM Configurator foundation",
+  "scripts": {
+    "start": "npm run build:viewer && ui5 serve --open index.html",
+    "build": "npm run build:viewer && ui5 build --clean-dest",
+    "build:viewer": "rspack build --config viewer.rspack.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run typecheck && npm run lint"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@sapui5/types": "1.152.0",
+    "@rspack/cli": "^2.0.3",
+    "@rspack/core": "^2.0.3",
+    "@ui5/cli": "^4.0.64",
+    "eslint": "^9.39.5",
+    "prettier": "^3.6.2",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.69.0",
+    "ui5-tooling-transpile": "^3.13.1",
+    "@types/three": "0.184.1"
+  },
+  "dependencies": {
+    "three": "0.184.0"
+  }
+}

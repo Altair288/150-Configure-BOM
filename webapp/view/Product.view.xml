@@ -1,0 +1,34 @@
+<mvc:View
+  controllerName="com.company.superbom.controller.Product"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m">
+  <Page title="{i18n>productsTitle}">
+    <content>
+      <Table items="{products>/items}" growing="true" growingThreshold="20" class="sapUiContentPadding">
+        <headerToolbar>
+          <Toolbar>
+            <Title text="{i18n>productCatalog}" level="H3" />
+            <ToolbarSpacer />
+            <Button type="Transparent" icon="sap-icon://add" tooltip="{i18n>createProduct}" />
+          </Toolbar>
+        </headerToolbar>
+        <columns>
+          <Column><Text text="{i18n>partNumber}" /></Column>
+          <Column><Text text="{i18n>partName}" /></Column>
+          <Column><Text text="{i18n>revision}" /></Column>
+          <Column><Text text="{i18n>lifecycle}" /></Column>
+        </columns>
+        <items>
+          <ColumnListItem type="Navigation" press=".onProductPress">
+            <cells>
+              <Text text="{products>number}" />
+              <Text text="{products>name}" />
+              <Text text="{products>revision}" />
+              <ObjectStatus text="{products>status}" />
+            </cells>
+          </ColumnListItem>
+        </items>
+      </Table>
+    </content>
+  </Page>
+</mvc:View>

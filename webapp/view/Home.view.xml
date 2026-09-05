@@ -1,0 +1,29 @@
+<mvc:View
+  controllerName="com.company.superbom.controller.Home"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m">
+  <Page title="{i18n>homeTitle}" showNavButton="false">
+    <content>
+      <VBox class="sapUiContentPadding" width="100%">
+        <Title text="{i18n>welcomeTitle}" level="H1" />
+        <Text text="{i18n>welcomeText}" class="sapUiSmallMarginTop" />
+        <Panel headerText="{i18n>bootstrapPanelTitle}" class="sapUiMediumMarginTop">
+          <content>
+            <List>
+              <StandardListItem title="{i18n>bootstrapItemComponent}" icon="sap-icon://checklist" />
+              <StandardListItem title="{i18n>bootstrapItemManifest}" icon="sap-icon://checklist" />
+              <StandardListItem title="{i18n>bootstrapItemRouter}" icon="sap-icon://checklist" />
+              <StandardListItem title="{i18n>bootstrapItemBinding}" icon="sap-icon://checklist" />
+            </List>
+          </content>
+        </Panel>
+        <Button
+          text="{i18n>openBom}"
+          type="Emphasized"
+          icon="sap-icon://tree"
+          press=".onOpenBom"
+          class="sapUiMediumMarginTop" />
+      </VBox>
+    </content>
+  </Page>
+</mvc:View>

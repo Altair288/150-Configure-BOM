@@ -1,0 +1,7 @@
+<core:FragmentDefinition xmlns:core="sap.ui.core" xmlns="sap.m">
+  <Toolbar>
+    <SearchField width="18rem" placeholder="{i18n>searchBom}" liveChange=".onBomFilter" />
+    <ToolbarSpacer />
+    <Button type="Transparent" icon="sap-icon://refresh" tooltip="{i18n>refresh}" press=".onRefreshBom" />
+  </Toolbar>
+</core:FragmentDefinition>

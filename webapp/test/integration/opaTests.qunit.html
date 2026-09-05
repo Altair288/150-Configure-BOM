@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Super BOM Integration Tests</title>
+    <script
+      id="sap-ui-bootstrap"
+      src="../../resources/sap-ui-core.js"
+      data-sap-ui-theme="sap_horizon"
+      data-sap-ui-async="true"
+      data-sap-ui-resource-roots='{"com.company.superbom":"../../"}'
+    ></script>
+    <script src="../../resources/sap/ui/thirdparty/qunit-2.js"></script>
+    <script>
+      QUnit.config.autostart = false;
+      sap.ui.getCore().attachInit(function () {
+        sap.ui.require(["com/company/superbom/test/integration/opaTests.qunit"], function () {
+          QUnit.start();
+        });
+      });
+    </script>
+  </head>
+  <body>
+    <div id="qunit"></div>
+    <div id="qunit-fixture"></div>
+  </body>
+</html>
