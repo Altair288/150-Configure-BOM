@@ -4,60 +4,80 @@
   xmlns="sap.m"
   xmlns:core="sap.ui.core"
   xmlns:f="sap.ui.layout.form">
-  <Page title="{i18n>configuratorTitle}">
+  <Page title="{i18n>configuratorTitle}" enableScrolling="true">
     <content>
       <VBox class="sapUiContentPadding" width="100%">
         <MessageStrip
-          text="{i18n>configuratorInfo}"
+          text="{config>/status}"
           type="Information"
           showIcon="true" />
         <f:SimpleForm
           editable="true"
           layout="ResponsiveGridLayout"
-          title="{i18n>configurationInputs}"
+          title="{i18n>bikeConfigurationInputs}"
           class="sapUiMediumMarginTop">
           <f:content>
-            <Label text="{i18n>engine}" />
-            <Select selectedKey="{config>/engine}" change=".onConfigurationChange">
+            <Label text="{i18n>scenario}" />
+            <Select selectedKey="{config>/scenario}" change=".onConfigurationChange">
               <items>
-                <core:Item key="2.0T" text="2.0T" />
-                <core:Item key="1.5T" text="1.5T" />
+                <core:Item key="CITY" text="{i18n>scenarioCity}" />
+                <core:Item key="SPORT" text="{i18n>scenarioSport}" />
+                <core:Item key="GRAVEL" text="{i18n>scenarioGravel}" />
               </items>
             </Select>
-            <Label text="{i18n>gearbox}" />
-            <Select selectedKey="{config>/gearbox}" enabled="false">
+            <Label text="{i18n>wheelOption}" />
+            <Select selectedKey="{config>/wheelOption}" change=".onConfigurationChange">
               <items>
-                <core:Item key="8AT" text="8AT" />
-                <core:Item key="7DCT" text="7DCT" />
+                <core:Item key="ROAD_28" text="700×28C 公路胎" />
+                <core:Item key="CITY_35" text="700×35C 城市胎" />
+                <core:Item key="GRAVEL_45" text="700×45C Gravel 胎" />
               </items>
             </Select>
-            <Label text="{i18n>seatMaterial}" />
-            <Select selectedKey="{config>/seatMaterial}" change=".onConfigurationChange">
+            <Label text="{i18n>handleStyle}" />
+            <Select selectedKey="{config>/handleStyle}" change=".onConfigurationChange">
               <items>
-                <core:Item key="Leather" text="Leather" />
-                <core:Item key="Fabric" text="Fabric" />
+                <core:Item key="FLAT" text="城市平把" />
+                <core:Item key="DROP" text="运动弯把" />
+                <core:Item key="COMFORT" text="舒适后掠把" />
               </items>
             </Select>
+            <Label text="{i18n>saddleStyle}" />
+            <Select selectedKey="{config>/saddleStyle}" change=".onConfigurationChange">
+              <items>
+                <core:Item key="SPORT" text="运动窄座" />
+                <core:Item key="COMFORT" text="舒适宽座" />
+                <core:Item key="GEL" text="凝胶减震座" />
+              </items>
+            </Select>
+            <Label text="{i18n>fenderStyle}" />
+            <Select selectedKey="{config>/fenderStyle}" change=".onConfigurationChange">
+              <items>
+                <core:Item key="NONE" text="不配置挡泥板" />
+                <core:Item key="SHORT" text="运动短挡泥板" />
+                <core:Item key="FULL" text="城市全包挡泥板" />
+                <core:Item key="GRAVEL" text="Gravel 宽挡泥板" />
+              </items>
+            </Select>
+            <Label text="{i18n>rearRack}" />
+            <CheckBox
+              selected="{config>/rearRack}"
+              select=".onConfigurationChange"
+              text="{i18n>enableOption}" />
+            <Label text="{i18n>lights}" />
+            <CheckBox
+              selected="{config>/lights}"
+              select=".onConfigurationChange"
+              text="{i18n>enableOption}" />
           </f:content>
         </f:SimpleForm>
-        <Panel headerText="{i18n>enabledOptions}" class="sapUiMediumMarginTop">
-          <content>
-            <List items="{config>/options}">
-              <StandardListItem title="{config>text}">
-                <customData>
-                  <core:CustomData key="optionKey" value="{config>key}" />
-                </customData>
-              </StandardListItem>
-            </List>
-          </content>
-        </Panel>
-        <Panel headerText="{i18n>finalBom}" class="sapUiMediumMarginTop">
-          <content>
-            <List items="{config>/result}">
-              <StandardListItem title="{config>}" icon="sap-icon://product" />
-            </List>
-          </content>
-        </Panel>
+        <Toolbar class="sapUiMediumMarginTop">
+          <ToolbarSpacer />
+          <Button
+            type="Emphasized"
+            icon="sap-icon://create"
+            text="{i18n>generateConfiguredBom}"
+            press=".onGenerateBom" />
+        </Toolbar>
       </VBox>
     </content>
   </Page>

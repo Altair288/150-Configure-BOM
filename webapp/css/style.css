@@ -3,7 +3,23 @@ body,
 #content,
 #container {
   height: 100%;
+  min-height: 0;
   margin: 0;
+  overflow: hidden;
+}
+
+#container,
+.sapUiComponentContainer,
+.sapTntToolPage,
+.sapTntToolPageMain,
+.sapTntToolPageMainContent,
+.sapMNavContainer,
+.sapMNavContainerPages,
+.sapMPage,
+.sapMPageCont,
+.sapMPageScroll {
+  height: 100% !important;
+  min-height: 0 !important;
 }
 
 .bomPage .sapMPageCont {
@@ -12,7 +28,10 @@ body,
 }
 
 .bomWorkbench {
+  display: flex;
+  flex-direction: column;
   min-width: 70rem;
+  min-height: 0;
   background: var(--sapBackgroundColor);
 }
 
@@ -96,16 +115,44 @@ body,
 }
 
 .bomMainSplitter {
+  display: flex;
   min-height: 0;
   flex: 1 1 auto;
   background: var(--sapBackgroundColor);
 }
 
+.bomWorkbench > .sapMFlexItem:has(.bomMainSplitter) {
+  display: flex;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+}
+
+.bomWorkbench > .sapMFlexItem:has(.bomMainSplitter) > .bomMainSplitter {
+  height: auto !important;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
 .bomStructurePane,
 .bomVisualizationPane {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+.bomStructurePane > .sapMFlexItem:has(.bomTreeTable) {
+  display: flex;
+  min-height: 0 !important;
+  flex: 1 1 auto !important;
+}
+
+.bomStructurePane .bomTreeTable,
+.bomStructurePane .sapUiTable {
+  height: 100% !important;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
 .bomStructurePane {
@@ -114,6 +161,8 @@ body,
 }
 
 .bomVisualizationPane {
+  display: flex;
+  flex-direction: column;
   background: var(--sapBackgroundColor);
 }
 
@@ -224,6 +273,7 @@ body,
 }
 
 .bomViewportStage {
+  display: flex;
   min-height: 18rem;
   flex: 1 1 auto;
   overflow: hidden;
@@ -232,9 +282,10 @@ body,
 
 .bomChiliHost,
 .chiliViewerHost {
+  display: flex;
+  flex: 1 1 auto;
   position: relative;
   min-height: 18rem;
-  flex: 1 1 auto;
   overflow: hidden;
   background: #dfe5e2;
 }
@@ -269,13 +320,6 @@ body,
 
 .bomCommandToolbar .sapUiFup {
   margin-right: 0.25rem;
-}
-
-.bomMeasurementText {
-  margin-left: 0.75rem;
-  color: var(--sapContent_LabelColor);
-  font-family: "72Mono", "72", sans-serif;
-  font-size: 0.7rem;
 }
 
 .bomViewportCanvas {

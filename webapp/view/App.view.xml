@@ -33,7 +33,7 @@
       </tnt:SideNavigation>
     </tnt:sideContent>
     <tnt:mainContents>
-      <NavContainer id="pages" />
+      <NavContainer id="pages" height="100%" />
     </tnt:mainContents>
   </tnt:ToolPage>
 </mvc:View>

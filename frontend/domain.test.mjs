@@ -19,7 +19,7 @@ const { initialConfiguration, materials, templates } =
 const { resolveConfiguration } = await import("./features/product-configurator/engine/resolve.ts");
 const { bomAssembler } = await import("./features/product-configurator/engine/bomAssembler.ts");
 const { store } = await import("./features/product-configurator/model/store.ts");
-const { bicycleGeometry } = await import("../viewer/bicycle-geometry.ts");
+const { bicycleGeometry } = await import("../webapp/model/bicycle.ts");
 const flatten = (nodes) => nodes.flatMap((n) => [n, ...flatten(n.children ?? [])]);
 
 test("three templates resolve and assemble only their material BOMs", () => {
@@ -79,6 +79,21 @@ test("warnings need explicit acceptance and technical requirements retain proven
   const requirement = resolveConfiguration(config).requirements.find((r) => r.feature === "LIGHT");
   assert.equal(requirement.source, "technical");
   assert.ok(bomAssembler(config));
+});
+test("component options replace the configured assembly children", () => {
+  const config = initialConfiguration("commuter");
+  config.overrides = {
+    HANDLE_STYLE: "DROP",
+    SADDLE_STYLE: "GEL",
+    FENDER_STYLE: "SHORT"
+  };
+  const nodes = flatten(bomAssembler(config, true).nodes);
+  assert.ok(nodes.some((node) => node.number === "HB-902"));
+  assert.ok(nodes.some((node) => node.number === "SD-903"));
+  assert.ok(nodes.some((node) => node.number === "AC-404"));
+  assert.ok(!nodes.some((node) => node.number === "HB-901"));
+  assert.ok(!nodes.some((node) => node.number === "SD-902"));
+  assert.ok(!nodes.some((node) => node.number === "AC-402"));
 });
 test("configuration edits invalidate generated BOM and stale candidate decisions", () => {
   store.template("commuter");

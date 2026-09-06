@@ -1,7 +1,11 @@
 import type { Router$RouteMatchedEvent } from "sap/ui/core/routing/Router";
 import JSONModel from "sap/ui/model/json/JSONModel";
 import BaseController from "./BaseController";
-import type { WorkspacePage } from "../../frontend/features/product-configurator/model/types";
+import { createBomViews } from "../model/models";
+import type {
+  ConfiguredBom,
+  WorkspacePage
+} from "../../frontend/features/product-configurator/model/types";
 
 export default class FeatureWorkspaceController extends BaseController {
   private mounted?: { destroy: () => void };
@@ -26,30 +30,35 @@ export default class FeatureWorkspaceController extends BaseController {
     this.mounted?.destroy();
     this.host = host;
     this.mounted = window.FeatureWorkspace.mount(host, {
-      onNavigate: (page) =>
+      onNavigate: (page: WorkspacePage) =>
         this.getRouter().navTo(
           page === "products" ? "home" : page === "configure" ? "configurator" : "review",
           page === "configure" ? { configId: "URBAN" } : {}
         ),
-      onOpenBom: (bom) => {
+      onOpenBom: (bom: ConfiguredBom) => {
+        const views = createBomViews(bom.nodes);
+        const currentView = views["100"];
         this.getModel<JSONModel>("bom").setData({
           id: bom.id,
           name: "URBAN / 城市探索自行车",
           revision: "A.01",
-          viewName: "100% Configured BOM",
+          viewName: currentView.name,
+          viewKey: currentView.key,
+          viewDescription: currentView.description,
           lastUpdated: `配置 R${bom.revision}`,
-          nodes: bom.nodes,
-          visibleNodes: bom.nodes,
-          selectedNode: bom.nodes[0],
-          loadedCount: bom.partCount,
+          nodes: currentView.nodes,
+          views,
+          visibleNodes: currentView.nodes,
+          selectedNode: currentView.nodes[0],
+          loadedCount: currentView.loadedCount,
           activeCount: bom.partCount,
           filterText: "",
           isBicycle: true,
           configured: true,
           selectionMode: "part",
           shadingMode: "shaded-edges",
-          exploded: false,
-          sectioned: false
+          cameraType: "perspective",
+          axesVisible: true
         });
         this.getRouter().navTo("bom");
       }

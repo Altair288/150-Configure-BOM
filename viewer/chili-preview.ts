@@ -4,7 +4,6 @@ import {
   FolderNode,
   GroupNode,
   Material,
-  Matrix4,
   Mesh,
   MeshNode,
   NodeUtils,
@@ -26,9 +25,20 @@ import { ThreeVisulFactory } from "@chili3d/three-factory";
 import { ThreeView } from "@chili3d/three-view";
 import { ThreeVisual } from "@chili3d/three-visual";
 import { initWasm, OccShapeConverter } from "@chili3d/wasm";
-import { Box3, Object3D, Plane as ThreePlane, Vector3 } from "three";
+import {
+  AxesHelper,
+  EdgesGeometry,
+  LineBasicMaterial,
+  LineSegments,
+  Mesh as ThreeMesh,
+  Object3D,
+  Vector3
+} from "three";
+import { bicycleGeometry } from "../webapp/model/bicycle";
+import { freeOrbit } from "./free-orbit";
 
 export type PreviewSelectionMode = "part" | "face" | "edge" | "vertex";
+export type PreviewShadingMode = "shaded" | "shaded-edges" | "edges";
 
 export interface PreviewNode {
   id: string;
@@ -43,24 +53,19 @@ export interface PreviewNode {
   kind: string;
   visualState: string;
   visible: boolean;
+  geometryKey?: string;
+  color?: number;
   children?: PreviewNode[];
-}
-
-export interface PreviewMeasurement {
-  width: number;
-  height: number;
-  depth: number;
-  text: string;
 }
 
 export interface ChiliPreviewOptions {
   onNodeSelected?: (nodeId: string | undefined) => void;
   onModelLoaded?: (nodes: PreviewNode[]) => void;
-  onMeasure?: (measurement: PreviewMeasurement | undefined) => void;
   onStateChanged?: (state: {
-    exploded: boolean;
-    sectioned: boolean;
     selectionMode: PreviewSelectionMode;
+    shadingMode: PreviewShadingMode;
+    cameraType: "perspective" | "orthographic";
+    axesVisible: boolean;
   }) => void;
   onError?: (message: string) => void;
 }
@@ -83,18 +88,18 @@ export default class ChiliPreviewHost {
   private readonly view: ThreeView;
   private readonly converter = new OccShapeConverter();
   private readonly nodeById = new Map<string, INode>();
-  private readonly originalTransforms = new Map<string, Matrix4>();
-  private readonly explodeOffsets = new Map<string, Vector3>();
   private readonly materials = new Map<string, Material>();
+  private readonly edgeOverlays = new Map<string, LineSegments>();
   private selectionHandler: IEventHandler;
   private wasmReady?: Promise<void>;
   private currentNodeId?: string;
   private selectionMode: PreviewSelectionMode = "part";
-  private exploded = false;
-  private sectioned = false;
-  private leafIndex = 0;
+  private shadingMode: PreviewShadingMode = "shaded-edges";
+  private axesVisible = true;
   private disposed = false;
   private suppressSelectionEvent = false;
+  private navigation:
+    { mode: "pan" | "orbit"; pointerId: number; x: number; y: number } | undefined;
 
   constructor(
     private readonly host: HTMLElement,
@@ -122,15 +127,14 @@ export default class ChiliPreviewHost {
   loadBom(nodes: PreviewNode[]): void {
     this.ensureActive();
     this.clearDocumentNodes();
-    this.leafIndex = 0;
     this.nodeById.clear();
-    this.originalTransforms.clear();
-    this.explodeOffsets.clear();
 
     const root = this.document.modelManager.rootNode;
     nodes.forEach((node) => this.addPreviewNode(node, root));
     this.document.visual.update();
     this.view.cameraController.fitContent();
+    this.syncEdgeOverlays();
+    this.setShadingMode(this.shadingMode);
     this.currentNodeId = nodes[0]?.id;
     this.emitModelLoaded(nodes);
   }
@@ -154,12 +158,11 @@ export default class ChiliPreviewHost {
 
       this.clearDocumentNodes();
       this.nodeById.clear();
-      this.originalTransforms.clear();
-      this.explodeOffsets.clear();
-      this.leafIndex = 0;
       this.document.modelManager.rootNode.add(importedNode);
       this.document.visual.update();
       this.view.cameraController.fitContent();
+      this.syncEdgeOverlays();
+      this.setShadingMode(this.shadingMode);
       this.emitModelLoaded(this.readDocumentNodes());
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -213,6 +216,39 @@ export default class ChiliPreviewHost {
     this.emitStateChanged();
   }
 
+  setShadingMode(mode: PreviewShadingMode): void {
+    this.ensureActive();
+    this.shadingMode = mode;
+    this.view.mode =
+      mode === "shaded" ? "solid" : mode === "edges" ? "wireframe" : "solidAndWireframe";
+    const showEdges = mode !== "shaded";
+    this.edgeOverlays.forEach((edge) => {
+      edge.visible = showEdges;
+    });
+    this.view.update();
+    this.emitStateChanged();
+  }
+
+  setCameraType(type: "perspective" | "orthographic"): void {
+    this.ensureActive();
+    this.view.cameraController.cameraType = type;
+    this.view.cameraController.fitContent();
+    this.view.update();
+    this.emitStateChanged();
+  }
+
+  setAxesVisible(visible: boolean): boolean {
+    this.ensureActive();
+    this.axesVisible = visible;
+    const axes = this.visual.scene.children.find(
+      (child): child is AxesHelper => child instanceof AxesHelper
+    );
+    if (axes) axes.visible = visible;
+    this.view.update();
+    this.emitStateChanged();
+    return visible;
+  }
+
   fit(): void {
     this.ensureActive();
     this.view.cameraController.fitContent();
@@ -231,62 +267,6 @@ export default class ChiliPreviewHost {
     this.view.update();
   }
 
-  toggleExploded(): boolean {
-    this.ensureActive();
-    this.exploded = !this.exploded;
-
-    this.nodeById.forEach((node, nodeId) => {
-      if (!(node instanceof VisualNode)) return;
-      const original = this.originalTransforms.get(nodeId);
-      const offset = this.explodeOffsets.get(nodeId);
-      if (!original || !offset) return;
-
-      node.transform = this.exploded
-        ? Matrix4.fromTranslation(offset.x, offset.y, offset.z).multiply(original)
-        : original.clone();
-    });
-
-    this.document.visual.update();
-    this.emitStateChanged();
-    return this.exploded;
-  }
-
-  toggleSection(): boolean {
-    this.ensureActive();
-    this.sectioned = !this.sectioned;
-    this.applySectionPlane();
-    this.emitStateChanged();
-    return this.sectioned;
-  }
-
-  measureSelected(): PreviewMeasurement | undefined {
-    this.ensureActive();
-    const selectedNodes = this.document.selection.getSelectedVisualNodes();
-    const box = new Box3();
-
-    selectedNodes.forEach((node) => {
-      const visual = this.visual.context.getVisual(node);
-      if (visual instanceof Object3D) {
-        box.expandByObject(visual);
-      }
-    });
-
-    if (box.isEmpty()) {
-      this.options.onMeasure?.(undefined);
-      return undefined;
-    }
-
-    const size = box.getSize(new Vector3());
-    const measurement = {
-      width: Number(size.x.toFixed(1)),
-      height: Number(size.y.toFixed(1)),
-      depth: Number(size.z.toFixed(1)),
-      text: `${size.x.toFixed(1)} x ${size.y.toFixed(1)} x ${size.z.toFixed(1)} mm`
-    };
-    this.options.onMeasure?.(measurement);
-    return measurement;
-  }
-
   clearSelection(): void {
     this.ensureActive();
     this.document.selection.clearSelection();
@@ -301,6 +281,12 @@ export default class ChiliPreviewHost {
     this.document.selection.onNodeChanged.remove(this.handleNodeSelection);
     this.document.selection.onShapeChanged.remove(this.handleShapeSelection);
     this.selectionHandler.dispose();
+    this.edgeOverlays.forEach((edge) => {
+      edge.geometry.dispose();
+      (edge.material as LineBasicMaterial).dispose();
+      edge.removeFromParent();
+    });
+    this.edgeOverlays.clear();
     this.view.renderer.dispose();
     this.view.renderer.domElement.remove();
     this.application.views.remove(this.view);
@@ -314,6 +300,7 @@ export default class ChiliPreviewHost {
     const isGroup = input.kind !== "Part" || (input.children?.length ?? 0) > 0;
     if (isGroup) {
       const group = new GroupNode({ document: this.document, name: input.name, id: input.id });
+      group.visible = input.visible !== false;
       this.nodeById.set(input.id, group);
       parent.add(group);
       input.children?.forEach((child) => this.addPreviewNode(child, group));
@@ -326,33 +313,66 @@ export default class ChiliPreviewHost {
       name: input.name,
       id: input.id,
       materialId: material.id,
-      mesh: this.createBoxMesh()
+      mesh: this.createBicycleMesh(input)
     });
-    const offset = this.previewOffset(this.leafIndex++);
-    meshNode.transform = Matrix4.fromTranslation(offset.x, offset.y, offset.z);
     meshNode.visible = input.visible !== false;
     this.nodeById.set(input.id, meshNode);
-    this.originalTransforms.set(input.id, meshNode.transform.clone());
-    this.explodeOffsets.set(input.id, new Vector3(offset.x * 0.42, offset.y * 0.42, 40));
     parent.add(meshNode);
     return meshNode;
   }
 
   private materialFor(input: PreviewNode): Material {
-    const key = input.lifecycle || input.kind || "default";
+    const key = `${input.lifecycle || input.kind || "default"}:${input.color ?? "default"}`;
     const existing = this.materials.get(key);
     if (existing) return existing;
 
     const color =
-      input.lifecycle === "Design"
+      input.color ??
+      (input.lifecycle === "Design"
         ? 0xf0a04b
         : input.lifecycle === "Production"
           ? 0xd24445
-          : 0x4c7e9f;
+          : 0x4c7e9f);
     const material = new Material({ document: this.document, name: key, color });
     this.materials.set(key, material);
     this.document.modelManager.materials.push(material);
     return material;
+  }
+
+  private createBicycleMesh(input: ModelNodeInput): Mesh {
+    const geometry = bicycleGeometry(input.geometryKey ?? this.geometryKeyFor(input));
+    if (geometry) {
+      const position = geometry.getAttribute("position");
+      const normal = geometry.getAttribute("normal");
+      const index = geometry.index;
+      const mesh = new Mesh({
+        meshType: "surface",
+        position: new Float32Array(position.array as ArrayLike<number>),
+        normal: normal ? new Float32Array(normal.array as ArrayLike<number>) : undefined,
+        index: index ? new Uint32Array(index.array as ArrayLike<number>) : undefined
+      });
+      geometry.dispose();
+      return mesh;
+    }
+
+    return this.createBoxMesh();
+  }
+
+  private geometryKeyFor(input: ModelNodeInput): string {
+    const key = `${input.number} ${input.name}`.toLowerCase();
+    if (key.includes("frame") || key.includes("车架")) return "frame";
+    if (key.includes("fork") || key.includes("前叉")) return "fork";
+    if (key.includes("cockpit") || key.includes("handle") || key.includes("车把")) return "cockpit";
+    if (key.includes("saddle") || key.includes("座垫") || key.includes("坐垫")) return "saddle";
+    if (key.includes("front") || key.includes("前轮")) return "front-road";
+    if (key.includes("rear") || key.includes("后轮")) return "rear-road";
+    if (key.includes("crank") || key.includes("牙盘")) return "crank";
+    if (key.includes("chain") || key.includes("链条")) return "chain";
+    if (key.includes("brake") || key.includes("碟刹")) return "brakes";
+    if (key.includes("rack") || key.includes("货架")) return "rack";
+    if (key.includes("light") || key.includes("灯")) return "lights";
+    if (key.includes("fender") || key.includes("挡泥板")) return "fenders";
+    return "frame";
   }
 
   private createBoxMesh(): Mesh {
@@ -434,20 +454,6 @@ export default class ChiliPreviewHost {
     });
   }
 
-  private previewOffset(index: number): { x: number; y: number; z: number } {
-    const layout = [
-      { x: -150, y: 0, z: 18 },
-      { x: -60, y: 0, z: 28 },
-      { x: 40, y: 0, z: 22 },
-      { x: 140, y: 0, z: 20 },
-      { x: -105, y: 70, z: 46 },
-      { x: 0, y: 70, z: 42 },
-      { x: 105, y: 70, z: 38 },
-      { x: 0, y: -70, z: 16 }
-    ];
-    return layout[index % layout.length];
-  }
-
   private async convertFile(file: File): Promise<INode | undefined> {
     const extension = file.name.toLowerCase().slice(file.name.lastIndexOf("."));
     const data = new Uint8Array(await file.arrayBuffer());
@@ -487,11 +493,6 @@ export default class ChiliPreviewHost {
 
   private readNode(node: INode): PreviewNode {
     this.nodeById.set(node.id, node);
-    if (node instanceof VisualNode && !this.originalTransforms.has(node.id)) {
-      const offset = this.previewOffset(this.leafIndex++);
-      this.originalTransforms.set(node.id, node.transform.clone());
-      this.explodeOffsets.set(node.id, new Vector3(offset.x * 0.42, offset.y * 0.42, 40));
-    }
     const children = node as INodeLinkedList;
     const childNodes = this.isLinkedList(children)
       ? this.childrenOf(children).map((child) => this.readNode(child))
@@ -535,8 +536,6 @@ export default class ChiliPreviewHost {
       children.forEach((node) => node.dispose());
     }
     this.currentNodeId = undefined;
-    this.exploded = false;
-    this.sectioned = false;
     this.materials.clear();
   }
 
@@ -562,6 +561,7 @@ export default class ChiliPreviewHost {
     this.host.addEventListener("pointerup", this.handlePointerUp);
     this.host.addEventListener("pointerout", this.handlePointerOut);
     this.host.addEventListener("wheel", this.handleWheel, { passive: false });
+    this.host.addEventListener("contextmenu", this.handleContextMenu);
   }
 
   private unbindEvents(): void {
@@ -570,21 +570,64 @@ export default class ChiliPreviewHost {
     this.host.removeEventListener("pointerup", this.handlePointerUp);
     this.host.removeEventListener("pointerout", this.handlePointerOut);
     this.host.removeEventListener("wheel", this.handleWheel);
+    this.host.removeEventListener("contextmenu", this.handleContextMenu);
   }
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
     event.preventDefault();
     this.application.activeView = this.view;
+    if (event.button === 1 || event.button === 2) {
+      this.navigation = {
+        mode: event.button === 2 ? "orbit" : "pan",
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY
+      };
+      this.host.setPointerCapture?.(event.pointerId);
+      return;
+    }
     this.dispatch("pointerDown", event);
   };
 
   private readonly handlePointerMove = (event: PointerEvent): void => {
     event.preventDefault();
+    if (this.navigation?.pointerId === event.pointerId) {
+      const dx = event.clientX - this.navigation.x;
+      const dy = event.clientY - this.navigation.y;
+      this.navigation.x = event.clientX;
+      this.navigation.y = event.clientY;
+
+      if (this.navigation.mode === "pan") {
+        this.view.cameraController.pan(dx, dy);
+      } else {
+        const controller = this.view.cameraController;
+        const eye = new Vector3(
+          controller.cameraPosition.x,
+          controller.cameraPosition.y,
+          controller.cameraPosition.z
+        );
+        const target = new Vector3(
+          controller.cameraTarget.x,
+          controller.cameraTarget.y,
+          controller.cameraTarget.z
+        );
+        const up = new Vector3(controller.cameraUp.x, controller.cameraUp.y, controller.cameraUp.z);
+        const result = freeOrbit(eye, target, up, dx, dy);
+        controller.lookAt(result.eye, target, result.up);
+      }
+      this.view.update();
+      return;
+    }
     this.dispatch("pointerMove", event);
   };
 
   private readonly handlePointerUp = (event: PointerEvent): void => {
     event.preventDefault();
+    if (this.navigation?.pointerId === event.pointerId) {
+      this.host.releasePointerCapture?.(event.pointerId);
+      this.navigation = undefined;
+      return;
+    }
     this.dispatch("pointerUp", event);
   };
 
@@ -596,6 +639,38 @@ export default class ChiliPreviewHost {
     event.preventDefault();
     this.dispatch("mouseWheel", event);
   };
+
+  private readonly handleContextMenu = (event: MouseEvent): void => {
+    event.preventDefault();
+  };
+
+  private syncEdgeOverlays(): void {
+    this.edgeOverlays.forEach((edge) => {
+      edge.geometry.dispose();
+      (edge.material as LineBasicMaterial).dispose();
+      edge.removeFromParent();
+    });
+    this.edgeOverlays.clear();
+
+    this.nodeById.forEach((node, nodeId) => {
+      if (!(node instanceof VisualNode)) return;
+      const visual = this.visual.context.getVisual(node);
+      if (!(visual instanceof Object3D)) return;
+      const mesh = visual.children.find((child): child is ThreeMesh => child instanceof ThreeMesh);
+      if (!mesh) return;
+
+      const edge = new LineSegments(
+        new EdgesGeometry(mesh.geometry, 28),
+        new LineBasicMaterial({ color: 0x243341, transparent: true, opacity: 0.75 })
+      );
+      edge.layers.set(1);
+      edge.renderOrder = 2;
+      edge.raycast = () => undefined;
+      edge.visible = this.shadingMode !== "shaded";
+      visual.add(edge);
+      this.edgeOverlays.set(nodeId, edge);
+    });
+  }
 
   private dispatch(
     name: "pointerDown" | "pointerMove" | "pointerUp" | "pointerOut" | "mouseWheel",
@@ -622,27 +697,12 @@ export default class ChiliPreviewHost {
     this.options.onNodeSelected?.(node?.id);
   };
 
-  private applySectionPlane(): void {
-    this.view.renderer.localClippingEnabled = this.sectioned;
-    const plane = new ThreePlane(new Vector3(1, 0, 0), 0);
-    this.visual.context.visualShapes.traverse((object) => {
-      const material = (object as unknown as { material?: unknown }).material;
-      if (!material) return;
-      const materials = Array.isArray(material) ? material : [material];
-      materials.forEach((item) => {
-        (item as { clippingPlanes?: ThreePlane[] }).clippingPlanes = this.sectioned ? [plane] : [];
-        (item as { clipShadows?: boolean }).clipShadows = this.sectioned;
-        (item as { needsUpdate?: boolean }).needsUpdate = true;
-      });
-    });
-    this.view.update();
-  }
-
   private emitStateChanged(): void {
     this.options.onStateChanged?.({
-      exploded: this.exploded,
-      sectioned: this.sectioned,
-      selectionMode: this.selectionMode
+      selectionMode: this.selectionMode,
+      shadingMode: this.shadingMode,
+      cameraType: this.view.cameraController.cameraType,
+      axesVisible: this.axesVisible
     });
   }
 

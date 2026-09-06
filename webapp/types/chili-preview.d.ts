@@ -1,22 +1,16 @@
 import type { BomNode } from "../model/types";
 
 export type PreviewSelectionMode = "part" | "face" | "edge" | "vertex";
-
-export interface PreviewMeasurement {
-  width: number;
-  height: number;
-  depth: number;
-  text: string;
-}
+export type PreviewShadingMode = "shaded" | "shaded-edges" | "edges";
 
 export interface ChiliPreviewHostOptions {
   onNodeSelected?: (nodeId: string | undefined) => void;
   onModelLoaded?: (nodes: BomNode[]) => void;
-  onMeasure?: (measurement: PreviewMeasurement | undefined) => void;
   onStateChanged?: (state: {
-    exploded: boolean;
-    sectioned: boolean;
     selectionMode: PreviewSelectionMode;
+    shadingMode: PreviewShadingMode;
+    cameraType: "perspective" | "orthographic";
+    axesVisible: boolean;
   }) => void;
   onError?: (message: string) => void;
 }
@@ -27,12 +21,12 @@ export interface ChiliPreviewHost {
   selectNode(nodeId: string): void;
   setNodeVisibility(nodeId: string, visible: boolean): boolean;
   setSelectionMode(mode: PreviewSelectionMode): void;
+  setShadingMode(mode: PreviewShadingMode): void;
+  setCameraType(type: "perspective" | "orthographic"): void;
+  setAxesVisible(visible: boolean): boolean;
   fit(): void;
   zoomIn(): void;
   zoomOut(): void;
-  toggleExploded(): boolean;
-  toggleSection(): boolean;
-  measureSelected(): PreviewMeasurement | undefined;
   clearSelection(): void;
   destroy(): void;
 }

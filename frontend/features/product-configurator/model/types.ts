@@ -6,9 +6,12 @@ export type FeatureId =
   | "FRAME_STYLE"
   | "WHEEL_SIZE"
   | "WHEEL_TYPE"
+  | "HANDLE_STYLE"
+  | "SADDLE_STYLE"
   | "GEAR_TYPE"
   | "GEAR_COUNT"
   | "FENDER"
+  | "FENDER_STYLE"
   | "REAR_RACK"
   | "LIGHT";
 export type FeatureValue = string | number | boolean;
@@ -137,6 +140,7 @@ export interface Resolution {
 }
 export interface ConfiguredBomLine extends BomNode {
   sourceSpecification?: string;
+  rule?: string;
 }
 export interface ConfiguredBom {
   id: string;

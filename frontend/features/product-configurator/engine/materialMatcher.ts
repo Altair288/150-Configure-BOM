@@ -7,11 +7,17 @@ export function materialMatcher(
   catalog: Material[] = materials
 ): MaterialMatchResult {
   if (!spec.required) return { specification: spec, candidates: [], status: "NOT_REQUIRED" };
+  const matchRequirements =
+    spec.domain === "FRAME"
+      ? spec.requirements.filter(
+          (requirement) => !["HANDLE_STYLE", "SADDLE_STYLE"].includes(requirement.feature)
+        )
+      : spec.requirements;
   const candidates = catalog.filter(
     (material) =>
       material.category === spec.domain &&
-      spec.requirements.length > 0 &&
-      spec.requirements.every((requirement) =>
+      matchRequirements.length > 0 &&
+      matchRequirements.every((requirement) =>
         material.features.some(
           (feature) =>
             feature.feature === requirement.feature && feature.value === requirement.value

@@ -48,6 +48,18 @@ export const features: FeatureDefinition[] = [
     options: options(["ROAD", "公路"], ["GRAVEL", "Gravel"], ["CITY", "城市"])
   },
   {
+    id: "HANDLE_STYLE",
+    domain: "FRAME",
+    name: "把手样式",
+    options: options(["FLAT", "城市平把"], ["DROP", "运动弯把"], ["COMFORT", "舒适后掠把"])
+  },
+  {
+    id: "SADDLE_STYLE",
+    domain: "FRAME",
+    name: "座椅样式",
+    options: options(["SPORT", "运动窄座"], ["COMFORT", "舒适宽座"], ["GEL", "凝胶减震座"])
+  },
+  {
     id: "GEAR_TYPE",
     domain: "DRIVETRAIN",
     name: "传动类型",
@@ -68,7 +80,17 @@ export const features: FeatureDefinition[] = [
     domain: "ACCESSORY" as const,
     name: ["挡泥板", "后货架", "通勤灯组"][i],
     options: options([true, "需要"], [false, "不需要"])
-  }))
+  })),
+  {
+    id: "FENDER_STYLE",
+    domain: "ACCESSORY",
+    name: "挡泥板样式",
+    options: options(
+      ["SHORT", "运动短挡泥板"],
+      ["FULL", "城市全包挡泥板"],
+      ["GRAVEL", "Gravel 宽挡泥板"]
+    )
+  }
 ];
 export const marketingFeatures: MarketingFeature[] = [
   {
@@ -80,21 +102,42 @@ export const marketingFeatures: MarketingFeature[] = [
         label: "城市通勤",
         description: "铺装路面、日常往返与实用装备",
         ruleId: "MKT-SCENE-001",
-        mapping: { FRAME_STYLE: "CITY", WHEEL_TYPE: "ROAD", WHEEL_SIZE: "700x28C" }
+        mapping: {
+          FRAME_STYLE: "CITY",
+          WHEEL_TYPE: "ROAD",
+          WHEEL_SIZE: "700x28C",
+          HANDLE_STYLE: "FLAT",
+          SADDLE_STYLE: "COMFORT",
+          FENDER_STYLE: "FULL"
+        }
       },
       {
         value: "SPORT",
         label: "运动骑行",
         description: "运动姿态与高效率传动",
         ruleId: "MKT-SCENE-002",
-        mapping: { FRAME_STYLE: "SPORT", WHEEL_TYPE: "ROAD", WHEEL_SIZE: "700x28C" }
+        mapping: {
+          FRAME_STYLE: "SPORT",
+          WHEEL_TYPE: "ROAD",
+          WHEEL_SIZE: "700x28C",
+          HANDLE_STYLE: "DROP",
+          SADDLE_STYLE: "SPORT",
+          FENDER_STYLE: "SHORT"
+        }
       },
       {
         value: "GRAVEL",
         label: "周末轻度 Gravel",
         description: "混合路面、宽胎与更广速比",
         ruleId: "MKT-SCENE-003",
-        mapping: { FRAME_STYLE: "SPORT", WHEEL_TYPE: "GRAVEL", WHEEL_SIZE: "700x45C" }
+        mapping: {
+          FRAME_STYLE: "SPORT",
+          WHEEL_TYPE: "GRAVEL",
+          WHEEL_SIZE: "700x45C",
+          HANDLE_STYLE: "DROP",
+          SADDLE_STYLE: "SPORT",
+          FENDER_STYLE: "GRAVEL"
+        }
       }
     ]
   },
@@ -197,6 +240,30 @@ export const materials: Material[] = [
   part("FR-110", "前叉", "FRAME", "fork", 0x168b91),
   part("FR-120", "车把与把立", "FRAME", "cockpit", 0x404956),
   part("FR-130", "坐垫与座管", "FRAME", "saddle", 0x30343c),
+  {
+    ...part("HB-901", "城市平把", "FRAME", "cockpit-flat", 0x276d7a),
+    features: fv({ HANDLE_STYLE: "FLAT" })
+  },
+  {
+    ...part("HB-902", "运动弯把", "FRAME", "cockpit-drop", 0x3f4852),
+    features: fv({ HANDLE_STYLE: "DROP" })
+  },
+  {
+    ...part("HB-903", "舒适后掠把", "FRAME", "cockpit-comfort", 0x965d36),
+    features: fv({ HANDLE_STYLE: "COMFORT" })
+  },
+  {
+    ...part("SD-901", "运动窄座", "FRAME", "saddle-sport", 0x3f4852),
+    features: fv({ SADDLE_STYLE: "SPORT" })
+  },
+  {
+    ...part("SD-902", "舒适宽座", "FRAME", "saddle-comfort", 0x276d7a),
+    features: fv({ SADDLE_STYLE: "COMFORT" })
+  },
+  {
+    ...part("SD-903", "凝胶减震座", "FRAME", "saddle-gel", 0x965d36),
+    features: fv({ SADDLE_STYLE: "GEL" })
+  },
   assembly(
     "FR-100",
     "铝合金城市车架总成",
@@ -302,8 +369,16 @@ export const materials: Material[] = [
   ]),
   { ...part("AC-401", "后货架", "ACCESSORY", "rack", 0x465362), features: fv({ REAR_RACK: true }) },
   {
-    ...part("AC-402", "前后挡泥板", "ACCESSORY", "fenders", 0x647589),
-    features: fv({ FENDER: true })
+    ...part("AC-402", "城市全包挡泥板", "ACCESSORY", "fenders-full", 0x647589),
+    features: fv({ FENDER: true, FENDER_STYLE: "FULL" })
+  },
+  {
+    ...part("AC-404", "运动短挡泥板", "ACCESSORY", "fenders-short", 0x276d7a),
+    features: fv({ FENDER: true, FENDER_STYLE: "SHORT" })
+  },
+  {
+    ...part("AC-405", "Gravel 宽挡泥板", "ACCESSORY", "fenders-gravel", 0x965d36),
+    features: fv({ FENDER: true, FENDER_STYLE: "GRAVEL" })
   },
   {
     ...part("AC-403", "前后通勤灯组", "ACCESSORY", "lights", 0xe8b341),

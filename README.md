@@ -20,13 +20,14 @@
 - 对面、边、顶点选择模式的 Chili3D 事件入口
 - Chili3D 高亮
 - 节点隐藏/显示
-- 爆炸视图
-- 拖拽旋转与滚轮缩放
+- 右键 360° 全向旋转
+- 中键平移与滚轮缩放
 - Fit / Zoom In / Zoom Out
-- Section 剖切平面
-- 选中节点包围盒测量
+- Shaded / Shaded with Edges / Edges
+- Perspective / Orthographic
+- XYZ 坐标轴显示开关
 
-演示 BOM 首次加载的是由 Chili3D `MeshNode` 构成的预览装配；通过“加载模型”可以切换到真实 CAD 文件，STEP/IGES/STL/BREP 转换由 OCCT WASM 完成。
+演示 BOM 首次加载的是由 Chili3D `MeshNode` 构成的 URBAN 自行车配置装配；通过“加载模型”可以切换到真实 CAD 文件，STEP/IGES/STL/BREP 转换由 OCCT WASM 完成。
 
 ## 启动
 

@@ -8,6 +8,28 @@ import type {
 } from "../model/types";
 import { resolveConfiguration } from "./resolve";
 
+const resolveComponentCode = (code: string, values: Record<string, unknown>): string => {
+  if (code === "FR-120") {
+    return (
+      {
+        FLAT: "HB-901",
+        DROP: "HB-902",
+        COMFORT: "HB-903"
+      }[String(values.HANDLE_STYLE)] ?? "HB-901"
+    );
+  }
+  if (code === "FR-130") {
+    return (
+      {
+        SPORT: "SD-901",
+        COMFORT: "SD-902",
+        GEL: "SD-903"
+      }[String(values.SADDLE_STYLE)] ?? "SD-902"
+    );
+  }
+  return code;
+};
+
 export function bomAssembler(
   configuration: Configuration,
   warningsAccepted = false
@@ -25,7 +47,8 @@ export function bomAssembler(
   ): ConfiguredBomLine => {
     if (ancestors.includes(material.code)) throw new Error(`物料 BOM 循环：${material.code}`);
     const children = material.bom?.lines.map((line, index) => {
-      const child = materials.find((m) => m.code === line.materialCode);
+      const childCode = resolveComponentCode(line.materialCode, resolution.values);
+      const child = materials.find((m) => m.code === childCode);
       if (!child) throw new Error(`物料 BOM 缺少 ${line.materialCode}`);
       return expand(child, spec, `${path}/${index}`, line.quantity, [...ancestors, material.code]);
     });

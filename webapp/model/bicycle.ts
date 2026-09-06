@@ -64,9 +64,34 @@ export function bicycleGeometry(key: string): BufferGeometry | undefined {
     tube([300, 550, 0], [385, 565, 0], 17);
     tube([385, 565, -240], [385, 565, 240], 13);
     for (const z of [-205, 205]) tube([385, 565, z - 45], [385, 565, z + 45], 19);
-  } else if (key === "saddle") {
+  } else if (key === "cockpit-flat") {
+    tube(head, [300, 550, 0], 17);
+    tube([300, 550, 0], [250, 590, 0], 17);
+    tube([250, 590, -205], [250, 590, 205], 15);
+    for (const z of [-205, 205]) tube([250, 590, z - 42], [250, 590, z + 42], 20);
+  } else if (key === "cockpit-drop") {
+    tube(head, [300, 550, 0], 17);
+    tube([300, 550, 0], [380, 570, 0], 17);
+    tube([380, 570, -215], [380, 570, 215], 13);
+    for (const z of [-205, 205]) {
+      tube([380, 570, z], [340, 500, z], 11);
+      tube([340, 500, z], [385, 455, z], 11);
+    }
+  } else if (key === "cockpit-comfort") {
+    tube(head, [285, 545, 0], 17);
+    tube([285, 545, 0], [245, 625, 0], 16);
+    tube([245, 625, -225], [245, 625, 225], 18);
+    for (const z of [-190, 190]) tube([245, 625, z - 42], [245, 625, z + 42], 22);
+  } else if (key === "saddle" || key === "saddle-comfort") {
     tube(seat, [-245, 610, 0], 15);
     box([-255, 630, 0], [240, 38, 135]);
+  } else if (key === "saddle-sport") {
+    tube(seat, [-245, 610, 0], 15);
+    box([-255, 625, 0], [205, 26, 95]);
+  } else if (key === "saddle-gel") {
+    tube(seat, [-245, 610, 0], 15);
+    box([-255, 635, 0], [220, 50, 170]);
+    box([-355, 650, 0], [45, 34, 185]);
   } else if (key.endsWith("-wheel")) {
     const x = key.startsWith("front") ? front[0] : rear[0];
     ring(x, 0, 0, 310, 12);
@@ -115,11 +140,15 @@ export function bicycleGeometry(key: string): BufferGeometry | undefined {
       tube([-520, 0, z / 2], [-360, 390, z], 7);
     }
     for (const x of [-680, -570, -460, -350]) tube([x, 390, -90], [x, 390, 90], 7);
+  } else if (key === "fenders" || key === "fenders-full") {
+    for (const x of [-520, 520]) ring(x, 0, 0, 368, 17, Math.PI);
+  } else if (key === "fenders-short") {
+    for (const x of [-520, 520]) ring(x, 0, 0, 350, 10, Math.PI * 0.72);
+  } else if (key === "fenders-gravel") {
+    for (const x of [-520, 520]) ring(x, 0, 0, 380, 14, Math.PI * 0.88);
   } else if (key === "lights") {
     box([405, 540, 0], [55, 32, 48]);
     box([-365, 590, 0], [25, 38, 55]);
-  } else if (key === "fenders") {
-    for (const x of [-520, 520]) ring(x, 0, 0, 368, 17, Math.PI);
   } else return undefined;
 
   const positions: number[] = [],
@@ -132,15 +161,6 @@ export function bicycleGeometry(key: string): BufferGeometry | undefined {
     piece.dispose();
   }
   const result = new BufferGeometry();
-  // Reuse typed attributes without keeping the temporary primitive geometries alive.
-  return finishGeometry(result, positions, normals);
-}
-
-function finishGeometry(
-  result: BufferGeometry,
-  positions: number[],
-  normals: number[]
-): BufferGeometry {
   result.setAttribute("position", new Float32BufferAttribute(positions, 3));
   result.setAttribute("normal", new Float32BufferAttribute(normals, 3));
   return result;

@@ -95,7 +95,22 @@
           <Button text="{i18n>advanced}" type="Transparent" icon="sap-icon://slim-arrow-down" />
           <ToolbarSpacer />
           <Text text="{i18n>viewLabel}" class="bomFilterLabel" />
-          <Button text="{bom>/viewName}" type="Transparent" icon="sap-icon://slim-arrow-down" />
+            <MenuButton
+              id="bomViewMenu"
+              text="{bom>/viewName}"
+              type="Transparent"
+              icon="sap-icon://tree"
+              buttonMode="Regular"
+              tooltip="{i18n>bomViewSwitch}">
+              <menu>
+                <Menu itemSelected=".onBomViewChange">
+                  <items>
+                    <MenuItem key="100" icon="sap-icon://product" text="{i18n>configuredBomView}" />
+                    <MenuItem key="150" icon="sap-icon://tree" text="{i18n>supersetBomView}" />
+                  </items>
+                </Menu>
+              </menu>
+            </MenuButton>
           <ToolbarSeparator />
           <ObjectStatus text="{bom>/loadedCount}" state="Success" icon="sap-icon://accept" />
           <Text text="{i18n>objectsLoaded}" class="bomFilterLabel" />
@@ -168,7 +183,8 @@
                 <core:Icon src="sap-icon://dimension" class="bomPaneIcon" />
                 <Title text="{i18n>visualization}" level="H4" />
                 <ToolbarSpacer />
-                <ObjectStatus text="{i18n>visualizationReady}" state="Success" icon="sap-icon://accept" />
+                <ObjectStatus text="{bom>/loadedCount}" state="Success" icon="sap-icon://accept" />
+                <Text text="{i18n>objectsLoaded}" class="bomFilterLabel" />
               </Toolbar>
               <IconTabBar
                 selectedKey="visualization"
@@ -190,23 +206,63 @@
                 <Button type="Transparent" icon="sap-icon://full-screen" tooltip="{i18n>fullScreen}" press=".onFullScreen" />
                 <ToolbarSeparator />
                 <Button type="Transparent" icon="sap-icon://refresh" tooltip="{i18n>resetView}" press=".onFit" />
-                <Button text="{i18n>explode}" type="Transparent" icon="sap-icon://flight" press=".onToggleExploded" />
-                <Button text="{i18n>section}" type="Transparent" icon="sap-icon://scissors" press=".onToggleSection" />
-                <Button text="{i18n>measure}" type="Transparent" icon="sap-icon://measure" press=".onMeasure" />
-                <ToolbarSpacer />
-                <Label text="{i18n>selectionMode}" class="bomFilterLabel" />
-                <SegmentedButton
+                <MenuButton
+                  id="cameraTypeMenu"
+                  icon="sap-icon://camera"
+                  type="Transparent"
+                  buttonMode="Regular"
+                  tooltip="{i18n>cameraScheme}">
+                  <menu>
+                    <Menu itemSelected=".onCameraTypeChange">
+                      <items>
+                        <MenuItem key="perspective" icon="sap-icon://camera" text="{i18n>perspective}" />
+                        <MenuItem key="orthographic" icon="sap-icon://dimension" text="{i18n>orthographic}" />
+                      </items>
+                    </Menu>
+                  </menu>
+                </MenuButton>
+                <ToggleButton
+                  id="axesToggle"
+                  icon="sap-icon://dimension"
+                  type="Transparent"
+                  pressed="{bom>/axesVisible}"
+                  tooltip="{i18n>toggleAxes}"
+                  press=".onToggleAxes" />
+                <MenuButton
                   id="selectionMode"
-                  selectedKey="part"
-                  selectionChange=".onSelectionModeChange">
-                  <items>
-                    <SegmentedButtonItem key="part" text="{i18n>part}" />
-                    <SegmentedButtonItem key="face" text="{i18n>face}" />
-                    <SegmentedButtonItem key="edge" text="{i18n>edge}" />
-                    <SegmentedButtonItem key="vertex" text="{i18n>vertex}" />
-                  </items>
-                </SegmentedButton>
-                <Text text="{i18n>demoVisualization}" class="bomViewportMode" />
+                  icon="sap-icon://select-objects"
+                  type="Transparent"
+                  buttonMode="Regular"
+                  tooltip="{i18n>selectionMode}">
+                  <menu>
+                    <Menu itemSelected=".onSelectionModeChange">
+                      <items>
+                        <MenuItem key="part" icon="sap-icon://product" text="{i18n>part}" />
+                        <MenuItem key="face" icon="sap-icon://dimension" text="{i18n>face}" />
+                        <MenuItem key="edge" icon="sap-icon://line-chart" text="{i18n>edge}" />
+                        <MenuItem key="vertex" icon="sap-icon://circle-task-2" text="{i18n>vertex}" />
+                      </items>
+                    </Menu>
+                  </menu>
+                </MenuButton>
+                <MenuButton
+                  id="shadingMode"
+                  icon="sap-icon://palette"
+                  type="Transparent"
+                  buttonMode="Regular"
+                  tooltip="{i18n>shading}">
+                  <menu>
+                    <Menu itemSelected=".onShadingModeChange">
+                      <items>
+                        <MenuItem key="shaded" icon="sap-icon://palette" text="{i18n>shaded}" />
+                        <MenuItem key="shaded-edges" icon="sap-icon://border" text="{i18n>shadedEdges}" />
+                        <MenuItem key="edges" icon="sap-icon://line-chart" text="{i18n>edges}" />
+                      </items>
+                    </Menu>
+                  </menu>
+                </MenuButton>
+                <ToolbarSpacer />
+                <Text text="{i18n>orbitHelp}" class="bomViewportMode" />
               </Toolbar>
               <VBox width="100%" height="100%" fitContainer="true" class="bomViewportStage">
                 <VBox id="bomChiliHost" width="100%" height="100%" fitContainer="true" class="bomChiliHost">
@@ -223,7 +279,6 @@
                 <ToolbarSpacer />
                 <ObjectStatus text="{bom>/selectedNode/state}" state="Success" />
                 <Button type="Transparent" icon="sap-icon://hide" tooltip="{i18n>toggleVisibility}" press=".onToggleSelectedVisibility" />
-                <Text text="{bom>/measurement}" class="bomMeasurementText" />
               </Toolbar>
               <f:SimpleForm
                 editable="false"
