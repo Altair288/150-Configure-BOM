@@ -1,0 +1,5 @@
+<mvc:View controllerName="com.company.superbom.controller.FeatureWorkspace" xmlns:mvc="sap.ui.core.mvc" xmlns="sap.m" displayBlock="true" height="100%">
+  <Page showHeader="false" enableScrolling="false">
+    <VBox id="featureHost" width="100%" height="100%" class="featureWorkspaceHost" />
+  </Page>
+</mvc:View>
