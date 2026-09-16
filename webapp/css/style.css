@@ -444,3 +444,53 @@ body,
   min-height: 28rem;
   background: var(--sapGroup_ContentBackground);
 }
+
+.cadViewCube {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 10;
+  width: 140px;
+  user-select: none;
+  pointer-events: auto;
+}
+.cadViewCube svg {
+  display: block;
+  width: 140px;
+  height: 140px;
+  overflow: visible;
+}
+.cadViewCube polygon {
+  stroke: #a4aeb8;
+  stroke-width: 0.85;
+  stroke-linejoin: round;
+  cursor: pointer;
+}
+.cadViewCube text {
+  fill: #344454;
+  font:
+    15px "72",
+    sans-serif;
+  pointer-events: none;
+}
+.cadViewCube g:hover polygon,
+.cadViewCube g:focus polygon {
+  fill: #d5eaff;
+  stroke: #0070f2;
+  stroke-width: 1.5;
+}
+.cadViewCube g:focus {
+  outline: none;
+}
+.cadViewCube select {
+  display: block;
+  width: 100%;
+  padding: 3px;
+  border: 1px solid #d3dae1;
+  border-radius: 4px;
+  color: #526578;
+  background: #ffffffec;
+  font:
+    11px "72",
+    sans-serif;
+}

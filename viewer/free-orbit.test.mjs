@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Vector3 } from "three";
+import { PerspectiveCamera, OrthographicCamera, Vector3 } from "three";
 import { freeOrbit } from "./free-orbit.ts";
 
 test("vertical orbit crosses both poles and completes 360 degrees", () => {
@@ -16,6 +16,29 @@ test("vertical orbit crosses both poles and completes 360 degrees", () => {
   }
   assert.ok(eye.distanceTo(initial) < 1e-8);
   assert.ok(up.distanceTo(new Vector3(0, 1, 0)) < 1e-8);
+});
+
+test("oblique initial up hint produces the same orbit as actual screen up in both camera types", () => {
+  for (const camera of [new PerspectiveCamera(), new OrthographicCamera()]) {
+    const target = new Vector3(15, -20, 30);
+    const eye = new Vector3(1500, 1500, 1500);
+    const hint = new Vector3(0, 0, 1);
+    camera.position.copy(eye);
+    camera.up.copy(hint);
+    camera.lookAt(target);
+    const screenUp = new Vector3(0, 1, 0).applyQuaternion(camera.quaternion);
+    const orbit = freeOrbit(eye, target, hint, 90, 0);
+    const expected = freeOrbit(eye, target, screenUp, 90, 0);
+    assert.ok(orbit.eye.distanceTo(expected.eye) < 1e-8);
+    assert.ok(orbit.up.distanceTo(screenUp) < 1e-8, "horizontal drag must not roll screen up");
+    assert.ok(Math.abs(orbit.up.dot(orbit.eye.clone().sub(target))) < 1e-8);
+  }
+});
+
+test("parallel up hint has a finite orthogonal fallback", () => {
+  const orbit = freeOrbit(new Vector3(0, 0, 10), new Vector3(), new Vector3(0, 0, 1), 20, 30);
+  assert.ok(Math.abs(orbit.up.length() - 1) < 1e-8);
+  assert.ok(Math.abs(orbit.up.dot(orbit.eye)) < 1e-8);
 });
 
 test("horizontal orbit follows camera up instead of world Z; mixed drag is reversible", () => {

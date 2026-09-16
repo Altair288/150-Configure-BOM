@@ -27,15 +27,23 @@ import { ThreeVisual } from "@chili3d/three-visual";
 import { initWasm, OccShapeConverter } from "@chili3d/wasm";
 import {
   AxesHelper,
+  AmbientLight,
+  DirectionalLight,
+  HemisphereLight,
+  Box3,
   EdgesGeometry,
   LineBasicMaterial,
   LineSegments,
   Mesh as ThreeMesh,
+  Matrix4 as ThreeMatrix4,
+  Quaternion,
   Object3D,
   Vector3
 } from "three";
 import { bicycleGeometry } from "../webapp/model/bicycle";
 import { freeOrbit } from "./free-orbit";
+import { cameraClipping } from "./camera-clipping";
+import { ViewCube, cubeUp } from "./view-cube";
 
 export type PreviewSelectionMode = "part" | "face" | "edge" | "vertex";
 export type PreviewShadingMode = "shaded" | "shaded-edges" | "edges";
@@ -90,6 +98,11 @@ export default class ChiliPreviewHost {
   private readonly nodeById = new Map<string, INode>();
   private readonly materials = new Map<string, Material>();
   private readonly edgeOverlays = new Map<string, LineSegments>();
+  private readonly modelBounds = new Box3();
+  private readonly viewCube: ViewCube;
+  private viewTransition?: number;
+  private readonly studioLights: { light: DirectionalLight; direction: Vector3 }[] = [];
+  private hemisphereLight?: HemisphereLight;
   private selectionHandler: IEventHandler;
   private wasmReady?: Promise<void>;
   private currentNodeId?: string;
@@ -116,8 +129,13 @@ export default class ChiliPreviewHost {
     this.view = this.visual.createView("CAD Preview", Plane.XY) as ThreeView;
     this.application.activeView = this.view;
     this.selectionHandler = this.visual.eventHandler;
+    this.prepareLighting();
 
     this.view.setDom(host);
+    const oldGizmo = host.querySelector<HTMLElement>("view-gizmo");
+    if (oldGizmo) oldGizmo.style.display = "none";
+    this.viewCube = new ViewCube(host, (direction) => this.setStandardView(direction));
+    this.viewCube.update(this.view.camera.quaternion);
     this.prepareHost();
     this.bindEvents();
     this.document.selection.onNodeChanged.sub(this.handleNodeSelection);
@@ -126,12 +144,14 @@ export default class ChiliPreviewHost {
 
   loadBom(nodes: PreviewNode[]): void {
     this.ensureActive();
+    this.cancelViewTransition();
     this.clearDocumentNodes();
     this.nodeById.clear();
 
     const root = this.document.modelManager.rootNode;
     nodes.forEach((node) => this.addPreviewNode(node, root));
     this.document.visual.update();
+    this.modelBounds.setFromObject(this.visual.context.visualShapes);
     this.view.cameraController.fitContent();
     this.syncEdgeOverlays();
     this.setShadingMode(this.shadingMode);
@@ -141,6 +161,7 @@ export default class ChiliPreviewHost {
 
   async loadFile(file: File): Promise<void> {
     this.ensureActive();
+    this.cancelViewTransition();
 
     try {
       await this.ensureWasm();
@@ -157,9 +178,11 @@ export default class ChiliPreviewHost {
       }
 
       this.clearDocumentNodes();
+      this.cancelViewTransition();
       this.nodeById.clear();
       this.document.modelManager.rootNode.add(importedNode);
       this.document.visual.update();
+      this.modelBounds.setFromObject(this.visual.context.visualShapes);
       this.view.cameraController.fitContent();
       this.syncEdgeOverlays();
       this.setShadingMode(this.shadingMode);
@@ -225,15 +248,19 @@ export default class ChiliPreviewHost {
     this.edgeOverlays.forEach((edge) => {
       edge.visible = showEdges;
     });
-    this.view.update();
+    this.updateView();
     this.emitStateChanged();
   }
 
   setCameraType(type: "perspective" | "orthographic"): void {
     this.ensureActive();
+    this.cancelViewTransition();
+    const controller = this.view.cameraController;
+    const up = new Vector3(0, 1, 0).applyQuaternion(controller.camera.quaternion);
     this.view.cameraController.cameraType = type;
+    controller.lookAt(controller.cameraPosition, controller.cameraTarget, up);
     this.view.cameraController.fitContent();
-    this.view.update();
+    this.updateView();
     this.emitStateChanged();
   }
 
@@ -244,27 +271,30 @@ export default class ChiliPreviewHost {
       (child): child is AxesHelper => child instanceof AxesHelper
     );
     if (axes) axes.visible = visible;
-    this.view.update();
+    this.updateView();
     this.emitStateChanged();
     return visible;
   }
 
   fit(): void {
     this.ensureActive();
+    this.cancelViewTransition();
     this.view.cameraController.fitContent();
-    this.view.update();
+    this.updateView();
   }
 
   zoomIn(): void {
     this.ensureActive();
+    this.cancelViewTransition();
     this.view.cameraController.zoom(this.view.width / 2, this.view.height / 2, -5);
-    this.view.update();
+    this.updateView();
   }
 
   zoomOut(): void {
     this.ensureActive();
+    this.cancelViewTransition();
     this.view.cameraController.zoom(this.view.width / 2, this.view.height / 2, 5);
-    this.view.update();
+    this.updateView();
   }
 
   clearSelection(): void {
@@ -277,7 +307,16 @@ export default class ChiliPreviewHost {
   destroy(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.cancelViewTransition();
     this.unbindEvents();
+    this.viewCube.destroy();
+    for (const { light } of this.studioLights) {
+      light.removeFromParent();
+      light.target.removeFromParent();
+      light.dispose();
+    }
+    this.hemisphereLight?.removeFromParent();
+    this.hemisphereLight?.dispose();
     this.document.selection.onNodeChanged.remove(this.handleNodeSelection);
     this.document.selection.onShapeChanged.remove(this.handleShapeSelection);
     this.selectionHandler.dispose();
@@ -574,6 +613,7 @@ export default class ChiliPreviewHost {
   }
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
+    this.cancelViewTransition();
     event.preventDefault();
     this.application.activeView = this.view;
     if (event.button === 1 || event.button === 2) {
@@ -611,11 +651,11 @@ export default class ChiliPreviewHost {
           controller.cameraTarget.y,
           controller.cameraTarget.z
         );
-        const up = new Vector3(controller.cameraUp.x, controller.cameraUp.y, controller.cameraUp.z);
+        const up = new Vector3(0, 1, 0).applyQuaternion(controller.camera.quaternion);
         const result = freeOrbit(eye, target, up, dx, dy);
         controller.lookAt(result.eye, target, result.up);
       }
-      this.view.update();
+      this.updateView();
       return;
     }
     this.dispatch("pointerMove", event);
@@ -636,6 +676,7 @@ export default class ChiliPreviewHost {
   };
 
   private readonly handleWheel = (event: WheelEvent): void => {
+    this.cancelViewTransition();
     event.preventDefault();
     this.dispatch("mouseWheel", event);
   };
@@ -672,6 +713,102 @@ export default class ChiliPreviewHost {
     });
   }
 
+  private setStandardView(direction: Vector3): void {
+    this.cancelViewTransition();
+    const controller = this.view.cameraController;
+    const target = controller.target.clone();
+    const distance = controller.camera.position.distanceTo(target);
+    const from = controller.camera.quaternion.clone();
+    const to = new Quaternion().setFromRotationMatrix(
+      new ThreeMatrix4().lookAt(direction, new Vector3(), cubeUp(direction))
+    );
+    const duration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 450;
+    const start = performance.now();
+    const step = (now: number): void => {
+      if (this.disposed) return;
+      const progress = duration === 0 ? 1 : Math.min(1, (now - start) / duration);
+      const eased = progress * progress * (3 - 2 * progress);
+      const orientation = from.clone().slerp(to, eased);
+      const eye = new Vector3(0, 0, distance).applyQuaternion(orientation).add(target);
+      const up = new Vector3(0, 1, 0).applyQuaternion(orientation);
+      controller.lookAt(eye, target, up);
+      this.updateView();
+      this.viewTransition = progress < 1 ? requestAnimationFrame(step) : undefined;
+    };
+    this.viewTransition = requestAnimationFrame(step);
+  }
+
+  private cancelViewTransition(): void {
+    if (this.viewTransition !== undefined) cancelAnimationFrame(this.viewTransition);
+    this.viewTransition = undefined;
+  }
+
+  private prepareLighting(): void {
+    // Replace the flat, bright ambient baseline with soft studio illumination.
+    this.visual.scene.traverse((object) => {
+      if (object instanceof AmbientLight) {
+        object.color.setHex(0xffffff);
+        object.intensity = 0.45;
+      }
+    });
+    this.view.dynamicLight.intensity = 0.35;
+    this.hemisphereLight = new HemisphereLight(0xffffff, 0x8796ab, 0.8);
+    this.hemisphereLight.position.set(0, 0, 1);
+    this.visual.scene.add(this.hemisphereLight);
+    const sources = [
+      { name: "Studio key", color: 0xffffff, intensity: 1.8, direction: new Vector3(-3, 4, 5) },
+      { name: "Studio fill", color: 0xdce8ff, intensity: 0.65, direction: new Vector3(4, 1, 2) },
+      { name: "Studio rim", color: 0xffffff, intensity: 1.0, direction: new Vector3(1, 3, -4) }
+    ];
+    for (const source of sources) {
+      const light = new DirectionalLight(source.color, source.intensity);
+      light.name = source.name;
+      this.visual.scene.add(light, light.target);
+      this.studioLights.push({ light, direction: source.direction.normalize() });
+    }
+    this.updateLighting();
+  }
+
+  private updateLighting(): void {
+    const controller = this.view.cameraController;
+    for (const { light, direction } of this.studioLights) {
+      light.target.position.copy(controller.target);
+      light.position
+        .copy(direction)
+        .applyQuaternion(controller.camera.quaternion)
+        .add(controller.target);
+      light.target.updateMatrixWorld();
+    }
+  }
+
+  private updateView(): void {
+    const controller = this.view.cameraController;
+    const camera = controller.camera;
+    const focusBounds = new Box3();
+    for (const node of this.document.selection.getSelectedVisualNodes()) {
+      const visual = this.visual.context.getVisual(node);
+      if (visual instanceof Object3D) focusBounds.expandByObject(visual);
+    }
+    const clipping = cameraClipping(camera, this.modelBounds, focusBounds);
+    if (clipping) {
+      if (clipping.retreat.lengthSq() > 0) {
+        const eye = new Vector3(
+          controller.cameraPosition.x,
+          controller.cameraPosition.y,
+          controller.cameraPosition.z
+        ).add(clipping.retreat);
+        // Preserve the focus/orbit target established by fitContent(). Only the
+        // perspective eye may retreat; orthographic clipping never moves either.
+        controller.lookAt(eye, controller.cameraTarget, camera.up);
+      }
+      camera.near = clipping.near;
+      camera.far = clipping.far;
+      camera.updateProjectionMatrix();
+    }
+    this.viewCube?.update(camera.quaternion);
+    this.updateLighting();
+    this.view.update();
+  }
   private dispatch(
     name: "pointerDown" | "pointerMove" | "pointerUp" | "pointerOut" | "mouseWheel",
     event: PointerEvent | WheelEvent
@@ -680,6 +817,7 @@ export default class ChiliPreviewHost {
       this.visual.eventHandler[name]?.(this.view, event as never);
     if (this.visual.viewHandler.isEnabled)
       this.visual.viewHandler[name]?.(this.view, event as never);
+    this.updateView();
   }
 
   private readonly handleNodeSelection = (nodes: INode[]): void => {
