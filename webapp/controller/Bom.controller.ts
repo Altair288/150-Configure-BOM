@@ -44,6 +44,7 @@ export default class BomController extends BaseController {
         model.setProperty("/selectionMode", state.selectionMode);
         model.setProperty("/shadingMode", state.shadingMode);
         model.setProperty("/cameraType", state.cameraType);
+        model.setProperty("/lightingMode", state.lightingMode);
         model.setProperty("/axesVisible", state.axesVisible);
         this.updatePreviewModeIcons(state.selectionMode, state.shadingMode, state.cameraType);
       },

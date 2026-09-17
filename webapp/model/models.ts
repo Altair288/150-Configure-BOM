@@ -257,19 +257,36 @@ export function createConfiguredBicycleBom(
     DROP: ["HB-902", "运动弯把", "cockpit-drop", 0x3f4852],
     COMFORT: ["HB-903", "舒适后掠把", "cockpit-comfort", 0x965d36]
   };
-  const handle = handleOptions[selection.handleStyle] ?? ["HB-902", "运动弯把", "cockpit-drop", 0x3f4852];
+  const handle = handleOptions[selection.handleStyle] ?? [
+    "HB-902",
+    "运动弯把",
+    "cockpit-drop",
+    0x3f4852
+  ];
   const saddleOptions: Record<string, [string, string, string, number]> = {
     SPORT: ["SD-901", "运动窄座", "saddle-sport", 0x3f4852],
     COMFORT: ["SD-902", "舒适宽座", "saddle-comfort", 0x276d7a],
     GEL: ["SD-903", "凝胶减震座", "saddle-gel", 0x965d36]
   };
-  const saddle = saddleOptions[selection.saddleStyle] ?? ["SD-902", "舒适宽座", "saddle-comfort", 0x276d7a];
+  const saddle = saddleOptions[selection.saddleStyle] ?? [
+    "SD-902",
+    "舒适宽座",
+    "saddle-comfort",
+    0x276d7a
+  ];
   const tireOptions: Record<string, [string, string, string, string, string, string]> = {
     ROAD_28: ["WH-200", "700×28C 公路轮组", "front-road", "rear-road", "WH-211", "WH-212"],
     CITY_35: ["WH-300", "700×35C 城市轮组", "front-city", "rear-city", "WH-221", "WH-222"],
     GRAVEL_45: ["WH-400", "700×45C Gravel 轮组", "front-gravel", "rear-gravel", "WH-231", "WH-232"]
   };
-  const tire = tireOptions[selection.wheelOption] ?? ["WH-300", "700×35C 城市轮组", "front-city", "rear-city", "WH-221", "WH-222"];
+  const tire = tireOptions[selection.wheelOption] ?? [
+    "WH-300",
+    "700×35C 城市轮组",
+    "front-city",
+    "rear-city",
+    "WH-221",
+    "WH-222"
+  ];
   const fenderOptions: Record<string, [string, string, string, number]> = {
     SHORT: ["FD-901", "运动短挡泥板", "fenders-short", 0x276d7a],
     FULL: ["FD-902", "城市全包挡泥板", "fenders-full", 0x53616c],

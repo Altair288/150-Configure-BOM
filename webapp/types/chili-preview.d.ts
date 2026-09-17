@@ -2,6 +2,7 @@ import type { BomNode } from "../model/types";
 
 export type PreviewSelectionMode = "part" | "face" | "edge" | "vertex";
 export type PreviewShadingMode = "shaded" | "shaded-edges" | "edges";
+export type PreviewLightingMode = "studio" | "key" | "soft";
 
 export interface ChiliPreviewHostOptions {
   onNodeSelected?: (nodeId: string | undefined) => void;
@@ -10,6 +11,7 @@ export interface ChiliPreviewHostOptions {
     selectionMode: PreviewSelectionMode;
     shadingMode: PreviewShadingMode;
     cameraType: "perspective" | "orthographic";
+    lightingMode: PreviewLightingMode;
     axesVisible: boolean;
   }) => void;
   onError?: (message: string) => void;
@@ -23,6 +25,7 @@ export interface ChiliPreviewHost {
   setSelectionMode(mode: PreviewSelectionMode): void;
   setShadingMode(mode: PreviewShadingMode): void;
   setCameraType(type: "perspective" | "orthographic"): void;
+  setLightingMode(mode: PreviewLightingMode): void;
   setAxesVisible(visible: boolean): boolean;
   fit(): void;
   zoomIn(): void;

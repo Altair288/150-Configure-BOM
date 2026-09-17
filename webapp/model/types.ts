@@ -42,6 +42,7 @@ export interface BomDocument {
   lastUpdated: string;
   loadedCount: number;
   cameraType?: "perspective" | "orthographic";
+  lightingMode?: "studio" | "key" | "soft";
   axesVisible?: boolean;
   shadingMode?: "shaded" | "shaded-edges" | "edges";
   nodes: BomNode[];

@@ -309,6 +309,12 @@ body,
   z-index: 3;
 }
 
+.bomChiliHost .bomAxisLegend,
+.bomChiliHost .bomPreviewCaption {
+  position: absolute !important;
+  pointer-events: none;
+}
+
 .chiliViewerPage {
   min-height: 0;
 }
@@ -454,11 +460,133 @@ body,
   user-select: none;
   pointer-events: auto;
 }
-.cadViewCube svg {
+.cadViewCube > svg {
   display: block;
   width: 140px;
   height: 140px;
   overflow: visible;
+}
+.cadViewCubeMenuButton {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.25rem);
+  z-index: 22;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 2.75rem;
+  height: 2rem;
+  padding: 0 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 0.25rem;
+  color: #344454;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+.cadViewCubeMenuButton:hover,
+.cadViewCubeMenuButton:focus-visible {
+  border-color: #0070f2;
+  background: #eaf4ffb8;
+  box-shadow: 0 2px 8px #30445438;
+  outline: none;
+}
+.cadViewCubeMenuIcon {
+  width: 1.25rem;
+  height: 1.25rem;
+  overflow: visible;
+}
+.cadViewCubeMenuIcon polygon {
+  stroke: #526578;
+  stroke-width: 1.1;
+  stroke-linejoin: round;
+}
+.cadViewCubeIconTop {
+  fill: #f7fafc;
+}
+.cadViewCubeIconLeft {
+  fill: #dfe6ec;
+}
+.cadViewCubeIconRight {
+  fill: #ffffff;
+}
+.cadViewCubeMenuArrow,
+.cadViewCubeSubmenuArrow {
+  color: #526578;
+  font-size: 0.78rem;
+  line-height: 1;
+}
+.cadViewCubeMenu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 2.65rem);
+  z-index: 21;
+  width: 14.5rem;
+  padding: 0.2rem 0;
+  border: 1px solid #c8d0d8;
+  border-radius: 0.25rem;
+  background: #fffffffa;
+  box-shadow: 0 0.35rem 1rem #3044542e;
+}
+.cadViewCubeMenu[hidden],
+.cadViewCubeSubmenu[hidden] {
+  display: none;
+}
+.cadViewCubeMenuItemWrap {
+  position: relative;
+}
+.cadViewCubeMenuItem,
+.cadViewCubeSubmenu .cadViewCubeMenuItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 1.8rem;
+  padding: 0.2rem 0.7rem;
+  border: 0;
+  color: #3f4d5c;
+  background: transparent;
+  font:
+    0.82rem/1.15 "72",
+    sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+.cadViewCubeMenuItem:hover,
+.cadViewCubeMenuItem:focus-visible,
+.cadViewCubeMenuItem.selected {
+  color: #143f69;
+  background: #e1f0ff;
+  outline: none;
+}
+.cadViewCubeMenuItemWrap:hover > .cadViewCubeSubmenu,
+.cadViewCubeMenuItemWrap.open > .cadViewCubeSubmenu,
+.cadViewCubeMenuItemWrap:focus-within > .cadViewCubeSubmenu {
+  display: block;
+}
+.cadViewCubeSubmenu {
+  position: absolute;
+  top: -0.2rem;
+  right: 100%;
+  z-index: 23;
+  display: none;
+  width: 13rem;
+  padding: 0.2rem 0;
+  border: 1px solid #c8d0d8;
+  border-radius: 0.25rem;
+  background: #fffffffa;
+  box-shadow: 0 0.35rem 1rem #3044542e;
+}
+.cadViewCubeMenuCheck {
+  width: 1rem;
+  color: #0070f2;
+  font-weight: 700;
+  text-align: center;
+}
+.cadViewCubeMenuSeparator {
+  height: 1px;
+  margin: 0.15rem 0;
+  background: #d9e0e6;
 }
 .cadViewCube polygon {
   stroke: #a4aeb8;
@@ -469,8 +597,9 @@ body,
 .cadViewCube text {
   fill: #344454;
   font:
-    15px "72",
+    18px "72",
     sans-serif;
+  font-weight: 600;
   pointer-events: none;
 }
 .cadViewCube g:hover polygon,
@@ -481,16 +610,4 @@ body,
 }
 .cadViewCube g:focus {
   outline: none;
-}
-.cadViewCube select {
-  display: block;
-  width: 100%;
-  padding: 3px;
-  border: 1px solid #d3dae1;
-  border-radius: 4px;
-  color: #526578;
-  background: #ffffffec;
-  font:
-    11px "72",
-    sans-serif;
 }

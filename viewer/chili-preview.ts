@@ -30,6 +30,7 @@ import {
   AmbientLight,
   DirectionalLight,
   HemisphereLight,
+  PCFSoftShadowMap,
   Box3,
   EdgesGeometry,
   LineBasicMaterial,
@@ -43,10 +44,11 @@ import {
 import { bicycleGeometry } from "../webapp/model/bicycle";
 import { freeOrbit } from "./free-orbit";
 import { cameraClipping } from "./camera-clipping";
-import { ViewCube, cubeUp } from "./view-cube";
+import { ViewCube, cubeUp, type ViewCubeLightingMode } from "./view-cube";
 
 export type PreviewSelectionMode = "part" | "face" | "edge" | "vertex";
 export type PreviewShadingMode = "shaded" | "shaded-edges" | "edges";
+export type PreviewLightingMode = ViewCubeLightingMode;
 
 export interface PreviewNode {
   id: string;
@@ -73,6 +75,7 @@ export interface ChiliPreviewOptions {
     selectionMode: PreviewSelectionMode;
     shadingMode: PreviewShadingMode;
     cameraType: "perspective" | "orthographic";
+    lightingMode: PreviewLightingMode;
     axesVisible: boolean;
   }) => void;
   onError?: (message: string) => void;
@@ -102,12 +105,14 @@ export default class ChiliPreviewHost {
   private readonly viewCube: ViewCube;
   private viewTransition?: number;
   private readonly studioLights: { light: DirectionalLight; direction: Vector3 }[] = [];
+  private ambientLight?: AmbientLight;
   private hemisphereLight?: HemisphereLight;
   private selectionHandler: IEventHandler;
   private wasmReady?: Promise<void>;
   private currentNodeId?: string;
   private selectionMode: PreviewSelectionMode = "part";
   private shadingMode: PreviewShadingMode = "shaded-edges";
+  private lightingMode: PreviewLightingMode = "studio";
   private axesVisible = true;
   private disposed = false;
   private suppressSelectionEvent = false;
@@ -129,12 +134,31 @@ export default class ChiliPreviewHost {
     this.view = this.visual.createView("CAD Preview", Plane.XY) as ThreeView;
     this.application.activeView = this.view;
     this.selectionHandler = this.visual.eventHandler;
+    const requestedLighting = new URLSearchParams(window.location.search).get("lighting");
+    if (
+      requestedLighting === "studio" ||
+      requestedLighting === "key" ||
+      requestedLighting === "soft"
+    ) {
+      this.lightingMode = requestedLighting;
+    }
     this.prepareLighting();
 
     this.view.setDom(host);
     const oldGizmo = host.querySelector<HTMLElement>("view-gizmo");
     if (oldGizmo) oldGizmo.style.display = "none";
-    this.viewCube = new ViewCube(host, (direction) => this.setStandardView(direction));
+    this.viewCube = new ViewCube(host, {
+      onSelect: (direction) => this.setStandardView(direction),
+      onFit: () => this.fit(),
+      onCameraType: (type) => this.setCameraType(type),
+      onShadingMode: (mode) => this.setShadingMode(mode),
+      onLightingMode: (mode) => this.setLightingMode(mode)
+    });
+    this.viewCube.updateState({
+      cameraType: this.view.cameraController.cameraType,
+      shadingMode: this.shadingMode,
+      lightingMode: this.lightingMode
+    });
     this.viewCube.update(this.view.camera.quaternion);
     this.prepareHost();
     this.bindEvents();
@@ -151,6 +175,7 @@ export default class ChiliPreviewHost {
     const root = this.document.modelManager.rootNode;
     nodes.forEach((node) => this.addPreviewNode(node, root));
     this.document.visual.update();
+    this.enableModelShadows();
     this.modelBounds.setFromObject(this.visual.context.visualShapes);
     this.view.cameraController.fitContent();
     this.syncEdgeOverlays();
@@ -182,6 +207,7 @@ export default class ChiliPreviewHost {
       this.nodeById.clear();
       this.document.modelManager.rootNode.add(importedNode);
       this.document.visual.update();
+      this.enableModelShadows();
       this.modelBounds.setFromObject(this.visual.context.visualShapes);
       this.view.cameraController.fitContent();
       this.syncEdgeOverlays();
@@ -260,6 +286,14 @@ export default class ChiliPreviewHost {
     this.view.cameraController.cameraType = type;
     controller.lookAt(controller.cameraPosition, controller.cameraTarget, up);
     this.view.cameraController.fitContent();
+    this.updateView();
+    this.emitStateChanged();
+  }
+
+  setLightingMode(mode: PreviewLightingMode): void {
+    this.ensureActive();
+    this.lightingMode = mode;
+    this.applyLightingProfile();
     this.updateView();
     this.emitStateChanged();
   }
@@ -744,29 +778,76 @@ export default class ChiliPreviewHost {
   }
 
   private prepareLighting(): void {
-    // Replace the flat, bright ambient baseline with soft studio illumination.
+    // Use a restrained studio rig so curved CAD surfaces keep readable highlights.
+    this.view.renderer.shadowMap.enabled = true;
+    this.view.renderer.shadowMap.type = PCFSoftShadowMap;
     this.visual.scene.traverse((object) => {
       if (object instanceof AmbientLight) {
+        this.ambientLight = object;
         object.color.setHex(0xffffff);
-        object.intensity = 0.45;
       }
     });
-    this.view.dynamicLight.intensity = 0.35;
-    this.hemisphereLight = new HemisphereLight(0xffffff, 0x8796ab, 0.8);
+    this.hemisphereLight = new HemisphereLight(0xf7fbff, 0x617286, 0.75);
     this.hemisphereLight.position.set(0, 0, 1);
     this.visual.scene.add(this.hemisphereLight);
     const sources = [
-      { name: "Studio key", color: 0xffffff, intensity: 1.8, direction: new Vector3(-3, 4, 5) },
-      { name: "Studio fill", color: 0xdce8ff, intensity: 0.65, direction: new Vector3(4, 1, 2) },
-      { name: "Studio rim", color: 0xffffff, intensity: 1.0, direction: new Vector3(1, 3, -4) }
+      { name: "Studio key", color: 0xffffff, intensity: 2.2, direction: new Vector3(-3, 4, 5) },
+      { name: "Studio fill", color: 0xdce8ff, intensity: 0.85, direction: new Vector3(4, 1, 2) },
+      { name: "Studio rim", color: 0xffead2, intensity: 1.25, direction: new Vector3(1, 3, -4) }
     ];
     for (const source of sources) {
       const light = new DirectionalLight(source.color, source.intensity);
       light.name = source.name;
+      light.castShadow = source.name === "Studio key";
+      if (light.castShadow) {
+        light.shadow.mapSize.set(1024, 1024);
+        light.shadow.camera.left = -2500;
+        light.shadow.camera.right = 2500;
+        light.shadow.camera.top = 2500;
+        light.shadow.camera.bottom = -2500;
+        light.shadow.camera.near = 1;
+        light.shadow.camera.far = 10000;
+        light.shadow.bias = -0.0002;
+        light.shadow.normalBias = 0.02;
+        light.shadow.camera.updateProjectionMatrix();
+      }
       this.visual.scene.add(light, light.target);
       this.studioLights.push({ light, direction: source.direction.normalize() });
     }
+    this.applyLightingProfile();
     this.updateLighting();
+  }
+
+  private applyLightingProfile(): void {
+    const profiles: Record<
+      PreviewLightingMode,
+      {
+        ambient: number;
+        dynamic: number;
+        hemisphere: number;
+        directionals: [number, number, number];
+      }
+    > = {
+      studio: { ambient: 0.3, dynamic: 0.25, hemisphere: 0.75, directionals: [2.2, 0.85, 1.25] },
+      key: { ambient: 0.18, dynamic: 0.2, hemisphere: 0.45, directionals: [2.8, 0.35, 0.8] },
+      soft: { ambient: 0.42, dynamic: 0.2, hemisphere: 1.05, directionals: [1.25, 0.95, 0.55] }
+    };
+    const profile = profiles[this.lightingMode];
+    if (this.ambientLight) this.ambientLight.intensity = profile.ambient;
+    this.view.dynamicLight.intensity = profile.dynamic;
+    if (this.hemisphereLight) this.hemisphereLight.intensity = profile.hemisphere;
+    this.studioLights.forEach(({ light }, index) => {
+      light.intensity = profile.directionals[index];
+    });
+  }
+
+  private enableModelShadows(): void {
+    this.visual.scene.traverse((object) => {
+      if (object instanceof ThreeMesh) {
+        object.castShadow = true;
+        object.receiveShadow = true;
+      }
+    });
   }
 
   private updateLighting(): void {
@@ -836,12 +917,19 @@ export default class ChiliPreviewHost {
   };
 
   private emitStateChanged(): void {
-    this.options.onStateChanged?.({
+    const state = {
       selectionMode: this.selectionMode,
       shadingMode: this.shadingMode,
       cameraType: this.view.cameraController.cameraType,
+      lightingMode: this.lightingMode,
       axesVisible: this.axesVisible
+    };
+    this.viewCube?.updateState({
+      cameraType: state.cameraType,
+      shadingMode: state.shadingMode,
+      lightingMode: state.lightingMode
     });
+    this.options.onStateChanged?.(state);
   }
 
   private childrenOf(node: INodeLinkedList): INode[] {
