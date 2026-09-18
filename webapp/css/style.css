@@ -8,6 +8,11 @@ body,
   overflow: hidden;
 }
 
+.appLanguageLabel {
+  margin-left: 0.75rem;
+  color: var(--sapShell_TextColor);
+}
+
 #container,
 .sapUiComponentContainer,
 .sapTntToolPage,

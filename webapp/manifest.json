@@ -34,18 +34,11 @@
         "sap.ui.core": {},
         "sap.ui.layout": {},
         "sap.ui.table": {},
-        "sap.ui.unified": {}
+        "sap.ui.unified": {},
+        "sap.uxap": {}
       }
     },
-    "models": {
-      "i18n": {
-        "type": "sap.ui.model.resource.ResourceModel",
-        "settings": {
-          "bundleName": "com.company.superbom.i18n.i18n",
-          "async": true
-        }
-      }
-    },
+    "models": {},
     "contentDensities": {
       "compact": true,
       "cozy": true
@@ -60,6 +53,16 @@
         "async": true
       },
       "routes": [
+        {
+          "pattern": "configuration",
+          "name": "configuration",
+          "target": "configuration"
+        },
+        {
+          "pattern": "feature-library",
+          "name": "featureLibrary",
+          "target": "configuration"
+        },
         {
           "pattern": "",
           "name": "bom",
@@ -97,6 +100,10 @@
         }
       ],
       "targets": {
+        "configuration": {
+          "viewName": "Configuration",
+          "viewId": "configuration"
+        },
         "home": {
           "viewName": "Home",
           "viewId": "home"

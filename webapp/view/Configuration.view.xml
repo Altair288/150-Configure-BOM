@@ -1,0 +1,5 @@
+<mvc:View controllerName="com.company.superbom.controller.Configuration" xmlns:mvc="sap.ui.core.mvc" xmlns="sap.m" displayBlock="true" height="100%">
+  <Page showHeader="false" enableScrolling="false" class="configurationPage sapUiSizeCompact">
+    <content><VBox id="workspace" height="100%" fitContainer="true" /></content>
+  </Page>
+</mvc:View>

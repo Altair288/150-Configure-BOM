@@ -140,7 +140,7 @@
                 rowSelectionChange=".onSelectionChange"
                 class="bomTreeTable">
                 <t:columns>
-                  <t:Column width="18rem" sortProperty="number">
+                  <t:Column width="60%" sortProperty="number" showSortMenuEntry="true" showFilterMenuEntry="true">
                     <Label text="{i18n>identity}" />
                     <t:template>
                       <HBox alignItems="Center" class="bomIdentityCell">
@@ -150,13 +150,13 @@
                       </HBox>
                     </t:template>
                   </t:Column>
-                  <t:Column width="6rem" hAlign="Center">
+                  <t:Column width="15%" hAlign="Center" showSortMenuEntry="true" showFilterMenuEntry="true">
                     <Label text="{i18n>changeStatus}" />
                     <t:template>
                       <ObjectStatus text="{bom>changeStatus}" state="Warning" />
                     </t:template>
                   </t:Column>
-                  <t:Column width="5rem" hAlign="End">
+                  <t:Column width="10%" hAlign="End" showSortMenuEntry="true" showFilterMenuEntry="true">
                     <Label text="{i18n>quantity}" />
                     <t:template>
                       <HBox justifyContent="End" class="bomQuantityCell">
@@ -165,7 +165,7 @@
                       </HBox>
                     </t:template>
                   </t:Column>
-                  <t:Column width="7rem">
+                  <t:Column width="15%" showSortMenuEntry="true" showFilterMenuEntry="true">
                     <Label text="{i18n>state}" />
                     <t:template>
                       <ObjectStatus text="{bom>state}" state="Success" />

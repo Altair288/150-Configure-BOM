@@ -2,6 +2,7 @@
   controllerName="com.company.superbom.controller.App"
   xmlns:mvc="sap.ui.core.mvc"
   xmlns="sap.m"
+  xmlns:core="sap.ui.core"
   xmlns:tnt="sap.tnt"
   displayBlock="true"
   height="100%">
@@ -15,6 +16,18 @@
           press=".onToggleSideNavigation" />
         <Title text="{i18n>appTitle}" level="H2" />
         <ToolbarSpacer />
+        <Text text="{i18n>language}" class="appLanguageLabel" />
+        <Select
+          selectedKey="{ui>/language}"
+          tooltip="{i18n>language}"
+          width="7.5rem"
+          change=".onLanguageChange">
+          <items>
+            <core:Item key="zh-CN" text="中文" />
+            <core:Item key="en" text="English" />
+            <core:Item key="ja" text="日本語" />
+          </items>
+        </Select>
         <ObjectStatus text="{i18n>environmentLabel}" state="Information" />
       </tnt:ToolHeader>
     </tnt:header>
@@ -23,6 +36,8 @@
         selectedKey="{ui>/selectedNavigationKey}"
         itemSelect=".onNavigationSelect">
         <tnt:NavigationList>
+          <tnt:NavigationListItem key="configuration" text="{i18n>navConfiguration}" icon="sap-icon://product" />
+          <tnt:NavigationListItem key="featureLibrary" text="{i18n>navFeatureLibrary}" icon="sap-icon://collections-management" />
           <tnt:NavigationListItem key="home" text="{i18n>navHome}" icon="sap-icon://home" />
           <tnt:NavigationListItem key="products" text="{i18n>navProducts}" icon="sap-icon://product" />
           <tnt:NavigationListItem key="bom" text="{i18n>navBom}" icon="sap-icon://tree" />

@@ -1,0 +1,250 @@
+.configurationPage {
+  background: #f5f6f7;
+}
+.cmLayoutHost > .sapMFlexItem { flex: 1 1 0; height: 100%; min-height: 0; }
+.cmLayoutHost .sapFFCL { height: 100%; }
+.cmContextList { overflow-x: hidden; }
+.cmContextList .sapMTree { height: 100%; }
+.cmContextList .sapMTreeItemBase { min-height: 2rem; height: 2rem; }
+.cmContextList .sapMTreeItemBase .sapMTreeItemBaseExpander,
+.cmContextList .sapMTreeItemBase .sapMTreeItemBaseIcon { margin-top: 0; margin-bottom: 0; }
+.cmContextList .sapUiTable { border: 0; }
+.cmContextList .sapUiTableCnt { border-left: 0; border-right: 0; }
+.cmContextList .sapUiTableCell .sapMObjectIdentifierTitle { font-size: .8125rem; }
+.cmContextList .sapUiTableCell .sapMObjectIdentifierText { font-size: .7rem; }
+.cmContextList .sapUiTableColHdrCnt { background: #f7f9fa; }
+.cmContextList .sapUiTableCell .sapMText { line-height: 1.2rem; white-space: nowrap; }
+.cmContextList .sapUiTableRowHdr { width: 2rem; }
+.cmContextList .sapUiTableRowHdrScr { width: 2rem; }
+.cmContextList .sapUiTableCtrl tr { height: 2rem; }
+.cmContextList .sapUiTableCell .sapMObjStatus { white-space: nowrap; font-size: .75rem; }
+.cmEditDialog .sapMLabel { min-width: 9rem; white-space: nowrap; }
+.cmEditDialog .sapUiFormResGridCont { padding-left: .5rem; padding-right: .5rem; }
+.cmValueHelpDialog .sapUiTable { border: 0; }
+.cmValueHelpDialog .sapUiTableCnt { border: 0; }
+.cmValueHelpDialog .sapMSearchField { margin: 0; }
+.cmValueHelpFilterBar { padding: .35rem .5rem; background: #f7f9fa; border-bottom: 1px solid #d5dce2; }
+.cmValueHelpBody {
+  min-height: 0;
+  box-sizing: border-box;
+  padding: 0 2.5rem 1rem;
+  gap: 0.75rem;
+}
+.cmValueHelpBody > .sapMFlexItem:last-child { min-height: 0; }
+.cmValueHelpBody .sapUiTable { width: 100%; height: 100%; }
+.cmValueHelpBody .sapMTB { padding-left: 0; padding-right: 0; }
+.cmContextList .sapUiTableCnt,
+.cmContextList .sapUiTableCCnt,
+.cmContextList .sapUiTableCtrl tr,
+.cmContextList .sapUiTableRowHdr,
+.cmContextList .sapUiTableCell {
+  border-color: transparent;
+}
+.cmContextList .sapUiTableCtrl tr.sapUiTableRowSel > td {
+  background: #eaf3fb;
+}
+.configurationPage .sapUiFormResGrid { background: transparent; border-radius: 0; }
+.configurationPage .sapMPageCont {
+  overflow: hidden;
+}
+.configurationPage .sapMFlexItem {
+  min-height: 0;
+  min-width: 0;
+}
+.configurationPage .cmTopbar {
+  background: #eff3f7;
+  border-bottom: 1px solid #ccd6df;
+  padding: 0 1rem;
+  min-height: 2.75rem;
+}
+.configurationPage .sapUxAPObjectPageHeaderIdentifier {
+  padding: 0.8rem 1.5rem 0.65rem;
+}
+.configurationPage .sapUxAPObjectPageHeaderIdentifierTitle {
+  font-size: 1.5rem;
+}
+.configurationPage .sapUxAPObjectPageHeaderIdentifierDescription {
+  font-size: 0.8125rem;
+}
+.configurationPage .sapMBtnInner,
+.configurationPage .sapMInputBaseContentWrapper,
+.configurationPage .sapMSlt {
+  border-radius: 0.2rem;
+}
+.cmWorkspace {
+  background: white;
+}
+.cmWorkspace > .sapMFlexItem > .sapMTB {
+  padding: 0 1rem;
+}
+.cmContextList {
+  background: #fafbfc;
+  border-right: 1px solid #d5dce2;
+}
+.cmContextList .sapMLIBSelected {
+  background: #e7f1fa;
+  box-shadow: inset 3px 0 #0070f2;
+}
+.cmContextList .sapMSLITitleOnly,
+.cmContextList .sapMSLITitle {
+  font-size: 0.875rem;
+}
+.cmFilterRow {
+  gap: 0.4rem;
+  padding: 0 0.5rem 0.5rem;
+}
+.cmMainTabs .sapMITBContainerContent {
+  display: none;
+}
+.cmMainTabs .sapMITBHead {
+  margin-top: 0;
+}
+.cmSection {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid #d5dce2;
+  gap: 1.5rem;
+}
+.cmScopeNote {
+  padding-left: 1.5rem;
+  border-left: 1px solid #d5dce2;
+  gap: 0.7rem;
+}
+.cmScopeContent > .sapMFlexItem > .sapMTB {
+  padding: 0 1rem;
+  background: #f7f9fa;
+}
+.cmModelColumns {
+  align-items: stretch;
+  overflow: hidden;
+}
+.cmModelTree {
+  background: #fafbfc;
+  border-right: 1px solid #d5dce2;
+  flex-shrink: 0;
+}
+.cmModelTree > .sapMFlexItem:has(.sapUiTable) {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+.cmModelTree .sapUiTable {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+.cmScopeContent .sapUiTable {
+  width: 100%;
+}
+.cmModelTree > .sapMFlexItem > .sapMSF,
+.cmModelTree > .sapMFlexItem > .sapMSlt {
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+}
+.cmModelTree .sapUiTableRowHdrScr {
+  width: 0;
+}
+.cmModelTree .sapMObjectIdentifierTitle .sapMText {
+  font-size: 0.8125rem;
+}
+.cmModelTree .sapMObjectIdentifierText {
+  margin-top: 0.1rem;
+  font-size: 0.7rem;
+}
+.cmModelTree .sapUiTableCell {
+  border-bottom-color: #e7ebee;
+}
+.cmTreeLegend {
+  padding: 0.65rem 0.6rem;
+  color: #647787;
+  font-size: 0.7rem;
+}
+.cmEditorContent {
+  padding: 0 0 1rem;
+  background: white;
+  min-width: 26rem;
+}
+.cmBreadcrumb {
+  padding: 0.85rem 1.25rem 0;
+  font-size: 0.75rem;
+  color: #647787;
+}
+.cmObjectTags {
+  gap: 1rem;
+  padding: 0.3rem 1.5rem 1rem;
+}
+.cmObjectTags .sapMObjStatus {
+  border: 1px solid #d5dce2;
+  background: #f6f8f9;
+  padding: 0.15rem 0.5rem;
+  border-radius: 2px;
+}
+.cmEditorContent .sapMITBContent > .sapMVBox > .sapMFlexItem > .sapMTB {
+  padding-left: 1rem;
+}
+.cmInspector {
+  border-left: 1px solid #d5dce2;
+  background: #f8fafb;
+  flex-shrink: 0;
+}
+.cmInspector .sapMTB {
+  background: #eff3f6;
+  padding: 0 0.75rem;
+}
+.cmInspectorForm {
+  padding: 0.5rem 1rem 1rem;
+}
+.cmInspectorForm .sapMLabel {
+  margin-top: 0.65rem;
+  font-size: 0.75rem;
+  color: #526677;
+}
+.cmInspectorForm .sapMMsgStrip {
+  margin-top: 1rem;
+}
+.cmLibraryInspector {
+  border-left: 1px solid #d5dce2;
+  background: #fafbfc;
+  flex-shrink: 0;
+}
+.cmLibraryDetail .sapMMsgStrip {
+  margin: 0.75rem;
+}
+.cmPreviewDrawer.sapMDialog {
+  box-sizing: border-box;
+  left: auto !important;
+  right: 0 !important;
+  top: 0 !important;
+  transform: none !important;
+  max-height: 100vh !important;
+  height: 100vh !important;
+  border-radius: 0 !important;
+}
+.cmPreviewForm {
+  padding: 1rem 1.5rem 2rem;
+  gap: 0.4rem;
+}
+.cmPreviewGroup {
+  padding: 1.2rem 0 0.6rem;
+  border-bottom: 1px solid #ccd6df;
+  margin-bottom: 0.65rem;
+}
+.cmPreviewQuestion {
+  color: #647787;
+  font-size: 0.75rem;
+  padding-bottom: 0.3rem;
+}
+.cmDomainHint {
+  color: #647787;
+  font-size: 0.75rem;
+  margin-bottom: 0.6rem;
+}
+@media (min-width: 2200px) {
+  .cmModelTree {
+    width: 25rem !important;
+  }
+  .cmInspector {
+    width: 22rem !important;
+  }
+  .cmEditorContent {
+    padding: 0 1rem 1.5rem;
+  }
+}

@@ -1,12 +1,15 @@
 import JSONModel from "sap/ui/model/json/JSONModel";
 import type { SideNavigation$ItemSelectEvent } from "sap/tnt/SideNavigation";
 import type { Router$RouteMatchedEvent } from "sap/ui/core/routing/Router";
+import type { Select$ChangeEvent } from "sap/m/Select";
 
 import BaseController from "./BaseController";
 
 export default class AppController extends BaseController {
   private readonly navigationRoutes: Record<string, string> = {
     home: "home",
+    configuration: "configuration",
+    featureLibrary: "featureLibrary",
     bom: "bom",
     configurator: "configurator",
     products: "product",
@@ -25,6 +28,15 @@ export default class AppController extends BaseController {
   public onToggleSideNavigation(): void {
     const uiModel = this.getModel<JSONModel>("ui");
     uiModel.setProperty("/sideExpanded", !uiModel.getProperty("/sideExpanded"));
+  }
+
+  public onLanguageChange(event: Select$ChangeEvent): void {
+    const language = event.getSource().getSelectedKey();
+    sap.ui.getCore().getConfiguration().setLanguage(language);
+    localStorage.setItem("superbom.language", language);
+    this.getModel<JSONModel>("ui").setProperty("/language", language);
+    // Recreate programmatic workbench controls so their text is built from the new bundle.
+    window.location.reload();
   }
 
   public onNavigationSelect(event: SideNavigation$ItemSelectEvent): void {

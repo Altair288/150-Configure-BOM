@@ -22,7 +22,8 @@ export function createUiModel(): JSONModel {
   const state: UiState = {
     sideExpanded: false,
     selectedNavigationKey: "home",
-    busy: false
+    busy: false,
+    language: sap.ui.getCore().getConfiguration().getLanguage()
   };
 
   return new JSONModel(state);

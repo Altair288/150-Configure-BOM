@@ -16,6 +16,7 @@ framework:
     - name: sap.ui.layout
     - name: sap.ui.table
     - name: sap.ui.unified
+    - name: sap.uxap
     - name: themelib_sap_horizon
 
 server:

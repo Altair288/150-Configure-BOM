@@ -2,6 +2,7 @@ export interface UiState {
   sideExpanded: boolean;
   selectedNavigationKey: string;
   busy: boolean;
+  language: string;
 }
 
 export interface BomNode {

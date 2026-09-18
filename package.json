@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "npm run typecheck && npm run lint"
+    "test": "npm run typecheck && npm run lint && npm run test:configuration",
+    "test:configuration": "node --experimental-strip-types --test tests/configuration.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
