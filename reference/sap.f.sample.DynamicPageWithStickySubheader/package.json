@@ -1,0 +1,13 @@
+{
+  "name": "sap-f-sample--dynamic-page-with-sticky-subheader",
+  "version": "1.0.0",
+  "author": "SAP SE",
+  "description": "Sample: Dynamic Page with Sticky Subheader",
+  "scripts": {
+    "start": "ui5 serve",
+    "build": "ui5 build"
+  },
+  "devDependencies": {
+    "@ui5/cli": "^4"
+  }
+}

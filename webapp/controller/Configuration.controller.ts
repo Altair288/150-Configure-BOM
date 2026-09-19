@@ -41,10 +41,14 @@ import ColumnListItem from "sap/m/ColumnListItem";
 import SimpleForm from "sap/ui/layout/form/SimpleForm";
 import TreeTable from "sap/ui/table/TreeTable";
 import TreeColumn from "sap/ui/table/Column";
+import Fixed from "sap/ui/table/rowmodes/Fixed";
 import Auto from "sap/ui/table/rowmodes/Auto";
 import FlexibleColumnLayout from "sap/f/FlexibleColumnLayout";
 import FlexibleColumnLayoutData from "sap/f/FlexibleColumnLayoutData";
 import FlexibleColumnLayoutDataForDesktop from "sap/f/FlexibleColumnLayoutDataForDesktop";
+import DynamicPage from "sap/f/DynamicPage";
+import DynamicPageTitle from "sap/f/DynamicPageTitle";
+import DynamicPageHeader from "sap/f/DynamicPageHeader";
 import DragDropInfo from "sap/ui/core/dnd/DragDropInfo";
 import Event from "sap/ui/base/Event";
 import ObjectPageHeader from "sap/uxap/ObjectPageHeader";
@@ -281,9 +285,9 @@ const form = (pairs: [string, string | Control][]): SimpleForm =>
     editable: false,
     layout: "ResponsiveGridLayout",
     columnsL: 2,
-    columnsM: 1,
-    labelSpanL: 4,
-    labelSpanM: 4,
+    columnsM: 2,
+    labelSpanL: 3,
+    labelSpanM: 3,
     content: pairs.flatMap(([label, value]) => [
       new Label({ text: tr(label) }),
       typeof value === "string" ? txt(value || "—") : value
@@ -313,6 +317,7 @@ export default class ConfigurationController extends BaseController {
   private libraryTable?: Table;
   private libraryDetail?: VBox;
   private editorTab = "general";
+  private profileOpen = false;
 
   public onInit(): void {
     sap.ui.getCore().attachLocalizationChanged(this.onLocalizationChanged, this);
@@ -443,7 +448,7 @@ export default class ConfigurationController extends BaseController {
       content: [this.buildContextWorkspace()]
     });
     const layout = new FlexibleColumnLayout({
-      layout: this.mode === "features" ? "MidColumnFullScreen" : "TwoColumnsMidExpanded",
+      layout: "TwoColumnsMidExpanded",
       beginColumnPages: [begin],
       midColumnPages: [mid]
     });
@@ -684,42 +689,48 @@ export default class ConfigurationController extends BaseController {
       next.contexts.splice(to, 0, moved);
     }, "Context 顺序已更新");
   }
-  private buildContextWorkspace(): VBox {
+  private buildContextWorkspace(): Control {
     const c = this.currentContext();
-    const header = new ObjectPageHeader({
-      objectTitle: c.name,
-      objectSubtitle: `${c.code}  ·  ${tr("Product Configuration Context")}`,
-      isObjectTitleAlwaysVisible: true,
-      isObjectSubtitleAlwaysVisible: true
-    });
-    const actions = new Toolbar({
-      content: [
-        ...(this.mode === "features"
-          ? [
-              button(
-                "上下文列表",
-                () => {
-                  this.mode = "context";
-                  this.render();
-                },
-                "sap-icon://nav-back"
-              )
-            ]
-          : []),
-        status(c.status),
-        txt(`版本 ${String(c.version).padStart(2, "0")}`),
-        txt(`负责人 ${c.owner}`),
-        new ToolbarSpacer(),
-        button("编辑", () => this.editContext(false), "sap-icon://edit"),
-        button("复制", () => this.duplicateContext(), "sap-icon://copy"),
-        button("版本", () => this.contextVersions(), "sap-icon://history"),
-        button(
-          c.status === "Draft" ? "发布" : c.status === "Inactive" ? "恢复草稿" : "新建版本",
-          () => this.transitionContext()
-        ),
-        button("停用", () => this.deactivateContext())
+    const heading = new VBox({
+      items: [
+        new Title({ text: c.name, level: "H2" }),
+        txt(
+          `${c.code} · ${this.store.productFamilies.find((f) => f.id === c.productFamilyId)?.name ?? ""} · V${String(c.version).padStart(2, "0")} · ${c.status}`
+        )
       ]
     });
+    const titleActions = [
+      button("编辑", () => this.editContext(false), "sap-icon://edit"),
+      button("复制", () => this.duplicateContext(), "sap-icon://copy"),
+      button("版本", () => this.contextVersions(), "sap-icon://history"),
+      button(
+        c.status === "Draft" ? "发布" : c.status === "Inactive" ? "恢复草稿" : "新建版本",
+        () => this.transitionContext()
+      ),
+      button("停用", () => this.deactivateContext())
+    ];
+    const header = new HBox({
+      width: "100%",
+      items: [
+        grow(
+          form([
+            [
+              "Product Family",
+              this.store.productFamilies.find((f) => f.id === c.productFamilyId)?.name ?? ""
+            ],
+            ["Organization", c.organization],
+            ["Created By", c.createdBy],
+            ["Last Modified", c.modified],
+            ["Description", c.description]
+          ])
+        )
+      ]
+    }).addStyleClass("cmDynamicHeaderContent cmContextMetadataOnly");
+    const contentHost = new VBox({
+      height: "100%",
+      fitContainer: true,
+      items: [grow(this.mode === "context" ? this.buildScope() : this.buildFeatureWorkspace())]
+    }).addStyleClass("cmDynamicPageContentHost");
     const tabs = new IconTabBar({
       expandable: false,
       headerMode: "Inline",
@@ -738,19 +749,26 @@ export default class ConfigurationController extends BaseController {
       ],
       select: (e) => {
         this.mode = e.getParameter("key") as "context" | "features";
-        this.render();
+        contentHost.destroyItems();
+        contentHost.addItem(
+          grow(this.mode === "context" ? this.buildScope() : this.buildFeatureWorkspace())
+        );
       }
     }).addStyleClass("cmMainTabs");
-    return new VBox({
-      height: "100%",
-      fitContainer: true,
-      items: [
-        header,
-        actions,
-        tabs,
-        grow(this.mode === "context" ? this.buildScope() : this.buildFeatureWorkspace())
-      ]
-    }).addStyleClass("cmWorkspace");
+    const page = new DynamicPage({
+      fitContent: false,
+      headerExpanded: true,
+      toggleHeaderOnTitleClick: this.mode !== "features",
+      stickySubheaderProvider: tabs.getId(),
+      title: new DynamicPageTitle({ heading, actions: titleActions }),
+      header: new DynamicPageHeader({ pinnable: true, content: [header] }),
+      content: new VBox({
+        height: "100%",
+        fitContainer: true,
+        items: [tabs, contentHost]
+      }).addStyleClass("cmDynamicPageContent")
+    }).addStyleClass("cmWorkspace cmContextDynamicPage sapUiNoContentPadding");
+    return page;
   }
   private buildScope(): Control {
     const c = this.currentContext(),
@@ -779,7 +797,7 @@ export default class ConfigurationController extends BaseController {
     }
     const tree = new TreeTable({
       width: "100%",
-      rowMode: new Auto({ minRowCount: 5, rowContentHeight: 40 }),
+      rowMode: new Fixed({ rowCount: 14, rowContentHeight: 40 }),
       selectionMode: "Single",
       selectionBehavior: "RowOnly",
       enableSelectAll: false,
@@ -829,40 +847,10 @@ export default class ConfigurationController extends BaseController {
     tree.bindRows({ path: "/rows", parameters: { arrayNames: ["children"] } });
     tree.expandToLevel(3);
     const profile = this.currentProfile();
-    const content = new VBox({
+    const treeWorkArea = new VBox({
+      height: "100%",
+      fitContainer: true,
       items: [
-        new HBox({
-          items: [
-            grow(
-              new VBox({
-                items: [
-                  title("配置边界"),
-                  form([
-                    ["Product Family", pf.name],
-                    ["Organization", c.organization],
-                    ["Description", c.description],
-                    ["Created By", c.createdBy],
-                    ["Created Date", c.createdDate],
-                    ["Last Modified", c.modified]
-                  ])
-                ]
-              })
-            ),
-            new VBox({
-              width: "17rem",
-              items: [
-                title("建模进度"),
-                txt("01  定义产品范围"),
-                txt("02  建立配置词汇"),
-                new MessageStrip({
-                  text: "当前阶段定义产品与配置问题，不执行配置逻辑。",
-                  type: "Information",
-                  showIcon: true
-                })
-              ]
-            }).addStyleClass("cmScopeNote")
-          ]
-        }).addStyleClass("cmSection"),
         new Toolbar({
           content: [
             title(`产品族结构 (${products.length})`),
@@ -873,34 +861,70 @@ export default class ConfigurationController extends BaseController {
             button("移除", () => this.removeProduct(), "sap-icon://delete")
           ]
         }),
-        tree,
+        grow(tree),
         new Toolbar({
           content: [
             title("Configuration Profile"),
             status(profile.configurationMode),
+            txt(`${profile.featureSourceMode} · ${profile.featureStructureMode}`),
             new ToolbarSpacer(),
-            button("编辑 Profile", () => this.editProfile(), "sap-icon://edit")
+            button(
+              "查看 Profile",
+              () => {
+                this.profileOpen = true;
+                this.render();
+              },
+              "sap-icon://inspect"
+            )
           ]
-        }),
-        form([
-          ["Profile Name", profile.name],
-          ["Profile Code", profile.code],
-          ["Configuration Mode", profile.configurationMode],
-          ["Feature Source", profile.featureSourceMode],
-          ["Feature Structure", profile.featureStructureMode],
-          ["Default Behavior", profile.defaultBehavior],
-          ["Allow Multi Select", profile.allowMulti ? "Yes" : "No"],
-          ["Allow Numeric Range", profile.allowRange ? "Yes" : "No"],
-          ["Allow Free Text", profile.allowText ? "Yes" : "No"]
-        ])
+        })
       ]
     }).addStyleClass("cmScopeContent");
-    return new ScrollContainer({
+    const profilePanel = this.profileOpen
+      ? new VBox({
+          width: "24rem",
+          height: "100%",
+          fitContainer: true,
+          items: [
+            new Toolbar({
+              content: [
+                title("Configuration Profile"),
+                new ToolbarSpacer(),
+                button(
+                  "",
+                  () => {
+                    this.profileOpen = false;
+                    this.render();
+                  },
+                  "sap-icon://decline"
+                )
+              ]
+            }),
+            form([
+              ["Profile Name", profile.name],
+              ["Profile Code", profile.code],
+              ["配置维度", profile.configurationMode],
+              ["特征来源", profile.featureSourceMode],
+              ["Feature Structure", profile.featureStructureMode],
+              ["Default Behavior", profile.defaultBehavior]
+            ]),
+            new Toolbar({
+              content: [
+                new Button({
+                  text: "编辑 Profile",
+                  type: "Emphasized",
+                  press: () => this.editProfile()
+                })
+              ]
+            })
+          ]
+        }).addStyleClass("cmProfileInspector")
+      : undefined;
+    return new HBox({
       height: "100%",
-      vertical: true,
-      horizontal: false,
-      content: [content]
-    });
+      fitContainer: true,
+      items: [grow(treeWorkArea), ...(profilePanel ? [profilePanel] : [])]
+    }).addStyleClass("cmScopeLayout");
   }
   private editDialog(
     name: string,
@@ -1613,7 +1637,7 @@ export default class ConfigurationController extends BaseController {
     });
     this.tree = new TreeTable({
       width: "100%",
-      rowMode: new Auto({ minRowCount: 5, rowContentHeight: 36 }),
+      rowMode: new Fixed({ rowCount: 18, rowContentHeight: 36 }),
       selectionMode: "Single",
       selectionBehavior: "RowOnly",
       enableSelectAll: false,

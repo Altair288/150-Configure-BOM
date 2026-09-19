@@ -1,0 +1,14 @@
+sap.f.FlexibleColumnLayout
+sap.f.GridContainer
+sap.m.IconTabBar
+sap.m.MessageView
+sap.uxap.ObjectPageSubSection
+sap.m.OverflowToolbar
+sap.m.semantic.SemanticPage
+
+sap.ui.comp.smartform.SmartForm
+sap.ui.comp.smarttable.SmartTable
+
+sap.ui.comp.smartcontrols
+
+sap.m.Wizard

@@ -4,7 +4,7 @@
   "private": true,
   "description": "SAPUI5 Super BOM Configurator foundation",
   "scripts": {
-    "start": "npm run build:viewer && ui5 serve --open index.html",
+    "start": "npm run build:viewer && ui5 serve --accept-remote-connections --open index.html",
     "build": "npm run build:viewer && ui5 build --clean-dest",
     "build:viewer": "rspack build --config viewer.rspack.config.mjs",
     "typecheck": "tsc --noEmit",

@@ -74,6 +74,26 @@
 .cmWorkspace {
   background: white;
 }
+.cmContextDynamicPage .sapFDynamicPageContentWrapper,
+.cmContextDynamicPage .sapFDynamicPageContent,
+.cmContextDynamicPage .cmDynamicPageContent {
+  min-height: 0;
+  overflow: hidden;
+}
+.cmContextDynamicPage { height: 100%; }
+.cmContextDynamicPage .sapFDynamicPageContent { padding: 0; }
+.cmDynamicPageContent { display: flex; flex-direction: column; }
+.cmDynamicPageContentHost { min-height: 0; flex: 1 1 auto; overflow: hidden; }
+.cmDynamicHeaderContent { gap: 1.25rem; padding: .35rem 1rem .6rem; }
+.cmDynamicHeaderContent .sapUiFormResGrid { padding: 0; }
+.cmProgressRail { border-left: 1px solid #d5dce2; padding-left: 1rem; gap: .3rem; }
+.cmProgressRail .sapMText { font-size: .75rem; }
+.cmScopeLayout { min-height: 0; overflow: hidden; }
+.cmScopeLayout > .sapMFlexItem { min-height: 0; }
+.cmScopeContent { min-height: 0; }
+.cmScopeContent > .sapMFlexItem:has(.sapUiTable) { min-height: 0; flex: 1 1 auto; }
+.cmScopeContent .sapUiTable { min-height: 0; }
+.cmProfileInspector { border-left: 1px solid #d5dce2; background: #f8fafb; padding: .5rem; }
 .cmWorkspace > .sapMFlexItem > .sapMTB {
   padding: 0 1rem;
 }

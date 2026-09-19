@@ -1,0 +1,13 @@
+specVersion: "4.0"
+metadata:
+  name: sap-f-sample--dynamic-page-with-sticky-subheader
+type: application
+framework:
+  name: SAPUI5
+  version: "1.152.0"
+  libraries:
+    - name: themelib_sap_horizon
+    - name: sap.f
+    - name: sap.m
+    - name: sap.ui.core
+    - name: sap.ui.layout
