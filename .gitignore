@@ -1,6 +1,7 @@
 node_modules/
 dist/
 webapp/vendor/
+reference/
 .ui5/
 .DS_Store
 npm-debug.log*# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.

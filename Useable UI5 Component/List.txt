@@ -12,3 +12,5 @@ sap.ui.comp.smarttable.SmartTable
 sap.ui.comp.smartcontrols
 
 sap.m.Wizard
+
+sap.f.SidePanel

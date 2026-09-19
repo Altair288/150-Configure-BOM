@@ -50,6 +50,10 @@ export interface ProductModel extends Named {
   market: string;
   status: string;
 }
+export interface ProductModelGroup extends Named {
+  familyId: string;
+  sort: number;
+}
 export interface ConfigurationProfile extends Named {
   configurationMode: string;
   featureSourceMode: string;
@@ -131,6 +135,8 @@ export interface ConfigurationStore {
   contexts: ConfigurationContext[];
   productFamilies: ProductFamily[];
   products: ProductModel[];
+  /** Optional for backward compatibility with v1 workspaces created before groups were persisted. */
+  productGroups?: ProductModelGroup[];
   profiles: ConfigurationProfile[];
   groups: FeatureGroup[];
   families: FeatureFamily[];
@@ -432,6 +438,10 @@ export function validateStore(s: ConfigurationStore): string[] {
     [s.references, ["id", "familyId", "featureDefinitionId"]],
     [s.revisions, ["contextId", "date", "action", "snapshot"]]
   ];
+  if (s.productGroups !== undefined) {
+    if (!Array.isArray(s.productGroups)) return ["缺少 productGroups 数据集合"];
+    stringFields.push([s.productGroups, ["id", "code", "name", "description", "familyId"]]);
+  }
   if (
     stringFields.some(([rows, keys]) =>
       rows.some(
@@ -517,6 +527,19 @@ export function validateStore(s: ConfigurationStore): string[] {
   }
   for (const p of s.products)
     if (!s.productFamilies.some((f) => f.id === p.familyId)) errors.push("产品所属产品族不存在");
+  if (s.productGroups) {
+    for (const group of s.productGroups) {
+      if (!s.productFamilies.some((f) => f.id === group.familyId))
+        errors.push("产品模型组所属产品族不存在");
+      if (!Number.isInteger(group.sort) || group.sort < 0) errors.push("产品模型组排序无效");
+    }
+    for (const family of s.productFamilies) {
+      uniqueCodes(
+        s.productGroups.filter((group) => group.familyId === family.id),
+        "Product Model Group "
+      );
+    }
+  }
   for (const g of s.groups) {
     if (!dimensions.includes(g.dimension) || !Number.isInteger(g.sort) || g.sort < 0)
       errors.push("Group 维度或排序无效");
@@ -677,6 +700,11 @@ export function copyContext(
       .filter((p) => p.familyId === original.productFamilyId)
       .map((p) => ({ ...p, id: uid("product"), familyId: productFamily.id }))
   );
+  const copiedProductGroups = (s.productGroups ?? [])
+    .filter((group) => group.familyId === original.productFamilyId)
+    .map((group) => ({ ...group, id: uid("product-group"), familyId: productFamily.id }));
+  if (copiedProductGroups.length)
+    s.productGroups = [...(s.productGroups ?? []), ...copiedProductGroups];
   const localMap = new Map<string, string>();
   for (const group of s.groups.filter((g) => g.contextId === sourceId)) {
     const groupId = uid("group");
@@ -716,6 +744,7 @@ export function createSeed(): ConfigurationStore {
     contexts: [],
     productFamilies: [],
     products: [],
+    productGroups: [],
     profiles: [],
     groups: [],
     families: [],
@@ -795,6 +824,16 @@ export function createSeed(): ConfigurationStore {
         description: "配置目标产品"
       })
     );
+    for (const group of [...new Set(models.map(([, group]) => group))]) {
+      s.productGroups!.push({
+        id: `${key}-group-${group.replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase()}`,
+        familyId: `pf-${key}`,
+        code: `${key}-${group.replace(/[^a-zA-Z0-9]+/g, "-").toUpperCase()}`,
+        name: group,
+        description: `${group} 产品模型组`,
+        sort: s.productGroups!.filter((item) => item.familyId === `pf-${key}`).length + 1
+      });
+    }
   }
   const define = (
     code: string,

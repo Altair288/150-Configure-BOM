@@ -82,6 +82,7 @@ import type {
   FeatureDefinition,
   FeatureReference,
   ProductModel,
+  ProductModelGroup,
   FeatureValue,
   Named
 } from "../model/configuration";
@@ -246,6 +247,8 @@ const rawI18nKeys: Record<string, string> = {
   导出: "cmExport",
   编辑产品族: "cmEditProductFamily",
   添加产品: "cmAddProduct",
+  添加产品组: "cmAddProductGroup",
+  添加产品型号: "cmAddProductModel",
   移除: "cmRemove",
   "产品范围 / Context": "cmContextTab",
   "特征模型 / Feature Model": "cmFeatureModelTab",
@@ -318,6 +321,15 @@ export default class ConfigurationController extends BaseController {
   private libraryDetail?: VBox;
   private editorTab = "general";
   private profileOpen = false;
+  private scopeTree?: TreeTable;
+  private scopeModel?: JSONModel;
+  private scopeEditSnapshot?: unknown[];
+  private scopeEditMode = false;
+  private scopeEditButton?: Button;
+  private scopeSaveButton?: Button;
+  private scopeCancelButton?: Button;
+  private selectedProductGroup?: string;
+  private selectedProductGroupName?: string;
 
   public onInit(): void {
     sap.ui.getCore().attachLocalizationChanged(this.onLocalizationChanged, this);
@@ -383,9 +395,9 @@ export default class ConfigurationController extends BaseController {
   }
   private canEdit(): boolean {
     if (this.currentContext().status === "Draft") return true;
-    MessageBox.information(
-      "当前上下文为只读状态。请先创建新的草稿版本，再修改产品范围或特征模型。"
-    );
+    MessageToast.show("当前上下文为只读状态，请先创建新的草稿版本。", {
+      duration: 3500
+    });
     return false;
   }
   private commit(
@@ -755,6 +767,10 @@ export default class ConfigurationController extends BaseController {
         );
       }
     }).addStyleClass("cmMainTabs");
+    const contentSurface = new VBox({
+      fitContainer: true,
+      items: [grow(contentHost)]
+    }).addStyleClass("cmContentSurface");
     const page = new DynamicPage({
       fitContent: false,
       headerExpanded: true,
@@ -765,7 +781,7 @@ export default class ConfigurationController extends BaseController {
       content: new VBox({
         height: "100%",
         fitContainer: true,
-        items: [tabs, contentHost]
+        items: [tabs, contentSurface]
       }).addStyleClass("cmDynamicPageContent")
     }).addStyleClass("cmWorkspace cmContextDynamicPage sapUiNoContentPadding");
     return page;
@@ -779,22 +795,52 @@ export default class ConfigurationController extends BaseController {
       type: string;
       market: string;
       status: string;
+      editable?: boolean;
       id?: string;
       children?: unknown[];
     }[] = [];
     const products = this.store.products.filter((p) => p.familyId === pf.id);
-    for (const group of [...new Set(products.map((p) => p.group || "Ungrouped"))]) {
+    const persistedGroups = (this.store.productGroups ?? []).filter(
+      (group) => group.familyId === pf.id
+    );
+    const groupNames = [
+      ...new Set([
+        ...persistedGroups.map((group) => group.name),
+        ...products.map((product) => product.group || "Ungrouped")
+      ])
+    ];
+    for (const group of groupNames) {
+      const groupDefinition = persistedGroups.find((item) => item.name === group);
       rows.push({
+        id: groupDefinition?.id ?? `derived-group-${pf.id}-${group}`,
         name: group,
-        code: "",
+        code: groupDefinition?.code ?? "",
         type: "Product Model Group",
         market: "",
         status: "",
+        editable: false,
         children: products
           .filter((p) => (p.group || "Ungrouped") === group)
-          .map((p) => ({ ...p, type: p.productType, children: [] }))
+          .map((p) => ({ ...p, type: p.productType, editable: true, children: [] }))
       });
     }
+    const scopeCell = (key: string): Control =>
+      new HBox({
+        width: "100%",
+        alignItems: "Center",
+        items: [
+          new Text({
+            text: `{${key}}`,
+            wrapping: false,
+            visible: "{= !${/scopeEditMode} || !${editable}}"
+          }),
+          new Input({
+            value: `{${key}}`,
+            visible: "{= ${/scopeEditMode} && ${editable}}",
+            width: "100%"
+          })
+        ]
+      });
     const tree = new TreeTable({
       width: "100%",
       rowMode: new Fixed({ rowCount: 14, rowContentHeight: 40 }),
@@ -804,7 +850,34 @@ export default class ConfigurationController extends BaseController {
       columns: [
         new TreeColumn({
           label: new Label({ text: tr("产品族 / 产品型号") }),
-          template: new ObjectIdentifier({ title: "{name}", text: "{code}" }),
+          template: new HBox({
+            alignItems: "Center",
+            items: [
+              grow(
+                new Text({
+                  text: "{name}",
+                  wrapping: false,
+                  visible: "{= !${/scopeEditMode} || !${editable}}"
+                })
+              ),
+              grow(
+                new Input({
+                  value: "{name}",
+                  visible: "{= ${/scopeEditMode} && ${editable}}"
+                })
+              ),
+              new Text({
+                text: "{code}",
+                visible: "{= !${/scopeEditMode} || !${editable}}",
+                width: "8rem"
+              }).addStyleClass("cmInlineCode"),
+              new Input({
+                value: "{code}",
+                visible: "{= ${/scopeEditMode} && ${editable}}",
+                width: "8rem"
+              }).addStyleClass("cmInlineCodeInput")
+            ]
+          }),
           width: "32%",
           showSortMenuEntry: true,
           showFilterMenuEntry: true
@@ -818,7 +891,7 @@ export default class ConfigurationController extends BaseController {
           ([key, label]) =>
             new TreeColumn({
               label: new Label({ text: label }),
-              template: txt(`{${key}}`),
+              template: scopeCell(key),
               width: key === "description" ? "28%" : "13%",
               showSortMenuEntry: true,
               showFilterMenuEntry: true
@@ -826,27 +899,58 @@ export default class ConfigurationController extends BaseController {
         )
       ],
       rowSelectionChange: (e) => {
-        this.selectedProduct = e.getParameter("rowContext")?.getProperty("id") as
-          string | undefined;
+        const row = e.getParameter("rowContext")?.getObject() as
+          { id?: string; name?: string; type?: string } | undefined;
+        this.selectedProduct = row?.type === "Product Model" ? row.id : undefined;
+        this.selectedProductGroup =
+          row?.type === "Product Model Group" &&
+          this.store.productGroups?.some((group) => group.id === row.id)
+            ? row.id
+            : undefined;
+        this.selectedProductGroupName = row?.type === "Product Model Group" ? row.name : undefined;
       }
     });
-    tree.setModel(
-      new JSONModel({
-        rows: [
-          {
-            name: pf.name,
-            code: pf.code,
-            type: "Product Family",
-            market: "",
-            status: "",
-            children: rows
-          }
-        ]
-      })
-    );
+    const scopeModel = new JSONModel({
+      scopeEditMode: this.scopeEditMode,
+      rows: [
+        {
+          name: pf.name,
+          code: pf.code,
+          type: "Product Family",
+          market: "",
+          status: "",
+          editable: false,
+          children: rows
+        }
+      ]
+    });
+    tree.setModel(scopeModel);
+    this.scopeModel = scopeModel;
     tree.bindRows({ path: "/rows", parameters: { arrayNames: ["children"] } });
     tree.expandToLevel(3);
+    this.scopeTree = tree;
     const profile = this.currentProfile();
+    const editButton = new Button({
+      text: "编辑行",
+      icon: "sap-icon://edit",
+      visible: !this.scopeEditMode,
+      press: () => this.toggleScopeEdit()
+    });
+    const saveButton = new Button({
+      text: "保存",
+      icon: "sap-icon://save",
+      type: "Emphasized",
+      visible: this.scopeEditMode,
+      press: () => this.saveScopeEdits()
+    });
+    const cancelButton = new Button({
+      text: "取消",
+      visible: this.scopeEditMode,
+      press: () => this.cancelScopeEdits()
+    });
+    this.scopeEditButton = editButton;
+    this.scopeSaveButton = saveButton;
+    this.scopeCancelButton = cancelButton;
     const treeWorkArea = new VBox({
       height: "100%",
       fitContainer: true,
@@ -854,10 +958,14 @@ export default class ConfigurationController extends BaseController {
         new Toolbar({
           content: [
             title(`产品族结构 (${products.length})`),
+            status("OData V4 · TreeTable"),
             new ToolbarSpacer(),
             button("编辑产品族", () => this.editProductFamily()),
-            button("添加产品", () => this.editProduct(), "sap-icon://add"),
-            button("编辑", () => this.editProduct(this.selectedProduct), "sap-icon://edit"),
+            button("添加产品组", () => this.editProductGroup(), "sap-icon://folder-blank"),
+            button("添加产品型号", () => this.editProduct(), "sap-icon://add"),
+            editButton,
+            saveButton,
+            cancelButton,
             button("移除", () => this.removeProduct(), "sap-icon://delete")
           ]
         }),
@@ -925,6 +1033,75 @@ export default class ConfigurationController extends BaseController {
       fitContainer: true,
       items: [grow(treeWorkArea), ...(profilePanel ? [profilePanel] : [])]
     }).addStyleClass("cmScopeLayout");
+  }
+  private walkScopeRows(visitor: (row: Record<string, unknown>) => void): void {
+    const model = this.scopeTree?.getModel() as JSONModel | undefined;
+    const data = model?.getData() as { rows?: Record<string, unknown>[] } | undefined;
+    const walk = (rows: Record<string, unknown>[] | undefined): void => {
+      rows?.forEach((row) => {
+        visitor(row);
+        walk(row.children as Record<string, unknown>[] | undefined);
+      });
+    };
+    walk(data?.rows);
+  }
+  private toggleScopeEdit(): void {
+    if (!this.canEdit()) return;
+    const model = this.scopeModel ?? (this.scopeTree?.getModel() as JSONModel | undefined);
+    if (!model || !this.scopeTree) return;
+    this.scopeEditSnapshot = structuredClone(model.getProperty("/rows") as unknown[]);
+    this.scopeEditMode = true;
+    model.setProperty("/scopeEditMode", true);
+    this.scopeEditButton?.setVisible(false);
+    this.scopeSaveButton?.setVisible(true);
+    this.scopeCancelButton?.setVisible(true);
+  }
+  private saveScopeEdits(): void {
+    const updates: Record<string, unknown>[] = [];
+    this.walkScopeRows((row) => {
+      if (row.id && row.type === "Product Model") updates.push(row);
+    });
+    this.scopeEditMode = false;
+    const model = this.scopeModel ?? (this.scopeTree?.getModel() as JSONModel | undefined);
+    model?.setProperty("/scopeEditMode", false);
+    if (
+      !this.commit(
+        (next) =>
+          updates.forEach((row) => {
+            const product = next.products.find((item) => item.id === row.id);
+            if (product)
+              Object.assign(product, {
+                name: row.name,
+                code: row.code,
+                market: row.market,
+                status: row.status,
+                description: row.description,
+                productType: row.type
+              });
+          }),
+        "产品族结构已保存"
+      )
+    ) {
+      this.scopeEditMode = true;
+      model?.setProperty("/scopeEditMode", true);
+      this.scopeEditButton?.setVisible(false);
+      this.scopeSaveButton?.setVisible(true);
+      this.scopeCancelButton?.setVisible(true);
+    } else {
+      this.scopeEditSnapshot = undefined;
+    }
+  }
+  private cancelScopeEdits(): void {
+    const model = this.scopeModel ?? (this.scopeTree?.getModel() as JSONModel | undefined);
+    if (model && this.scopeEditSnapshot) {
+      model.setProperty("/rows", structuredClone(this.scopeEditSnapshot));
+    }
+    this.scopeEditSnapshot = undefined;
+    this.scopeEditMode = false;
+    model?.setProperty("/scopeEditMode", false);
+    this.scopeEditButton?.setVisible(true);
+    this.scopeSaveButton?.setVisible(false);
+    this.scopeCancelButton?.setVisible(false);
   }
   private editDialog(
     name: string,
@@ -1440,6 +1617,9 @@ export default class ConfigurationController extends BaseController {
                 context: c,
                 profile: this.currentProfile(),
                 products: s.products.filter((p) => p.familyId === c.productFamilyId),
+                productGroups: (s.productGroups ?? []).filter(
+                  (group) => group.familyId === c.productFamilyId
+                ),
                 groups: s.groups.filter((g) => g.contextId === c.id),
                 families: s.families.filter((f) =>
                   s.groups.some((g) => g.contextId === c.id && g.id === f.groupId)
@@ -1502,6 +1682,51 @@ export default class ConfigurationController extends BaseController {
       )
     );
   }
+  private editProductGroup(id?: string): void {
+    if (!this.canEdit()) return;
+    const familyId = this.currentContext().productFamilyId;
+    const groups = this.store.productGroups ?? [];
+    const existing = groups.find((group) => group.id === id && group.familyId === familyId);
+    const group: ProductModelGroup = existing ?? {
+      id: uid("product-group"),
+      familyId,
+      code: "",
+      name: "",
+      description: "",
+      sort: groups.filter((item) => item.familyId === familyId).length + 1
+    };
+    this.editDialog(existing ? "编辑产品模型组" : "添加产品模型组", this.namedFields(group), (v) =>
+      this.commit((s) => {
+        const familyGroups = (s.productGroups ??= []);
+        if (
+          familyGroups.some(
+            (item) =>
+              item.id !== group.id &&
+              item.familyId === familyId &&
+              item.code.toUpperCase() === String(v.code).toUpperCase()
+          )
+        )
+          throw new Error("同一产品族中产品模型组编码不能重复");
+        if (
+          familyGroups.some(
+            (item) =>
+              item.id !== group.id && item.familyId === familyId && item.name === String(v.name)
+          )
+        )
+          throw new Error("同一产品族中产品模型组名称不能重复");
+        const target = familyGroups.find((item) => item.id === group.id);
+        const previousName = target?.name ?? group.name;
+        if (target) Object.assign(target, v);
+        else familyGroups.push({ ...group, ...v } as ProductModelGroup);
+        if (target && previousName !== String(v.name))
+          s.products
+            .filter((product) => product.familyId === familyId && product.group === previousName)
+            .forEach((product) => {
+              product.group = String(v.name);
+            });
+      })
+    );
+  }
   private editProduct(id?: string): void {
     if (!this.canEdit()) return;
     const product: ProductModel = this.store.products.find((p) => p.id === id) ?? {
@@ -1510,16 +1735,35 @@ export default class ConfigurationController extends BaseController {
       code: "",
       name: "",
       description: "",
-      group: "Global",
+      group: this.selectedProductGroupName ?? "Global",
       market: "Global",
       productType: "Product Model",
       status: "In Development"
     };
+    const productGroupOptions = [
+      ...new Set([
+        ...(this.store.productGroups ?? [])
+          .filter((group) => group.familyId === product.familyId)
+          .sort((a, b) => a.sort - b.sort)
+          .map((group) => group.name),
+        ...this.store.products
+          .filter((item) => item.familyId === product.familyId)
+          .map((item) => item.group)
+          .filter(Boolean),
+        product.group
+      ])
+    ];
     this.editDialog(
       id ? "编辑产品型号" : "添加产品型号",
       [
         ...this.namedFields(product),
-        { key: "group", label: "Product Model Group", value: product.group },
+        {
+          key: "group",
+          label: "Product Model Group",
+          value: product.group,
+          options: productGroupOptions,
+          required: true
+        },
         {
           key: "productType",
           label: "Product Type",
