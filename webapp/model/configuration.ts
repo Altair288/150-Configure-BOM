@@ -759,7 +759,37 @@ export function createSeed(): ConfigurationStore {
     ["ROAD", "Road Bike", "Bicycle"],
     ["MTB", "MTB", "Bicycle"],
     ["GRAVEL", "Gravel Bike", "Bicycle"],
-    ["HVAC", "HVAC", "Industrial Equipment"]
+    ["HVAC", "HVAC", "Industrial Equipment"],
+    ["CROSSOVER", "Crossover Platform", "Automotive"],
+    ["LUXSEDAN", "Luxury Sedan", "Automotive"],
+    ["COMPACT", "Compact Car", "Automotive"],
+    ["VAN", "Commercial Van", "Automotive"],
+    ["EBIKE", "Urban E-Bike", "Bicycle"],
+    ["FOLDING", "Folding Bike", "Bicycle"],
+    ["TOURING", "Touring Bike", "Bicycle"],
+    ["REGIONALJET", "Regional Jet", "Aircraft"],
+    ["CARGO", "Cargo Aircraft", "Aircraft"],
+    ["BUSINESSJET", "Business Jet", "Aircraft"],
+    ["HELICOPTER", "Utility Helicopter", "Aircraft"],
+    ["HSR", "High-speed Rail", "High-speed Rail"],
+    ["METRO", "Metro Rail", "High-speed Rail"],
+    ["INTERCITY", "Intercity Rail", "High-speed Rail"],
+    ["PUMPS", "Industrial Pump Systems", "Industrial Equipment"],
+    ["ROBOTICS", "Robotics Platform", "Industrial Equipment"],
+    ["PACKAGING", "Packaging Line", "Industrial Equipment"],
+    ["CHILLER", "Process Chiller", "HVAC"],
+    ["HEATPUMP", "Heat Pump Series", "HVAC"],
+    ["FACTORYAUTO", "Factory Automation", "Automation"],
+    ["PLC", "PLC Control Platform", "Automation"],
+    ["SOLAR", "Solar Inverter", "Energy Equipment"],
+    ["BATTERY", "Battery Storage", "Energy Equipment"],
+    ["SMARTPHONE", "Smartphone Platform", "Consumer Electronics"],
+    ["DISPLAY", "Display Products", "Consumer Electronics"],
+    ["INDUSTRIALPC", "Industrial Computer", "Industrial Electronics"],
+    ["DIAGNOSTIC", "Diagnostic Equipment", "Diagnostic Equipment"],
+    ["SURGICAL", "Surgical Equipment", "Surgical Equipment"],
+    ["EARTHMOVE", "Earthmoving Equipment", "Earthmoving Equipment"],
+    ["LIFTING", "Lifting Equipment", "Lifting Equipment"]
   ];
   for (const [key, name, category] of seeds) {
     s.productFamilies.push({
@@ -1182,4 +1212,47 @@ export function createSeed(): ConfigurationStore {
       );
   }
   return s;
+}
+
+export function ensureLoadTestContexts(
+  store: ConfigurationStore,
+  minimumContexts = 30
+): ConfigurationStore {
+  if (store.contexts.length >= minimumContexts) return store;
+  const seed = createSeed();
+  const existingIds = new Set(store.contexts.map((context) => context.id));
+  const additions = seed.contexts
+    .filter((context) => !existingIds.has(context.id))
+    .slice(0, minimumContexts - store.contexts.length);
+  if (!additions.length) return store;
+  const familyIds = new Set(additions.map((context) => context.productFamilyId));
+  const profileIds = new Set(additions.map((context) => context.profileId));
+  const next = structuredClone(store);
+  next.productGroups = [...(next.productGroups ?? [])];
+  next.contexts.push(...additions);
+  next.productFamilies.push(
+    ...seed.productFamilies.filter(
+      (family) =>
+        familyIds.has(family.id) && !next.productFamilies.some((item) => item.id === family.id)
+    )
+  );
+  next.profiles.push(
+    ...seed.profiles.filter(
+      (profile) =>
+        profileIds.has(profile.id) && !next.profiles.some((item) => item.id === profile.id)
+    )
+  );
+  next.products.push(
+    ...seed.products.filter(
+      (product) =>
+        familyIds.has(product.familyId) && !next.products.some((item) => item.id === product.id)
+    )
+  );
+  next.productGroups.push(
+    ...(seed.productGroups ?? []).filter(
+      (group) =>
+        familyIds.has(group.familyId) && !next.productGroups!.some((item) => item.id === group.id)
+    )
+  );
+  return validateStore(next).length ? store : next;
 }

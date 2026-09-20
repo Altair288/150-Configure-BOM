@@ -1,0 +1,91 @@
+<core:FragmentDefinition
+  xmlns="sap.m"
+  xmlns:core="sap.ui.core"
+  xmlns:f="sap.f">
+  <f:DynamicPage
+    id="contextWorkspace"
+    fitContent="false"
+    height="100%"
+    headerExpanded="true"
+    toggleHeaderOnTitleClick="{= ${view>/mode} !== 'features'}"
+    class="cmWorkspace cmContextDynamicPage sapUiNoContentPadding">
+    <f:title>
+      <f:DynamicPageTitle>
+        <f:heading>
+          <VBox>
+            <Title text="{view>/context/name}" level="H2" />
+            <Text text="{view>/contextSummary}" />
+          </VBox>
+        </f:heading>
+        <f:actions>
+          <Button text="编辑" icon="sap-icon://edit" press=".onEditCurrentContext" />
+          <Button text="复制" icon="sap-icon://copy" press=".onDuplicateContext" />
+          <Button text="版本" icon="sap-icon://history" press=".onContextVersions" />
+          <Button text="{view>/contextTransitionText}" press=".onTransitionContext" />
+          <Button text="停用" press=".onDeactivateContext" />
+        </f:actions>
+      </f:DynamicPageTitle>
+    </f:title>
+    <f:header>
+      <f:DynamicPageHeader pinnable="true">
+        <f:content>
+          <VBox class="cmContextHeaderContent">
+            <HBox class="cmContextHeaderMeta" wrap="Wrap">
+              <VBox class="cmContextHeaderItem">
+                <Label text="Product Family" class="cmContextHeaderLabel" />
+                <Text text="{view>/contextProductFamily}" class="cmContextHeaderValue" />
+              </VBox>
+              <VBox class="cmContextHeaderItem">
+                <Label text="Organization" class="cmContextHeaderLabel" />
+                <Text text="{view>/context/organization}" class="cmContextHeaderValue" />
+              </VBox>
+              <VBox class="cmContextHeaderItem">
+                <Label text="Created By" class="cmContextHeaderLabel" />
+                <Text text="{view>/context/createdBy}" class="cmContextHeaderValue" />
+              </VBox>
+              <VBox class="cmContextHeaderItem">
+                <Label text="Last Modified" class="cmContextHeaderLabel" />
+                <Text text="{view>/context/modified}" class="cmContextHeaderValue" />
+              </VBox>
+            </HBox>
+            <VBox class="cmContextHeaderDescription">
+              <Label text="Description" class="cmContextHeaderLabel" />
+              <Text text="{view>/context/description}" class="cmContextHeaderValue" />
+            </VBox>
+          </VBox>
+        </f:content>
+      </f:DynamicPageHeader>
+    </f:header>
+    <f:content>
+      <VBox
+        id="contextWorkspaceContent"
+        height="100%"
+        fitContainer="true"
+        class="cmDynamicPageContent">
+        <IconTabBar
+          id="mainTabs"
+          expandable="false"
+          headerMode="Inline"
+          applyContentPadding="false"
+          selectedKey="{view>/mode}"
+          select=".onModeSelect"
+          class="cmMainTabs">
+          <items>
+            <IconTabFilter key="context" text="产品范围 / Context" />
+            <IconTabFilter
+              key="features"
+              text="特征模型 / Feature Model"
+              count="{view>/featureReferenceCount}" />
+          </items>
+        </IconTabBar>
+        <VBox id="contextContentSurface" fitContainer="true" class="cmContentSurface">
+          <layoutData>
+            <FlexItemData growFactor="1" shrinkFactor="1" baseSize="0%" />
+          </layoutData>
+          <VBox id="scopeHost" visible="{= ${view>/mode} === 'context'}" />
+          <VBox id="featureHost" visible="{= ${view>/mode} === 'features'}" />
+        </VBox>
+      </VBox>
+    </f:content>
+  </f:DynamicPage>
+</core:FragmentDefinition>

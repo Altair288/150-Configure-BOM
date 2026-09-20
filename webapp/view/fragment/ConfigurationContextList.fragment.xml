@@ -1,0 +1,80 @@
+<core:FragmentDefinition
+  xmlns="sap.m"
+  xmlns:core="sap.ui.core">
+  <VBox
+    id="contextListContent"
+    height="100%"
+    fitContainer="true"
+    class="cmContextList">
+    <Toolbar>
+      <Title text="Configuration Contexts" level="H3" />
+      <ToolbarSpacer />
+      <Button text="新建" icon="sap-icon://add" press=".onCreateContext" />
+    </Toolbar>
+    <SearchField
+      value="{view>/contextSearch}"
+      width="100%"
+      placeholder="搜索名称 / 编码 / 产品族"
+      liveChange=".onContextSearchChange"
+      class="cmContextSearch" />
+    <HBox width="100%" fitContainer="true" class="cmFilterRow">
+      <Select
+        id="contextCategory"
+        width="13rem"
+        selectedKey="{view>/category}"
+        change=".onContextFilterChange">
+        <items>
+          <core:Item key="All Categories" text="All Categories" />
+          <core:Item key="Automotive" text="Automotive" />
+          <core:Item key="Bicycle" text="Bicycle" />
+          <core:Item key="Aircraft" text="Aircraft" />
+          <core:Item key="High-speed Rail" text="High-speed Rail" />
+          <core:Item key="Industrial Equipment" text="Industrial Equipment" />
+          <core:Item key="HVAC" text="HVAC" />
+          <core:Item key="Automation" text="Automation" />
+          <core:Item key="Energy Equipment" text="Energy Equipment" />
+          <core:Item key="Electronics" text="Electronics" />
+          <core:Item key="Medical Equipment" text="Medical Equipment" />
+          <core:Item key="Construction Equipment" text="Construction Equipment" />
+        </items>
+      </Select>
+      <Select
+        id="contextStatus"
+        width="9rem"
+        selectedKey="{view>/contextStatus}"
+        change=".onContextFilterChange">
+        <items>
+          <core:Item key="All Statuses" text="All Statuses" />
+          <core:Item key="Draft" text="Draft" />
+          <core:Item key="Released" text="Released" />
+          <core:Item key="Inactive" text="Inactive" />
+        </items>
+      </Select>
+    </HBox>
+    <Tree
+      id="contextList"
+      width="100%"
+      mode="MultiSelect"
+      includeItemInSelection="false"
+      rememberSelections="true"
+      selectionChange=".onContextSelection"
+      itemPress=".onContextItemPress"
+      toggleOpenState=".onContextTreeToggled"
+      class="cmContextTree"
+      items="{path: 'view>/contextRows', parameters: {arrayNames: ['children'], numberOfExpandedLevels: 2}}">
+      <layoutData>
+        <FlexItemData growFactor="1" shrinkFactor="1" baseSize="0%" />
+      </layoutData>
+      <StandardTreeItem
+        title="{view>nodeText}"
+        icon="{view>icon}"
+        type="Active"
+        class="cmContextTreeItem" />
+    </Tree>
+    <Toolbar>
+      <Text text="{view>/contextCountText}" />
+      <ToolbarSpacer />
+      <Text text="Product Scope" />
+    </Toolbar>
+  </VBox>
+</core:FragmentDefinition>

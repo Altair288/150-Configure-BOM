@@ -1,55 +1,42 @@
 import BaseController from "./BaseController";
 import Localization from "sap/base/i18n/Localization";
 import Control from "sap/ui/core/Control";
+import JSONModel from "sap/ui/model/json/JSONModel";
 import ResourceModel from "sap/ui/model/resource/ResourceModel";
 import VBox from "sap/m/VBox";
-import HBox from "sap/m/HBox";
 import Button from "sap/m/Button";
-import Title from "sap/m/Title";
 import Label from "sap/m/Label";
 import Input from "sap/m/Input";
 import CheckBox from "sap/m/CheckBox";
 import SearchField from "sap/m/SearchField";
 import Toolbar from "sap/m/OverflowToolbar";
 import ToolbarSpacer from "sap/m/ToolbarSpacer";
-import IconTabBar from "sap/m/IconTabBar";
-import IconTabFilter from "sap/m/IconTabFilter";
 import MessageStrip from "sap/m/MessageStrip";
 import MessageBox from "sap/m/MessageBox";
 import MessageToast from "sap/m/MessageToast";
 import Dialog from "sap/m/Dialog";
-import Page from "sap/m/Page";
+import Tree from "sap/m/Tree";
+import StandardTreeItem from "sap/m/StandardTreeItem";
 import List from "sap/m/List";
 import StandardListItem from "sap/m/StandardListItem";
 import Table from "sap/m/Table";
 import Column from "sap/m/Column";
 import ColumnListItem from "sap/m/ColumnListItem";
 import FlexibleColumnLayout from "sap/f/FlexibleColumnLayout";
-import FlexibleColumnLayoutData from "sap/f/FlexibleColumnLayoutData";
-import FlexibleColumnLayoutDataForDesktop from "sap/f/FlexibleColumnLayoutDataForDesktop";
-import DynamicPage from "sap/f/DynamicPage";
-import DynamicPageTitle from "sap/f/DynamicPageTitle";
-import DynamicPageHeader from "sap/f/DynamicPageHeader";
-import ConfigurationContextListView from "./configuration/ConfigurationContextListView";
+import DragDropInfo from "sap/ui/core/dnd/DragDropInfo";
+import Event from "sap/ui/base/Event";
 import ConfigurationCategoryValueHelp from "./configuration/ConfigurationCategoryValueHelp";
 import ConfigurationDialogService from "./configuration/ConfigurationDialogService";
 import ConfigurationFeatureLibraryView from "./configuration/ConfigurationFeatureLibraryView";
 import ConfigurationFeatureWorkspaceView from "./configuration/ConfigurationFeatureWorkspaceView";
 import ConfigurationPreviewDialog from "./configuration/ConfigurationPreviewDialog";
 import ConfigurationScopeView from "./configuration/ConfigurationScopeView";
+import { buildContextTreeRows } from "./configuration/ConfigurationViewModel";
 import type { Field, Selection, Values } from "./configuration/types";
-import {
-  button,
-  form,
-  grow,
-  setI18nBundle,
-  status,
-  title,
-  tr,
-  txt
-} from "../util/configurationUi";
+import { button, form, setI18nBundle, tr, txt } from "../util/configurationUi";
 import {
   createSeed,
+  ensureLoadTestContexts,
   storageKey,
   uid,
   today,
@@ -82,6 +69,23 @@ let activeI18nModel: ResourceModel | undefined;
 
 export default class ConfigurationController extends BaseController {
   private store!: ConfigurationStore;
+  private readonly viewModel = new JSONModel({
+    libraryMode: false,
+    layout: "TwoColumnsMidExpanded",
+    pageTitle: "",
+    mode: "context",
+    contextSearch: "",
+    category: "All Categories",
+    contextStatus: "All Statuses",
+    contextRows: [],
+    contextCountText: "",
+    context: {},
+    contextSummary: "",
+    contextProductFamily: "",
+    contextTransitionText: "",
+    featureReferenceCount: "0",
+    profile: {}
+  });
   private readonly dialogService = new ConfigurationDialogService(() => this.getView());
   private readonly categoryValueHelp = new ConfigurationCategoryValueHelp(() => this.getView());
   private readonly onLocalizationChangedBound = (): void => this.onLocalizationChanged();
@@ -108,8 +112,13 @@ export default class ConfigurationController extends BaseController {
   private scopeEditMode = false;
   private selectedProductGroup?: string;
   private selectedProductGroupName?: string;
+  private contextList?: Tree;
+  private scopeHost?: VBox;
+  private featureHost?: VBox;
+  private libraryHost?: VBox;
 
   public onInit(): void {
+    this.getView()?.setModel(this.viewModel, "view");
     Localization.attachChange(this.onLocalizationChangedBound);
     activeI18nModel = this.getModel<ResourceModel>("i18n");
     const bundle = activeI18nModel?.getResourceBundle();
@@ -128,13 +137,19 @@ export default class ConfigurationController extends BaseController {
       try {
         const parsed = JSON.parse(saved) as ConfigurationStore;
         if (validateStore(parsed).length) throw new Error();
-        this.store = parsed;
+        const beforeLoadTestData = parsed.contexts.length;
+        this.store = ensureLoadTestContexts(parsed);
+        localStorage.setItem(storageKey, JSON.stringify(this.store));
+        if (this.store.contexts.length > beforeLoadTestData)
+          MessageToast.show(`已补充测试数据，当前共有 ${this.store.contexts.length} 个配置上下文。`);
       } catch {
         MessageBox.warning(
           "本地建模数据无法读取，已打开示例工作区。原始数据未覆盖；可通过导入恢复有效备份。"
         );
       }
     }
+    this.initializeXmlView();
+    this.render();
     this.getRouter().getRoute("configuration")?.attachPatternMatched(this.openContext, this);
     this.getRouter().getRoute("featureLibrary")?.attachPatternMatched(this.openLibrary, this);
     // ResourceModel may finish its locale bundle just after the controller is created.
@@ -207,181 +222,252 @@ export default class ConfigurationController extends BaseController {
     }
   }
   private render(): void {
+    if (!this.store) return;
     this.contextId = this.currentContext().id;
     this.profileOpen = false;
     this.profileFullscreen = false;
     this.mainFullscreen = false;
-    this.profileFullscreenButton = undefined;
     this.mainFullscreenButton = undefined;
-    this.mainLayout = undefined;
-    const root = this.byId("workspace") as VBox;
-    root.destroyItems();
-    root.addItem(
-      new Toolbar({
-        content: [
-          title(
-            this.libraryMode
-              ? "企业特征库 · Enterprise Feature Library"
-              : "产品配置管理 · Product Configuration Management"
-          ),
-          new ToolbarSpacer(),
-          status("本地建模工作区"),
-          button("导入", () => this.importWorkspace(), "sap-icon://upload"),
-          button("导出", () => this.exportWorkspace(), "sap-icon://download")
-        ]
-      }).addStyleClass("cmTopbar")
-    );
-    if (this.libraryMode) {
-      this.renderLibrary(root);
-      return;
-    }
-    const begin = new Page({
-      showHeader: false,
-      enableScrolling: false,
-      content: [this.buildContextList()]
-    });
-    const mid = new Page({
-      showHeader: false,
-      enableScrolling: false,
-      content: [this.buildContextWorkspace()]
-    });
-    const layout = new FlexibleColumnLayout({
-      layout: "TwoColumnsMidExpanded",
-      beginColumnPages: [begin],
-      midColumnPages: [mid],
-      endColumnPages: []
-    });
-    this.mainLayout = layout;
-    layout.setLayoutData(
-      new FlexibleColumnLayoutData({
-        desktopLayoutData: new FlexibleColumnLayoutDataForDesktop({
-          twoColumnsMidExpanded: "23/77/0",
-          threeColumnsMidExpanded: "23/57/20",
-          threeColumnsEndExpanded: "23/57/20"
-        })
+    this.refreshViewModel();
+    this.refreshContextRows();
+    this.renderActiveMode();
+    this.libraryHost?.destroyItems();
+    if (this.libraryMode && this.libraryHost) this.renderLibrary(this.libraryHost);
+  }
+
+  private initializeXmlView(): void {
+    this.contextList = this.byId("contextList") as Tree;
+    this.mainLayout = this.byId("mainLayout") as FlexibleColumnLayout;
+    this.scopeHost = this.byId("scopeHost") as VBox;
+    this.featureHost = this.byId("featureHost") as VBox;
+    this.libraryHost = this.byId("libraryHost") as VBox;
+    this.profileFullscreenButton = this.byId("profileFullscreenButton") as Button;
+    this.contextList?.addDragDropConfig(
+      new DragDropInfo({
+        sourceAggregation: "items",
+        targetAggregation: "items",
+        dropPosition: "Between",
+        drop: (event) => this.onContextDrop(event)
       })
     );
-    root.addItem(
-      grow(
-        new VBox({ height: "100%", fitContainer: true, items: [layout] }).addStyleClass(
-          "cmLayoutHost"
-        )
-      )
+  }
+
+  private refreshViewModel(): void {
+    const context = this.currentContext();
+    const profile = this.currentProfile();
+    const productFamily = this.store.productFamilies.find(
+      (family) => family.id === context.productFamilyId
     );
+    this.viewModel.setProperty(
+      "/pageTitle",
+      this.libraryMode
+        ? "企业特征库 · Enterprise Feature Library"
+        : "产品配置管理 · Product Configuration Management"
+    );
+    this.viewModel.setProperty("/libraryMode", this.libraryMode);
+    this.viewModel.setProperty("/layout", this.currentLayout());
+    this.viewModel.setProperty("/mode", this.mode);
+    this.viewModel.setProperty("/context", context);
+    this.viewModel.setProperty(
+      "/contextSummary",
+      `${context.code} · ${productFamily?.name ?? ""} · V${String(context.version).padStart(2, "0")} · ${context.status}`
+    );
+    this.viewModel.setProperty("/contextProductFamily", productFamily?.name ?? "");
+    this.viewModel.setProperty(
+      "/contextTransitionText",
+      context.status === "Draft" ? "发布" : context.status === "Inactive" ? "恢复草稿" : "新建版本"
+    );
+    this.viewModel.setProperty(
+      "/featureReferenceCount",
+      String(contextReferences(this.store, context.id).length)
+    );
+    this.viewModel.setProperty("/profile", profile);
+    this.viewModel.setProperty("/contextCountText", `${this.store.contexts.length} 个上下文`);
   }
-  private buildContextList(): VBox {
-    return new ConfigurationContextListView({
-      store: this.store,
-      contextSearch: this.contextSearch,
-      category: this.category,
-      contextStatus: this.contextStatus,
-      selectedContextIds: this.selectedContextIds,
-      onContextSearchChanged: (value) => {
-        this.contextSearch = value;
-      },
-      onCategoryChanged: (value) => {
-        this.category = value;
-      },
-      onStatusChanged: (value) => {
-        this.contextStatus = value;
-      },
-      onOpenContext: (item) => (item ? this.openContextFromItem(item) : this.editContext(true)),
-      commit: (change, message) => this.commit(change, message)
-    }).build();
+
+  private currentLayout(): string {
+    if (this.profileFullscreen) return "EndColumnFullScreen";
+    if (this.profileOpen) return "ThreeColumnsMidExpanded";
+    if (this.mainFullscreen) return "MidColumnFullScreen";
+    return "TwoColumnsMidExpanded";
   }
+
+  private refreshContextRows(): void {
+    const rows = buildContextTreeRows(
+      this.store,
+      this.contextSearch,
+      this.category,
+      this.contextStatus
+    );
+    this.viewModel.setProperty("/contextRows", rows);
+    this.syncContextSelection();
+  }
+
+  private renderActiveMode(): void {
+    if (this.libraryMode) return;
+    this.scopeHost?.destroyItems();
+    this.featureHost?.destroyItems();
+    if (this.mode === "context") this.scopeHost?.addItem(this.buildScope());
+    else this.featureHost?.addItem(this.buildFeatureWorkspace());
+  }
+  public onContextSearchChange(event: Event): void {
+    const parameters = event.getParameters() as { newValue?: string };
+    this.contextSearch = parameters.newValue ?? "";
+    this.viewModel.setProperty("/contextSearch", this.contextSearch);
+    this.refreshContextRows();
+  }
+
+  public onContextFilterChange(event: Event): void {
+    const source = event.getSource() as unknown as {
+      getSelectedKey: () => string;
+      getId: () => string;
+    };
+    const value = source.getSelectedKey();
+    const sourceId = source.getId();
+    if (sourceId.includes("contextStatus")) this.contextStatus = value;
+    else this.category = value;
+    this.viewModel.setProperty("/category", this.category);
+    this.viewModel.setProperty("/contextStatus", this.contextStatus);
+    this.refreshContextRows();
+  }
+
+  public onContextItemPress(event: Event): void {
+    const parameters = event.getParameters() as { listItem?: Control };
+    this.openContextFromItem(parameters.listItem);
+  }
+
+  public onContextTreeToggled(): void {
+    window.setTimeout(() => this.syncContextSelection(), 0);
+  }
+
+  public onContextSelection(event: Event): void {
+    if (!this.contextList) return;
+    const parameters = event.getParameters() as { listItem?: Control; selected?: boolean };
+    const item = parameters.listItem;
+    if (!item) return;
+    const context = item.getBindingContext("view");
+    if (!context) return;
+    const selected = Boolean(parameters.selected);
+    if (context.getProperty("kind") === "category") {
+      const childIds = (
+        (context.getProperty("children") as { id: string }[] | undefined) ?? []
+      ).map((child) => child.id);
+      this.contextList.getItems().forEach((child) => {
+        const id = child.getBindingContext("view")?.getProperty("id") as string | undefined;
+        if (!id || !childIds.includes(id)) return;
+        if (selected) this.selectedContextIds.add(id);
+        else this.selectedContextIds.delete(id);
+      });
+    } else {
+      const id = context.getProperty("id") as string;
+      if (selected) this.selectedContextIds.add(id);
+      else this.selectedContextIds.delete(id);
+    }
+    this.syncContextSelection();
+  }
+
+  private syncContextSelection(): void {
+    if (!this.contextList) return;
+    this.contextList.getItems().forEach((item) => {
+      const context = item.getBindingContext("view");
+      if (!context) return;
+      const kind = context.getProperty("kind") as string;
+      if (kind === "context") {
+        this.contextList!.setSelectedItem(
+          item,
+          this.selectedContextIds.has(context.getProperty("id") as string),
+          false
+        );
+      } else if (kind === "category") {
+        const children = (context.getProperty("children") as { id: string }[] | undefined) ?? [];
+        const allSelected =
+          children.length > 0 && children.every((child) => this.selectedContextIds.has(child.id));
+        this.contextList!.setSelectedItem(item, allSelected, false);
+      }
+    });
+  }
+
+  private onContextDrop(event: Event): void {
+    const parameters = event.getParameters() as {
+      dragSession?: { getDragControl: () => StandardTreeItem | null };
+      droppedControl?: StandardTreeItem;
+    };
+    const source = parameters.dragSession
+      ?.getDragControl()
+      ?.getBindingContext("view")
+      ?.getProperty("id") as string | undefined;
+    const target = parameters.droppedControl?.getBindingContext("view")?.getProperty("id") as
+      string | undefined;
+    if (!source || !target || source === target) return;
+    const from = this.store.contexts.findIndex((context) => context.id === source);
+    const to = this.store.contexts.findIndex((context) => context.id === target);
+    if (from < 0 || to < 0) return;
+    this.commit((next) => {
+      const [moved] = next.contexts.splice(from, 1);
+      next.contexts.splice(to, 0, moved);
+    }, "Context 顺序已更新");
+  }
+
   private openContextFromItem(item?: Control): void {
-    const context = item?.getBindingContext();
+    const context = item?.getBindingContext("view");
     if (!context || context.getProperty("kind") !== "context") return;
     this.contextId = context.getProperty("id") as string;
     this.selection = undefined;
     this.selectedProduct = undefined;
     this.render();
   }
-  private buildContextWorkspace(): Control {
-    const c = this.currentContext();
-    const heading = new VBox({
-      items: [
-        new Title({ text: c.name, level: "H2" }),
-        txt(
-          `${c.code} · ${this.store.productFamilies.find((f) => f.id === c.productFamilyId)?.name ?? ""} · V${String(c.version).padStart(2, "0")} · ${c.status}`
-        )
-      ]
-    });
-    const titleActions = [
-      button("编辑", () => this.editContext(false), "sap-icon://edit"),
-      button("复制", () => this.duplicateContext(), "sap-icon://copy"),
-      button("版本", () => this.contextVersions(), "sap-icon://history"),
-      button(
-        c.status === "Draft" ? "发布" : c.status === "Inactive" ? "恢复草稿" : "新建版本",
-        () => this.transitionContext()
-      ),
-      button("停用", () => this.deactivateContext())
-    ];
-    const header = new HBox({
-      width: "100%",
-      items: [
-        grow(
-          form([
-            [
-              "Product Family",
-              this.store.productFamilies.find((f) => f.id === c.productFamilyId)?.name ?? ""
-            ],
-            ["Organization", c.organization],
-            ["Created By", c.createdBy],
-            ["Last Modified", c.modified],
-            ["Description", c.description]
-          ])
-        )
-      ]
-    }).addStyleClass("cmDynamicHeaderContent cmContextMetadataOnly");
-    const contentHost = new VBox({
-      height: "100%",
-      fitContainer: true,
-      items: [grow(this.mode === "context" ? this.buildScope() : this.buildFeatureWorkspace())]
-    }).addStyleClass("cmDynamicPageContentHost");
-    const tabs = new IconTabBar({
-      expandable: false,
-      headerMode: "Inline",
-      applyContentPadding: false,
-      selectedKey: this.mode,
-      items: [
-        new IconTabFilter({
-          key: "context",
-          text: tr("产品范围 / Context")
-        }),
-        new IconTabFilter({
-          key: "features",
-          text: tr("特征模型 / Feature Model"),
-          count: String(contextReferences(this.store, c.id).length)
-        })
-      ],
-      select: (e) => {
-        this.mode = e.getParameter("key") as "context" | "features";
-        contentHost.destroyItems();
-        contentHost.addItem(
-          grow(this.mode === "context" ? this.buildScope() : this.buildFeatureWorkspace())
-        );
-      }
-    }).addStyleClass("cmMainTabs");
-    const contentSurface = new VBox({
-      fitContainer: true,
-      items: [grow(contentHost)]
-    }).addStyleClass("cmContentSurface");
-    const page = new DynamicPage({
-      fitContent: false,
-      headerExpanded: true,
-      toggleHeaderOnTitleClick: this.mode !== "features",
-      stickySubheaderProvider: tabs.getId(),
-      title: new DynamicPageTitle({ heading, actions: titleActions }),
-      header: new DynamicPageHeader({ pinnable: true, content: [header] }),
-      content: new VBox({
-        height: "100%",
-        fitContainer: true,
-        items: [tabs, contentSurface]
-      }).addStyleClass("cmDynamicPageContent")
-    }).addStyleClass("cmWorkspace cmContextDynamicPage sapUiNoContentPadding");
-    return page;
+
+  public onCreateContext(): void {
+    this.editContext(true);
   }
+
+  public onEditCurrentContext(): void {
+    this.editContext(false);
+  }
+
+  public onDuplicateContext(): void {
+    this.duplicateContext();
+  }
+
+  public onContextVersions(): void {
+    this.contextVersions();
+  }
+
+  public onTransitionContext(): void {
+    this.transitionContext();
+  }
+
+  public onDeactivateContext(): void {
+    this.deactivateContext();
+  }
+
+  public onModeSelect(event: Event): void {
+    const parameters = event.getParameters() as { key?: string };
+    this.mode = parameters.key === "features" ? "features" : "context";
+    this.viewModel.setProperty("/mode", this.mode);
+    this.renderActiveMode();
+  }
+
+  public onCloseProfile(): void {
+    this.closeProfilePanel();
+  }
+
+  public onToggleProfileFullscreen(): void {
+    this.toggleProfileFullscreen();
+  }
+
+  public onEditProfile(): void {
+    this.editProfile();
+  }
+
+  public onImportWorkspace(): void {
+    this.importWorkspace();
+  }
+
+  public onExportWorkspace(): void {
+    this.exportWorkspace();
+  }
+
   private buildScope(): Control {
     return new ConfigurationScopeView({
       store: this.store,
@@ -422,9 +508,8 @@ export default class ConfigurationController extends BaseController {
     this.mainFullscreenButton?.setTooltip("全屏主体内容");
     this.profileFullscreenButton?.setIcon("sap-icon://full-screen");
     this.profileFullscreenButton?.setTooltip("全屏 Profile");
-    if (!this.mainLayout.getEndColumnPages().length)
-      this.mainLayout.addEndColumnPage(this.buildProfilePage());
     this.mainLayout.setLayout("ThreeColumnsMidExpanded");
+    this.viewModel.setProperty("/layout", this.currentLayout());
   }
   private closeProfilePanel(): void {
     this.profileOpen = false;
@@ -434,6 +519,7 @@ export default class ConfigurationController extends BaseController {
     this.mainFullscreenButton?.setIcon("sap-icon://full-screen");
     this.mainFullscreenButton?.setTooltip("全屏主体内容");
     this.mainLayout?.setLayout("TwoColumnsMidExpanded");
+    this.viewModel.setProperty("/layout", this.currentLayout());
   }
   private toggleMainFullscreen(): void {
     if (!this.mainLayout || this.profileOpen) return;
@@ -447,6 +533,7 @@ export default class ConfigurationController extends BaseController {
     this.mainLayout.setLayout(
       this.mainFullscreen ? "MidColumnFullScreen" : "TwoColumnsMidExpanded"
     );
+    this.viewModel.setProperty("/layout", this.currentLayout());
   }
   private toggleProfileFullscreen(): void {
     if (!this.mainLayout) return;
@@ -460,61 +547,7 @@ export default class ConfigurationController extends BaseController {
     this.mainLayout.setLayout(
       this.profileFullscreen ? "EndColumnFullScreen" : "ThreeColumnsMidExpanded"
     );
-  }
-  private buildProfilePage(): Page {
-    const profile = this.currentProfile();
-    const fullscreenButton = new Button({
-      icon: "sap-icon://full-screen",
-      tooltip: "全屏 Profile",
-      type: "Transparent",
-      press: () => this.toggleProfileFullscreen()
-    });
-    this.profileFullscreenButton = fullscreenButton;
-    return new Page({
-      showHeader: true,
-      title: tr("Configuration Profile"),
-      headerContent: [
-        fullscreenButton,
-        new Button({
-          icon: "sap-icon://decline",
-          tooltip: "关闭 Profile",
-          type: "Transparent",
-          press: () => this.closeProfilePanel()
-        })
-      ],
-      enableScrolling: false,
-      content: [
-        new VBox({
-          height: "100%",
-          fitContainer: true,
-          items: [
-            grow(
-              new VBox({
-                items: [
-                  form([
-                    ["Profile Name", profile.name],
-                    ["Profile Code", profile.code],
-                    ["配置维度", profile.configurationMode],
-                    ["特征来源", profile.featureSourceMode],
-                    ["Feature Structure", profile.featureStructureMode],
-                    ["Default Behavior", profile.defaultBehavior]
-                  ])
-                ]
-              }).addStyleClass("cmProfileDetails")
-            ),
-            new Toolbar({
-              content: [
-                new Button({
-                  text: "编辑 Profile",
-                  type: "Emphasized",
-                  press: () => this.editProfile()
-                })
-              ]
-            })
-          ]
-        }).addStyleClass("cmProfileInspector")
-      ]
-    }).addStyleClass("cmProfilePage");
+    this.viewModel.setProperty("/layout", this.currentLayout());
   }
   private editDialog(
     name: string,
@@ -800,6 +833,18 @@ export default class ConfigurationController extends BaseController {
         product.group
       ])
     ];
+    const marketOptions = [
+      ...new Set([
+        "Global",
+        "CN",
+        "JP",
+        ...this.store.products
+          .filter((item) => item.familyId === product.familyId)
+          .map((item) => item.market)
+          .filter(Boolean),
+        product.market
+      ])
+    ];
     this.editDialog(
       id ? "编辑产品型号" : "添加产品型号",
       [
@@ -812,12 +857,12 @@ export default class ConfigurationController extends BaseController {
           required: true
         },
         {
-          key: "productType",
-          label: "Product Type",
-          value: product.productType,
-          options: ["Product", "Product Model"]
+          key: "market",
+          label: "Market",
+          value: product.market,
+          options: marketOptions,
+          required: true
         },
-        { key: "market", label: "Market", value: product.market, required: true },
         {
           key: "status",
           label: "Lifecycle Status",
@@ -838,7 +883,8 @@ export default class ConfigurationController extends BaseController {
             throw new Error("同一产品族中产品编码不能重复");
           const existing = s.products.find((p) => p.id === product.id);
           if (existing) Object.assign(existing, v);
-          else s.products.push({ ...product, ...v } as ProductModel);
+          else s.products.push({ ...product, ...v, productType: "Product Model" } as ProductModel);
+          if (existing) existing.productType = "Product Model";
         })
     );
   }

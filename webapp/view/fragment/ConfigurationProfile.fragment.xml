@@ -1,0 +1,67 @@
+<core:FragmentDefinition
+  xmlns="sap.m"
+  xmlns:core="sap.ui.core"
+  xmlns:form="sap.ui.layout.form">
+  <Page
+    id="profilePage"
+    title="Configuration Profile"
+    showHeader="true"
+    enableScrolling="false"
+    class="cmProfilePage">
+    <headerContent>
+      <Button
+        id="profileFullscreenButton"
+        icon="sap-icon://full-screen"
+        tooltip="全屏 Profile"
+        type="Transparent"
+        press=".onToggleProfileFullscreen" />
+      <Button
+        icon="sap-icon://decline"
+        tooltip="关闭 Profile"
+        type="Transparent"
+        press=".onCloseProfile" />
+    </headerContent>
+    <content>
+      <VBox
+        height="100%"
+        fitContainer="true"
+        class="cmProfileInspector">
+        <VBox class="cmProfileDetails">
+          <form:Form editable="false">
+            <form:layout>
+              <form:ColumnLayout columnsM="1" columnsL="1" columnsXL="1" />
+            </form:layout>
+            <form:formContainers>
+              <form:FormContainer>
+                <form:formElements>
+                  <form:FormElement label="Profile Name">
+                    <form:fields><Text text="{view>/profile/name}" /></form:fields>
+                  </form:FormElement>
+                  <form:FormElement label="Profile Code">
+                    <form:fields><Text text="{view>/profile/code}" /></form:fields>
+                  </form:FormElement>
+                  <form:FormElement label="配置维度">
+                    <form:fields><Text text="{view>/profile/configurationMode}" /></form:fields>
+                  </form:FormElement>
+                  <form:FormElement label="特征来源">
+                    <form:fields><Text text="{view>/profile/featureSourceMode}" /></form:fields>
+                  </form:FormElement>
+                  <form:FormElement label="Feature Structure">
+                    <form:fields><Text text="{view>/profile/featureStructureMode}" /></form:fields>
+                  </form:FormElement>
+                  <form:FormElement label="Default Behavior">
+                    <form:fields><Text text="{view>/profile/defaultBehavior}" /></form:fields>
+                  </form:FormElement>
+                </form:formElements>
+              </form:FormContainer>
+            </form:formContainers>
+          </form:Form>
+        </VBox>
+        <Toolbar>
+          <ToolbarSpacer />
+          <Button text="编辑 Profile" type="Emphasized" press=".onEditProfile" />
+        </Toolbar>
+      </VBox>
+    </content>
+  </Page>
+</core:FragmentDefinition>

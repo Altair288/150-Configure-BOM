@@ -1,0 +1,84 @@
+<core:FragmentDefinition
+  xmlns="sap.m"
+  xmlns:core="sap.ui.core"
+  xmlns:f="sap.f">
+  <Page
+    id="configurationPage"
+    height="100%"
+    showHeader="false"
+    enableScrolling="false"
+    class="configurationPage sapUiSizeCompact">
+    <content>
+      <VBox id="workspace" height="100%" fitContainer="true">
+        <Toolbar id="topbar" class="cmTopbar">
+          <Title text="{view>/pageTitle}" />
+          <ToolbarSpacer />
+          <ObjectStatus text="本地建模工作区" state="Information" />
+          <Button text="导入" icon="sap-icon://upload" press=".onImportWorkspace" />
+          <Button text="导出" icon="sap-icon://download" press=".onExportWorkspace" />
+        </Toolbar>
+        <VBox
+          id="configurationHost"
+          fitContainer="true"
+          class="cmConfigurationHost"
+          visible="{= !${view>/libraryMode}}">
+          <layoutData>
+            <FlexItemData growFactor="1" shrinkFactor="1" baseSize="0%" />
+          </layoutData>
+          <VBox id="mainLayoutHost" height="100%" fitContainer="true" class="cmMainLayoutHost">
+            <layoutData>
+              <FlexItemData growFactor="1" shrinkFactor="1" baseSize="0%" />
+            </layoutData>
+            <f:FlexibleColumnLayout
+              id="mainLayout"
+              layout="{view>/layout}"
+              height="100%"
+              class="cmConfigurationFcl">
+            <f:layoutData>
+              <f:FlexibleColumnLayoutData>
+                <f:desktopLayoutData>
+                  <f:FlexibleColumnLayoutDataForDesktop
+                    twoColumnsMidExpanded="23/77/0"
+                    threeColumnsMidExpanded="23/57/20"
+                    threeColumnsEndExpanded="23/57/20" />
+                </f:desktopLayoutData>
+              </f:FlexibleColumnLayoutData>
+            </f:layoutData>
+            <f:beginColumnPages>
+              <Page id="contextListPage" height="100%" showHeader="false" enableScrolling="false">
+                <content>
+                  <core:Fragment
+                    fragmentName="com.company.superbom.view.fragment.ConfigurationContextList"
+                    type="XML" />
+                </content>
+              </Page>
+            </f:beginColumnPages>
+            <f:midColumnPages>
+              <Page id="contextWorkspacePage" height="100%" showHeader="false" enableScrolling="false">
+                <content>
+                  <core:Fragment
+                    fragmentName="com.company.superbom.view.fragment.ConfigurationWorkspace"
+                    type="XML" />
+                </content>
+              </Page>
+            </f:midColumnPages>
+            <f:endColumnPages>
+              <core:Fragment
+                fragmentName="com.company.superbom.view.fragment.ConfigurationProfile"
+                type="XML" />
+            </f:endColumnPages>
+            </f:FlexibleColumnLayout>
+          </VBox>
+        </VBox>
+        <VBox
+          id="libraryHost"
+          fitContainer="true"
+          visible="{view>/libraryMode}">
+          <layoutData>
+            <FlexItemData growFactor="1" shrinkFactor="1" baseSize="0%" />
+          </layoutData>
+        </VBox>
+      </VBox>
+    </content>
+  </Page>
+</core:FragmentDefinition>

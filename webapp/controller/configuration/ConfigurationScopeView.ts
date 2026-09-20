@@ -4,8 +4,10 @@ import VBox from "sap/m/VBox";
 import HBox from "sap/m/HBox";
 import Button from "sap/m/Button";
 import Input from "sap/m/Input";
+import Select from "sap/m/Select";
 import Label from "sap/m/Label";
 import Text from "sap/m/Text";
+import Item from "sap/ui/core/Item";
 import Toolbar from "sap/m/OverflowToolbar";
 import ToolbarSpacer from "sap/m/ToolbarSpacer";
 import TreeTable from "sap/ui/table/TreeTable";
@@ -47,10 +49,7 @@ export interface ConfigurationScopeOptions {
   onOpenProfile: () => void;
   onToggleFullscreen: () => void;
   onMainFullscreenButtonCreated: (button: Button) => void;
-  commit: (
-    change: (next: ConfigurationStore) => void,
-    message?: string
-  ) => boolean;
+  commit: (change: (next: ConfigurationStore) => void, message?: string) => boolean;
 }
 
 export default class ConfigurationScopeView {
@@ -97,26 +96,55 @@ export default class ConfigurationScopeView {
         editable: false,
         children: products
           .filter((product) => (product.group || "Ungrouped") === groupName)
-          .map((product) => ({ ...product, type: product.productType, editable: true, children: [] }))
+          .map((product) => ({
+            ...product,
+            type: product.productType,
+            editable: true,
+            children: []
+          }))
       });
     }
-    const scopeCell = (key: string): Control =>
-      new HBox({
-        width: "100%",
-        alignItems: "Center",
-        items: [
+    const marketOptions = [
+      ...new Set([
+        "Global",
+        "CN",
+        "JP",
+        ...products.map((product) => product.market).filter(Boolean)
+      ])
+    ];
+    const lifecycleOptions = ["In Development", "Released", "Retired"];
+    const scopeCell = (key: string, canEdit = true, options?: string[]): Control => {
+      const items: Control[] = [
+        grow(
           new Text({
             text: `{${key}}`,
             wrapping: false,
-            visible: "{= !${/scopeEditMode} || !${editable}}"
-          }),
-          new Input({
-            value: `{${key}}`,
-            visible: "{= ${/scopeEditMode} && ${editable}}",
-            width: "100%"
+            visible: canEdit ? "{= !${/scopeEditMode} || !${editable}}" : "{= true}"
           })
-        ]
-      });
+        )
+      ];
+      if (canEdit) {
+        items.push(
+          options
+            ? grow(
+                new Select({
+                  selectedKey: `{${key}}`,
+                  visible: "{= ${/scopeEditMode} && ${editable}}",
+                  width: "100%",
+                  items: options.map((option) => new Item({ key: option, text: option }))
+                })
+              )
+            : grow(
+                new Input({
+                  value: `{${key}}`,
+                  visible: "{= ${/scopeEditMode} && ${editable}}",
+                  width: "100%"
+                })
+              )
+        );
+      }
+      return new HBox({ width: "100%", alignItems: "Center", items });
+    };
     const tree = new TreeTable({
       width: "100%",
       rowMode: new Auto({ minRowCount: 5, rowContentHeight: 40 }),
@@ -141,34 +169,38 @@ export default class ConfigurationScopeView {
                   value: "{name}",
                   visible: "{= ${/scopeEditMode} && ${editable}}"
                 })
-              ),
-              new Text({
-                text: "{code}",
-                visible: "{= !${/scopeEditMode} || !${editable}}",
-                width: "8rem"
-              }).addStyleClass("cmInlineCode"),
-              new Input({
-                value: "{code}",
-                visible: "{= ${/scopeEditMode} && ${editable}}",
-                width: "8rem"
-              }).addStyleClass("cmInlineCodeInput")
+              )
             ]
           }),
-          width: "32%",
+          width: "28%",
+          showSortMenuEntry: true,
+          showFilterMenuEntry: true
+        }),
+        new TreeColumn({
+          label: new Label({ text: "编码" }),
+          template: scopeCell("code"),
+          width: "14%",
           showSortMenuEntry: true,
           showFilterMenuEntry: true
         }),
         ...[
-          ["type", "产品类型"],
-          ["market", "市场"],
-          ["status", "生命周期"],
-          ["description", "描述"]
+          ["type", "产品类型", "13%"],
+          ["market", "市场", "12%"],
+          ["status", "生命周期", "13%"],
+          ["description", "描述", "20%"]
         ].map(
-          ([key, label]) =>
+          ([key, label, width]) =>
             new TreeColumn({
               label: new Label({ text: label }),
-              template: scopeCell(key),
-              width: key === "description" ? "28%" : "13%",
+              template:
+                key === "type"
+                  ? scopeCell(key, false)
+                  : key === "market"
+                    ? scopeCell(key, true, marketOptions)
+                    : key === "status"
+                      ? scopeCell(key, true, lifecycleOptions)
+                      : scopeCell(key),
+              width,
               showSortMenuEntry: true,
               showFilterMenuEntry: true
             })
@@ -176,8 +208,7 @@ export default class ConfigurationScopeView {
       ],
       rowSelectionChange: (event) => {
         const row = event.getParameter("rowContext")?.getObject() as
-          | { id?: string; name?: string; type?: string }
-          | undefined;
+          { id?: string; name?: string; type?: string } | undefined;
         this.options.onProductSelected(row?.type === "Product Model" ? row.id : undefined);
         this.options.onProductGroupSelected(
           row?.type === "Product Model Group" &&
@@ -245,7 +276,11 @@ export default class ConfigurationScopeView {
             title(`产品族结构 (${products.length})`),
             new ToolbarSpacer(),
             button("编辑产品族", () => this.options.onEditProductFamily()),
-            button("添加产品组", () => this.options.onEditProductGroup(), "sap-icon://folder-blank"),
+            button(
+              "添加产品组",
+              () => this.options.onEditProductGroup(),
+              "sap-icon://folder-blank"
+            ),
             button("添加产品型号", () => this.options.onEditProduct(), "sap-icon://add"),
             editButton,
             saveButton,
@@ -259,7 +294,9 @@ export default class ConfigurationScopeView {
           content: [
             title("Configuration Profile"),
             status(this.options.profile.configurationMode),
-            txt(`${this.options.profile.featureSourceMode} · ${this.options.profile.featureStructureMode}`),
+            txt(
+              `${this.options.profile.featureSourceMode} · ${this.options.profile.featureStructureMode}`
+            ),
             new ToolbarSpacer(),
             button("查看 Profile", () => this.options.onOpenProfile(), "sap-icon://inspect")
           ]
@@ -315,7 +352,7 @@ export default class ConfigurationScopeView {
                 market: row.market,
                 status: row.status,
                 description: row.description,
-                productType: row.type
+                productType: "Product Model"
               });
           }),
         "产品族结构已保存"
