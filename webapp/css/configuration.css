@@ -24,6 +24,26 @@
   margin-top: 0;
   margin-bottom: 0;
 }
+.cmContextTreeItem,
+.cmContextTreeItem .sapMLIBContent,
+.cmContextTreeItem .sapMSLITitleDiv,
+.cmContextTreeItem .sapMSLITitleOnly,
+.cmContextTreeItem .sapMSLITitle,
+.cmContextTreeItem .sapMSTI,
+.cmContextTreeItem .sapMText {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+.cmContextTreeItem .sapMSLITitleDiv,
+.cmContextTreeItem .sapMSLITitleOnly,
+.cmContextTreeItem .sapMSLITitle,
+.cmContextTreeItem .sapMSTI,
+.cmContextTreeItem .sapMText {
+  line-height: 2rem !important;
+}
 .cmContextList .sapUiTable {
   border: 0;
 }
@@ -176,6 +196,11 @@
   min-height: 0;
   overflow: hidden;
 }
+.cmDynamicPageContentHost > .sapMFlexItem,
+.cmDynamicPageContentHost > .sapMFlexItem > .cmScopeLayout {
+  min-height: 0;
+  height: 100%;
+}
 .cmDynamicHeaderContent {
   gap: 1.25rem;
   padding: 0.35rem 1rem 0.6rem;
@@ -193,12 +218,20 @@
 }
 .cmScopeLayout {
   min-height: 0;
+  height: 100%;
+  display: flex;
   overflow: hidden;
 }
 .cmScopeLayout > .sapMFlexItem {
   min-height: 0;
 }
 .cmScopeContent {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.cmScopeContent > .sapMFlexItem {
   min-height: 0;
 }
 .cmScopeContent > .sapMFlexItem:has(.sapUiTable) {
@@ -207,6 +240,7 @@
 }
 .cmScopeContent .sapUiTable {
   min-height: 0;
+  height: 100%;
 }
 .cmScopeContent .sapMInputBaseReadonly,
 .cmScopeContent .sapMInputBaseReadonlyWrapper,
@@ -234,6 +268,22 @@
   background: #f8fafb;
   padding: 0.5rem;
 }
+.cmProfilePage,
+.cmProfilePage > .sapMPageEnableScrolling {
+  height: 100%;
+}
+.cmProfilePage .sapMPageContent {
+  padding: 0;
+  background: var(--sapBackgroundColor);
+}
+.cmProfileDetails {
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem;
+}
+.cmProfileDetails > .sapMFlexItem {
+  min-height: 0;
+}
 .cmInlineCode {
   margin-left: 0.75rem;
   color: #6a7f93;
@@ -254,6 +304,17 @@
 .cmContextList .sapMSLITitleOnly,
 .cmContextList .sapMSLITitle {
   font-size: 0.875rem;
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap !important;
+}
+.cmContextList .sapMTreeItemBase .sapMLIBContent,
+.cmContextList .sapMTreeItemBase .sapMSLITitleDiv {
+  min-width: 0;
+  overflow: hidden;
 }
 .cmFilterRow {
   gap: 0.4rem;

@@ -313,6 +313,7 @@ export default class ConfigurationController extends BaseController {
   private contextStatus = "All Statuses";
   private treeSearch = "";
   private dimensionFilter = "All Dimensions";
+  private mainLayout?: FlexibleColumnLayout;
   private tree?: TreeTable;
   private editor?: VBox;
   private inspector?: VBox;
@@ -321,6 +322,10 @@ export default class ConfigurationController extends BaseController {
   private libraryDetail?: VBox;
   private editorTab = "general";
   private profileOpen = false;
+  private profileFullscreen = false;
+  private profileFullscreenButton?: Button;
+  private mainFullscreen = false;
+  private mainFullscreenButton?: Button;
   private scopeTree?: TreeTable;
   private scopeModel?: JSONModel;
   private scopeEditSnapshot?: unknown[];
@@ -428,6 +433,12 @@ export default class ConfigurationController extends BaseController {
   }
   private render(): void {
     this.contextId = this.currentContext().id;
+    this.profileOpen = false;
+    this.profileFullscreen = false;
+    this.mainFullscreen = false;
+    this.profileFullscreenButton = undefined;
+    this.mainFullscreenButton = undefined;
+    this.mainLayout = undefined;
     const root = this.byId("workspace") as VBox;
     root.destroyItems();
     root.addItem(
@@ -462,12 +473,16 @@ export default class ConfigurationController extends BaseController {
     const layout = new FlexibleColumnLayout({
       layout: "TwoColumnsMidExpanded",
       beginColumnPages: [begin],
-      midColumnPages: [mid]
+      midColumnPages: [mid],
+      endColumnPages: []
     });
+    this.mainLayout = layout;
     layout.setLayoutData(
       new FlexibleColumnLayoutData({
         desktopLayoutData: new FlexibleColumnLayoutDataForDesktop({
-          twoColumnsMidExpanded: "23/77/0"
+          twoColumnsMidExpanded: "23/77/0",
+          threeColumnsMidExpanded: "23/57/20",
+          threeColumnsEndExpanded: "23/57/20"
         })
       })
     );
@@ -610,7 +625,7 @@ export default class ConfigurationController extends BaseController {
         icon: "{icon}",
         type: "Active",
         press: (e) => this.openContextFromItem(e.getSource() as Control)
-      })
+      }).addStyleClass("cmContextTreeItem")
     });
     window.setTimeout(() => this.syncContextSelection(), 0);
   }
@@ -843,7 +858,7 @@ export default class ConfigurationController extends BaseController {
       });
     const tree = new TreeTable({
       width: "100%",
-      rowMode: new Fixed({ rowCount: 14, rowContentHeight: 40 }),
+      rowMode: new Auto({ minRowCount: 5, rowContentHeight: 40 }),
       selectionMode: "Single",
       selectionBehavior: "RowOnly",
       enableSelectAll: false,
@@ -948,9 +963,17 @@ export default class ConfigurationController extends BaseController {
       visible: this.scopeEditMode,
       press: () => this.cancelScopeEdits()
     });
+    const mainFullscreenButton = new Button({
+      icon: "sap-icon://full-screen",
+      tooltip: "全屏主体内容",
+      type: "Transparent",
+      visible: !this.profileOpen,
+      press: () => this.toggleMainFullscreen()
+    });
     this.scopeEditButton = editButton;
     this.scopeSaveButton = saveButton;
     this.scopeCancelButton = cancelButton;
+    this.mainFullscreenButton = mainFullscreenButton;
     const treeWorkArea = new VBox({
       height: "100%",
       fitContainer: true,
@@ -958,7 +981,7 @@ export default class ConfigurationController extends BaseController {
         new Toolbar({
           content: [
             title(`产品族结构 (${products.length})`),
-            status("OData V4 · TreeTable"),
+            // status("OData V4 · TreeTable"),
             new ToolbarSpacer(),
             button("编辑产品族", () => this.editProductFamily()),
             button("添加产品组", () => this.editProductGroup(), "sap-icon://folder-blank"),
@@ -966,6 +989,7 @@ export default class ConfigurationController extends BaseController {
             editButton,
             saveButton,
             cancelButton,
+            mainFullscreenButton,
             button("移除", () => this.removeProduct(), "sap-icon://delete")
           ]
         }),
@@ -976,46 +1000,107 @@ export default class ConfigurationController extends BaseController {
             status(profile.configurationMode),
             txt(`${profile.featureSourceMode} · ${profile.featureStructureMode}`),
             new ToolbarSpacer(),
-            button(
-              "查看 Profile",
-              () => {
-                this.profileOpen = true;
-                this.render();
-              },
-              "sap-icon://inspect"
-            )
+            button("查看 Profile", () => this.openProfilePanel(), "sap-icon://inspect")
           ]
         })
       ]
     }).addStyleClass("cmScopeContent");
-    const profilePanel = this.profileOpen
-      ? new VBox({
-          width: "24rem",
+    return new HBox({
+      height: "100%",
+      fitContainer: true,
+      items: [grow(treeWorkArea)]
+    }).addStyleClass("cmScopeLayout");
+  }
+  private openProfilePanel(): void {
+    if (!this.mainLayout) return;
+    this.profileOpen = true;
+    this.mainFullscreen = false;
+    this.profileFullscreen = false;
+    this.mainFullscreenButton?.setVisible(false);
+    this.mainFullscreenButton?.setIcon("sap-icon://full-screen");
+    this.mainFullscreenButton?.setTooltip("全屏主体内容");
+    this.profileFullscreenButton?.setIcon("sap-icon://full-screen");
+    this.profileFullscreenButton?.setTooltip("全屏 Profile");
+    if (!this.mainLayout.getEndColumnPages().length)
+      this.mainLayout.addEndColumnPage(this.buildProfilePage());
+    this.mainLayout.setLayout("ThreeColumnsMidExpanded");
+  }
+  private closeProfilePanel(): void {
+    this.profileOpen = false;
+    this.profileFullscreen = false;
+    this.mainFullscreen = false;
+    this.mainFullscreenButton?.setVisible(true);
+    this.mainFullscreenButton?.setIcon("sap-icon://full-screen");
+    this.mainFullscreenButton?.setTooltip("全屏主体内容");
+    this.mainLayout?.setLayout("TwoColumnsMidExpanded");
+  }
+  private toggleMainFullscreen(): void {
+    if (!this.mainLayout || this.profileOpen) return;
+    this.mainFullscreen = !this.mainFullscreen;
+    this.mainFullscreenButton?.setIcon(
+      this.mainFullscreen ? "sap-icon://exit-full-screen" : "sap-icon://full-screen"
+    );
+    this.mainFullscreenButton?.setTooltip(
+      this.mainFullscreen ? "退出主体内容全屏" : "全屏主体内容"
+    );
+    this.mainLayout.setLayout(
+      this.mainFullscreen ? "MidColumnFullScreen" : "TwoColumnsMidExpanded"
+    );
+  }
+  private toggleProfileFullscreen(): void {
+    if (!this.mainLayout) return;
+    this.profileFullscreen = !this.profileFullscreen;
+    this.profileFullscreenButton?.setIcon(
+      this.profileFullscreen ? "sap-icon://exit-full-screen" : "sap-icon://full-screen"
+    );
+    this.profileFullscreenButton?.setTooltip(
+      this.profileFullscreen ? "退出 Profile 全屏" : "全屏 Profile"
+    );
+    this.mainLayout.setLayout(
+      this.profileFullscreen ? "EndColumnFullScreen" : "ThreeColumnsMidExpanded"
+    );
+  }
+  private buildProfilePage(): Page {
+    const profile = this.currentProfile();
+    const fullscreenButton = new Button({
+      icon: "sap-icon://full-screen",
+      tooltip: "全屏 Profile",
+      type: "Transparent",
+      press: () => this.toggleProfileFullscreen()
+    });
+    this.profileFullscreenButton = fullscreenButton;
+    return new Page({
+      showHeader: true,
+      title: tr("Configuration Profile"),
+      headerContent: [
+        fullscreenButton,
+        new Button({
+          icon: "sap-icon://decline",
+          tooltip: "关闭 Profile",
+          type: "Transparent",
+          press: () => this.closeProfilePanel()
+        })
+      ],
+      enableScrolling: false,
+      content: [
+        new VBox({
           height: "100%",
           fitContainer: true,
           items: [
-            new Toolbar({
-              content: [
-                title("Configuration Profile"),
-                new ToolbarSpacer(),
-                button(
-                  "",
-                  () => {
-                    this.profileOpen = false;
-                    this.render();
-                  },
-                  "sap-icon://decline"
-                )
-              ]
-            }),
-            form([
-              ["Profile Name", profile.name],
-              ["Profile Code", profile.code],
-              ["配置维度", profile.configurationMode],
-              ["特征来源", profile.featureSourceMode],
-              ["Feature Structure", profile.featureStructureMode],
-              ["Default Behavior", profile.defaultBehavior]
-            ]),
+            grow(
+              new VBox({
+                items: [
+                  form([
+                    ["Profile Name", profile.name],
+                    ["Profile Code", profile.code],
+                    ["配置维度", profile.configurationMode],
+                    ["特征来源", profile.featureSourceMode],
+                    ["Feature Structure", profile.featureStructureMode],
+                    ["Default Behavior", profile.defaultBehavior]
+                  ])
+                ]
+              }).addStyleClass("cmProfileDetails")
+            ),
             new Toolbar({
               content: [
                 new Button({
@@ -1027,12 +1112,8 @@ export default class ConfigurationController extends BaseController {
             })
           ]
         }).addStyleClass("cmProfileInspector")
-      : undefined;
-    return new HBox({
-      height: "100%",
-      fitContainer: true,
-      items: [grow(treeWorkArea), ...(profilePanel ? [profilePanel] : [])]
-    }).addStyleClass("cmScopeLayout");
+      ]
+    }).addStyleClass("cmProfilePage");
   }
   private walkScopeRows(visitor: (row: Record<string, unknown>) => void): void {
     const model = this.scopeTree?.getModel() as JSONModel | undefined;
