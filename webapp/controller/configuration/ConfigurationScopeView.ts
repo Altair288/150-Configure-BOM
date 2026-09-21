@@ -292,15 +292,15 @@ export default class ConfigurationScopeView {
         grow(tree),
         new Toolbar({
           content: [
-            title("Configuration Profile"),
-            status(this.options.profile.configurationMode),
+            title("Configuration Profile").addStyleClass("cmProfileSummaryTitle"),
+            status(this.options.profile.configurationMode).addStyleClass("cmProfileSummaryStatus"),
             txt(
               `${this.options.profile.featureSourceMode} · ${this.options.profile.featureStructureMode}`
-            ),
+            ).addStyleClass("cmProfileSummaryText"),
             new ToolbarSpacer(),
             button("查看 Profile", () => this.options.onOpenProfile(), "sap-icon://inspect")
           ]
-        })
+        }).addStyleClass("cmProfileSummaryToolbar")
       ]
     }).addStyleClass("cmScopeContent");
     return new HBox({

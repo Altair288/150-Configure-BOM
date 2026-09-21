@@ -1,0 +1,236 @@
+<mvc:View
+  controllerName="com.company.superbom.controller.MaterialLibrary"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  xmlns:f="sap.f"
+  xmlns:core="sap.ui.core"
+  xmlns:t="sap.ui.table"
+  xmlns:form="sap.ui.layout.form"
+  xmlns:ng="sap.suite.ui.commons.networkgraph"
+  xmlns:nglayout="sap.suite.ui.commons.networkgraph.layout"
+  height="100%"
+  displayBlock="true">
+  <f:FlexibleColumnLayout id="materialLibraryFcl" layout="TwoColumnsMidExpanded" height="100%" class="libraryFcl">
+    <f:layoutData>
+      <f:FlexibleColumnLayoutData>
+        <f:desktopLayoutData>
+          <f:FlexibleColumnLayoutDataForDesktop
+            twoColumnsMidExpanded="17/83/0"
+            threeColumnsMidExpanded="17/58/25"
+            threeColumnsEndExpanded="17/25/58" />
+        </f:desktopLayoutData>
+      </f:FlexibleColumnLayoutData>
+    </f:layoutData>
+    <f:beginColumnPages>
+      <Page title="{i18n>materialLibraryTreeTitle}" class="libraryTreePage">
+        <subHeader><Toolbar><SearchField width="100%" placeholder="{i18n>searchCategory}" /></Toolbar></subHeader>
+        <content>
+          <Tree id="materialCategoryTree" items="{materialLibrary>/tree}" mode="SingleSelectMaster" includeItemInSelection="true" selectionChange=".onCategorySelectionChange" class="libraryTree">
+            <StandardTreeItem title="{materialLibrary>title}" icon="{materialLibrary>icon}" counter="{materialLibrary>count}" type="Active" />
+          </Tree>
+        </content>
+      </Page>
+    </f:beginColumnPages>
+
+    <f:midColumnPages>
+      <f:DynamicPage id="materialDynamicPage" headerExpanded="true" preserveHeaderStateOnScroll="true" class="libraryDynamicPage materialListDynamicPage">
+        <f:title>
+          <f:DynamicPageTitle>
+            <f:heading><VBox><Title text="{i18n>materialLibraryTitle}" level="H1" /><Text text="{i18n>materialLibrarySubtitle}" /></VBox></f:heading>
+            <f:expandedContent><ObjectStatus text="{materialLibrary>/selectedCategoryTitle}" icon="sap-icon://folder" state="Information" /></f:expandedContent>
+            <f:snappedContent><Text text="{materialLibrary>/selectedCategoryTitle}" /></f:snappedContent>
+            <f:actions><Button text="{i18n>createMaterial}" type="Emphasized" icon="sap-icon://add" enabled="{materialLibrary>/canCreateMaterial}" tooltip="{= ${materialLibrary>/canCreateMaterial} ? ${i18n>createMaterial} : ${i18n>selectLeafCategory}}" /></f:actions>
+          </f:DynamicPageTitle>
+        </f:title>
+        <f:header>
+          <f:DynamicPageHeader pinnable="true">
+            <HBox wrap="Wrap" alignItems="End" class="librarySubheader">
+              <VBox><Label text="{i18n>searchMaterial}" /><SearchField width="22rem" liveChange=".onSearch" /></VBox>
+              <VBox><Label text="{i18n>processStatus}" /><Select selectedKey="{materialLibrary>/status}" change=".onStatusChange"><items><core:Item key="All" text="{i18n>allStatuses}" /><core:Item key="已发布" text="{i18n>statusReleased}" /><core:Item key="审批中" text="{i18n>statusInApproval}" /><core:Item key="草稿" text="{i18n>statusDraft}" /></items></Select></VBox>
+              <ObjectStatus text="{= ${materialLibrary>/visibleItems}.length + ' ' + ${i18n>records}}" icon="sap-icon://database" state="Information" />
+            </HBox>
+          </f:DynamicPageHeader>
+        </f:header>
+        <f:content>
+          <VBox height="100%" fitContainer="true" class="materialTableContent">
+            <OverflowToolbar class="materialTableToolbar"><Title text="{i18n>materialList}" level="H3" /><ToolbarSpacer /><Button icon="sap-icon://sort" type="Transparent" tooltip="{i18n>sort}" /><Button icon="sap-icon://filter" type="Transparent" tooltip="{i18n>filter}" /></OverflowToolbar>
+            <t:Table id="materialTable" width="100%" height="100%" rows="{materialLibrary>/visibleItems}" selectionMode="MultiToggle" selectionBehavior="RowSelector" cellClick=".onMaterialCellPress" visibleRowCountMode="Auto" minAutoRowCount="8" rowHeight="38" columnHeaderHeight="40" enableColumnReordering="true" enableSelectAll="true" class="materialAnalyticalTable">
+              <t:columns>
+                <t:Column width="9rem" sortProperty="code" filterProperty="code"><Label text="{i18n>materialCode}" /><t:template><ObjectIdentifier title="{materialLibrary>code}" /></t:template></t:Column>
+                <t:Column width="14rem" sortProperty="name" filterProperty="name"><Label text="{i18n>materialName}" /><t:template><Text text="{materialLibrary>name}" /></t:template></t:Column>
+                <t:Column width="6rem" sortProperty="revision" filterProperty="revision"><Label text="{i18n>revision}" /><t:template><Text text="{materialLibrary>revision}" /></t:template></t:Column>
+                <t:Column width="9rem" sortProperty="category" filterProperty="category"><Label text="{i18n>category}" /><t:template><Text text="{materialLibrary>category}" /></t:template></t:Column>
+                <t:Column width="14rem" sortProperty="specification" filterProperty="specification"><Label text="{i18n>specification}" /><t:template><Text text="{materialLibrary>specification}" /></t:template></t:Column>
+                <t:Column width="8rem" sortProperty="processStatus" filterProperty="processStatus"><Label text="{i18n>processStatus}" /><t:template><ObjectStatus text="{materialLibrary>processStatus}" state="{= ${materialLibrary>processStatus} === '已发布' ? 'Success' : ${materialLibrary>processStatus} === '审批中' ? 'Warning' : 'Information'}" /></t:template></t:Column>
+                <t:Column width="10rem" sortProperty="model" filterProperty="model"><Label text="{i18n>model}" /><t:template><Text text="{materialLibrary>model}" /></t:template></t:Column>
+                <t:Column width="8rem" sortProperty="lifecycleStage" filterProperty="lifecycleStage"><Label text="{i18n>lifecycleStage}" /><t:template><Text text="{materialLibrary>lifecycleStage}" /></t:template></t:Column>
+                <t:Column width="7rem" sortProperty="baseUnit" filterProperty="baseUnit"><Label text="{i18n>baseUnit}" /><t:template><Text text="{materialLibrary>baseUnit}" /></t:template></t:Column>
+                <t:Column width="11rem" sortProperty="processId" filterProperty="processId"><Label text="{i18n>processId}" /><t:template><Text text="{materialLibrary>processId}" /></t:template></t:Column>
+                <t:Column width="18rem" sortProperty="description" filterProperty="description"><Label text="{i18n>description}" /><t:template><Text text="{materialLibrary>description}" wrapping="false" /></t:template></t:Column>
+                <t:Column width="8rem" sortProperty="createdBy" filterProperty="createdBy"><Label text="{i18n>createdBy}" /><t:template><Text text="{materialLibrary>createdBy}" /></t:template></t:Column>
+                <t:Column width="11rem" sortProperty="createdAt" filterProperty="createdAt"><Label text="{i18n>createdAt}" /><t:template><Text text="{materialLibrary>createdAt}" /></t:template></t:Column>
+                <t:Column width="8rem" sortProperty="modifiedBy" filterProperty="modifiedBy"><Label text="{i18n>modifiedBy}" /><t:template><Text text="{materialLibrary>modifiedBy}" /></t:template></t:Column>
+                <t:Column width="10rem" sortProperty="creationOrg" filterProperty="creationOrg"><Label text="{i18n>creationOrg}" /><t:template><Text text="{materialLibrary>creationOrg}" /></t:template></t:Column>
+                <t:Column width="10rem" sortProperty="owner" filterProperty="owner"><Label text="{i18n>owner}" /><t:template><Text text="{materialLibrary>owner}" /></t:template></t:Column>
+                <t:Column width="11rem" sortProperty="modifiedAt" filterProperty="modifiedAt"><Label text="{i18n>modifiedAt}" /><t:template><Text text="{materialLibrary>modifiedAt}" /></t:template></t:Column>
+                <t:Column width="20rem" sortProperty="attributesText" filterProperty="attributesText"><Label text="{i18n>materialAttributes}" /><t:template><Text text="{materialLibrary>attributesText}" wrapping="false" /></t:template></t:Column>
+                <t:Column width="9rem" sortProperty="inventoryCategory" filterProperty="inventoryCategory"><Label text="{i18n>inventoryCategory}" /><t:template><Text text="{materialLibrary>inventoryCategory}" /></t:template></t:Column>
+                <t:Column width="7rem" sortProperty="foundationalUnit" filterProperty="foundationalUnit"><Label text="{i18n>foundationalUnit}" /><t:template><Text text="{materialLibrary>foundationalUnit}" /></t:template></t:Column>
+              </t:columns>
+            </t:Table>
+          </VBox>
+        </f:content>
+      </f:DynamicPage>
+    </f:midColumnPages>
+
+    <f:endColumnPages>
+      <f:DynamicPage id="materialDetailDynamicPage" headerExpanded="true" preserveHeaderStateOnScroll="true" stickySubheaderProvider="materialDetailTabs" class="libraryDynamicPage materialDetailPage">
+        <f:title>
+          <f:DynamicPageTitle>
+            <f:heading>
+              <VBox class="materialObjectHeader">
+                <Title text="{materialLibrary>/selected/name}" level="H2" />
+                <Text text="{materialLibrary>/selected/code}" class="materialObjectCode" />
+              </VBox>
+            </f:heading>
+            <f:actions>
+              <Button icon="{= ${materialLibrary>/detailFullScreen} ? 'sap-icon://exit-full-screen' : 'sap-icon://full-screen'}" tooltip="{= ${materialLibrary>/detailFullScreen} ? ${i18n>exitFullScreen} : ${i18n>fullScreen}}" type="Transparent" press=".onToggleDetailFullScreen"><layoutData><OverflowToolbarLayoutData priority="NeverOverflow" /></layoutData></Button>
+              <Button icon="sap-icon://decline" tooltip="{i18n>closeDetails}" type="Transparent" press=".onCloseDetail"><layoutData><OverflowToolbarLayoutData priority="NeverOverflow" /></layoutData></Button>
+            </f:actions>
+          </f:DynamicPageTitle>
+        </f:title>
+        <f:header>
+          <f:DynamicPageHeader pinnable="true" class="materialDetailSubheader">
+            <HBox width="100%" wrap="NoWrap" alignItems="Center" class="materialDetailSummary">
+              <Avatar displayShape="Square" displaySize="Custom" customDisplaySize="4.5rem" customFontSize="2rem" fallbackIcon="sap-icon://picture" class="materialImagePlaceholder" />
+              <HBox wrap="NoWrap" alignItems="Start" class="materialMetadataBar">
+                <layoutData><FlexItemData growFactor="1" shrinkFactor="1" baseSize="0%" /></layoutData>
+                <VBox class="materialMetadataItem"><Label text="{i18n>category}" /><Text text="{materialLibrary>/selected/category}" /></VBox>
+                <VBox class="materialMetadataItem"><Label text="{i18n>revision}" /><Text text="{materialLibrary>/selected/revision}" /></VBox>
+                <VBox class="materialMetadataItem"><Label text="{i18n>lifecycleStage}" /><Text text="{materialLibrary>/selected/lifecycleStage}" /></VBox>
+                <VBox class="materialMetadataItem"><Label text="{i18n>baseUnit}" /><Text text="{materialLibrary>/selected/baseUnit}" /></VBox>
+                <VBox class="materialMetadataItem"><Label text="{i18n>processStatus}" /><ObjectStatus text="{materialLibrary>/selected/processStatus}" state="{= ${materialLibrary>/selected/processStatus} === '已发布' ? 'Success' : ${materialLibrary>/selected/processStatus} === '审批中' ? 'Warning' : 'Information'}" /></VBox>
+              </HBox>
+            </HBox>
+          </f:DynamicPageHeader>
+        </f:header>
+        <f:content>
+          <IconTabBar id="materialDetailTabs" selectedKey="{materialLibrary>/detailTabKey}" expandable="false" applyContentPadding="false" class="materialDetailTabs">
+            <items>
+              <IconTabFilter key="general" text="{i18n>generalInformation}">
+                <VBox class="materialDetailContent sapUiContentPadding">
+                  <Panel headerText="{i18n>generalInformation}" class="sapUiSmallMarginBottom">
+                    <form:SimpleForm editable="false" layout="ResponsiveGridLayout" columnsXL="2" columnsL="2" columnsM="1">
+                      <form:content>
+                        <Label text="{i18n>materialCode}" /><Text text="{materialLibrary>/selected/code}" />
+                        <Label text="{i18n>materialName}" /><Text text="{materialLibrary>/selected/name}" />
+                        <Label text="{i18n>category}" /><Text text="{materialLibrary>/selected/category}" />
+                        <Label text="{i18n>specification}" /><Text text="{materialLibrary>/selected/specification}" />
+                        <Label text="{i18n>model}" /><Text text="{materialLibrary>/selected/model}" />
+                        <Label text="{i18n>inventoryCategory}" /><Text text="{materialLibrary>/selected/inventoryCategory}" />
+                        <Label text="{i18n>processId}" /><Text text="{materialLibrary>/selected/processId}" />
+                        <Label text="{i18n>owner}" /><Text text="{materialLibrary>/selected/owner}" />
+                        <Label text="{i18n>description}" /><Text text="{materialLibrary>/selected/description}" wrapping="true" />
+                      </form:content>
+                    </form:SimpleForm>
+                  </Panel>
+                  <Panel headerText="{i18n>materialAttributes}"><List items="{materialLibrary>/selected/attributes}" showSeparators="Inner"><DisplayListItem label="{materialLibrary>name}" value="{materialLibrary>value}" /></List></Panel>
+                </VBox>
+              </IconTabFilter>
+
+              <IconTabFilter key="bom" text="{i18n>materialBom}">
+                <VBox class="materialDetailContent sapUiContentPadding">
+                  <Panel headerText="{i18n>mainMaterialInformation}" class="sapUiSmallMarginBottom">
+                    <form:SimpleForm editable="false" layout="ResponsiveGridLayout" columnsXL="2" columnsL="2" columnsM="1">
+                      <form:content>
+                        <Label text="{i18n>materialCode}" /><Text text="{materialLibrary>/selected/code}" />
+                        <Label text="{i18n>materialName}" /><Text text="{materialLibrary>/selected/name}" />
+                        <Label text="{i18n>bomNumber}" /><Text text="{materialLibrary>/selected/bom/bomCode}" />
+                        <Label text="{i18n>bomUsage}" /><Text text="{materialLibrary>/selected/bom/usage}" />
+                        <Label text="{i18n>alternativeBom}" /><Text text="{materialLibrary>/selected/bom/alternative}" />
+                        <Label text="{i18n>validFrom}" /><Text text="{materialLibrary>/selected/bom/validFrom}" />
+                        <Label text="{i18n>baseQuantity}" /><Text text="{= ${materialLibrary>/selected/bom/baseQuantity} + ' ' + ${materialLibrary>/selected/bom/baseUnit}}" />
+                      </form:content>
+                    </form:SimpleForm>
+                  </Panel>
+                  <Panel headerText="{i18n>bomEntries}">
+                    <Table items="{materialLibrary>/selected/bom/lines}" noDataText="{i18n>noBomEntries}">
+                      <columns><Column width="5rem"><Text text="{i18n>itemNumber}" /></Column><Column><Text text="{i18n>componentCode}" /></Column><Column><Text text="{i18n>componentName}" /></Column><Column><Text text="{i18n>category}" /></Column><Column hAlign="End"><Text text="{i18n>quantity}" /></Column><Column><Text text="{i18n>unit}" /></Column></columns>
+                      <items><ColumnListItem><cells><Text text="{materialLibrary>item}" /><ObjectIdentifier title="{materialLibrary>componentCode}" /><Text text="{materialLibrary>componentName}" /><Text text="{materialLibrary>category}" /><ObjectNumber number="{materialLibrary>quantity}" /><Text text="{materialLibrary>unit}" /></cells></ColumnListItem></items>
+                    </Table>
+                  </Panel>
+                </VBox>
+              </IconTabFilter>
+
+              <IconTabFilter key="versions" text="{i18n>versionHistory}">
+                <VBox class="materialDetailContent sapUiContentPadding">
+                  <MessageStrip text="{i18n>selectTwoVersions}" type="Information" showIcon="true" class="sapUiSmallMarginBottom" />
+                  <Table id="materialVersionTable" mode="MultiSelect" includeItemInSelection="true" selectionChange=".onVersionSelectionChange" items="{materialLibrary>/selected/versions}" class="sapUiSmallMarginBottom">
+                    <headerToolbar><Toolbar><Title text="{i18n>versionHistory}" level="H4" /></Toolbar></headerToolbar>
+                    <columns><Column><Text text="{i18n>revision}" /></Column><Column><Text text="{i18n>processStatus}" /></Column><Column><Text text="{i18n>specification}" /></Column><Column><Text text="{i18n>lifecycleStage}" /></Column><Column><Text text="{i18n>modifiedBy}" /></Column><Column><Text text="{i18n>modifiedAt}" /></Column><Column><Text text="{i18n>changeNote}" /></Column></columns>
+                    <items><ColumnListItem><cells><ObjectIdentifier title="{materialLibrary>revision}" /><ObjectStatus text="{materialLibrary>processStatus}" /><Text text="{materialLibrary>specification}" /><Text text="{materialLibrary>lifecycleStage}" /><Text text="{materialLibrary>modifiedBy}" /><Text text="{materialLibrary>modifiedAt}" /><Text text="{materialLibrary>changeNote}" /></cells></ColumnListItem></items>
+                  </Table>
+                  <Panel headerText="{i18n>versionComparison}">
+                    <Table items="{materialLibrary>/selected/versionChanges}" noDataText="{i18n>noVersionChanges}">
+                      <columns><Column><Text text="{i18n>changedField}" /></Column><Column><Text text="{i18n>beforeChange}" /></Column><Column><Text text="{i18n>afterChange}" /></Column></columns>
+                      <items><ColumnListItem><cells><Text text="{materialLibrary>field}" /><Text text="{materialLibrary>from}" /><ObjectStatus text="{materialLibrary>to}" state="Information" /></cells></ColumnListItem></items>
+                    </Table>
+                  </Panel>
+                </VBox>
+              </IconTabFilter>
+
+              <IconTabFilter key="related" text="{i18n>relatedObjects}">
+                <VBox class="materialRelatedContent">
+                  <HBox justifyContent="SpaceBetween" alignItems="Center" wrap="Wrap" class="materialRelatedToolbar">
+                    <VBox>
+                      <Title text="{i18n>relatedObjects}" level="H3" />
+                      <Text text="{i18n>relatedGraphHint}" />
+                    </VBox>
+                    <HBox alignItems="Center" class="materialRelatedActions">
+                      <ObjectStatus text="{= ${materialLibrary>/relatedGraph/upstreamDepth} + ' ' + ${i18n>upstreamLevel}}" state="Information" />
+                      <Button text="{i18n>expandUpstream}" icon="sap-icon://navigation-up-arrow" type="Transparent" enabled="{materialLibrary>/relatedGraph/canExpandUpstream}" press=".onExpandUpstream" />
+                      <Button text="{i18n>collapseUpstream}" icon="sap-icon://collapse-group" type="Transparent" visible="{= ${materialLibrary>/relatedGraph/upstreamDepth} > 0}" press=".onCollapseUpstream" />
+                    </HBox>
+                  </HBox>
+                  <VBox class="materialRelatedGraphHost">
+                    <ng:Graph
+                      id="materialRelatedGraph"
+                      width="100%"
+                      height="100%"
+                      orientation="TopBottom"
+                      renderType="Svg"
+                      graphReady=".onRelatedGraphReady"
+                      enableWheelZoom="true"
+                      noData="{= !${materialLibrary>/relatedGraph/hasRelations}}"
+                      noDataText="{i18n>relatedGraphEmpty}"
+                      nodes="{materialLibrary>/relatedGraph/nodes}"
+                      lines="{materialLibrary>/relatedGraph/lines}"
+                      class="materialRelatedGraph">
+                      <ng:nodes>
+                        <ng:Node
+                          key="{materialLibrary>key}"
+                          title="{materialLibrary>title}"
+                          description="{materialLibrary>description}"
+                          icon="{materialLibrary>icon}"
+                          shape="{materialLibrary>shape}"
+                          selected="{materialLibrary>selected}"
+                          showDetailButton="false"
+                          showActionLinksButton="false" />
+                      </ng:nodes>
+                      <ng:lines>
+                        <ng:Line from="{materialLibrary>from}" to="{materialLibrary>to}" arrowPosition="End" />
+                      </ng:lines>
+                      <ng:layoutAlgorithm>
+                        <nglayout:LayeredLayout nodeSpacing="60" lineSpacingFactor="0.35" />
+                      </ng:layoutAlgorithm>
+                    </ng:Graph>
+                  </VBox>
+                </VBox>
+              </IconTabFilter>
+            </items>
+          </IconTabBar>
+        </f:content>
+      </f:DynamicPage>
+    </f:endColumnPages>
+  </f:FlexibleColumnLayout>
+</mvc:View>

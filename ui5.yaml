@@ -15,6 +15,7 @@ framework:
     - name: sap.ui.core
     - name: sap.ui.layout
     - name: sap.ui.table
+    - name: sap.suite.ui.commons
     - name: sap.ui.unified
     - name: sap.uxap
     - name: themelib_sap_horizon

@@ -1,0 +1,119 @@
+<mvc:View
+  controllerName="com.company.superbom.controller.BomLibrary"
+  xmlns:mvc="sap.ui.core.mvc"
+  xmlns="sap.m"
+  xmlns:f="sap.f"
+  xmlns:core="sap.ui.core"
+  xmlns:t="sap.ui.table"
+  xmlns:form="sap.ui.layout.form"
+  height="100%"
+  displayBlock="true">
+  <f:FlexibleColumnLayout id="bomLibraryFcl" layout="TwoColumnsMidExpanded" height="100%" class="libraryFcl">
+    <f:layoutData>
+      <f:FlexibleColumnLayoutData>
+        <f:desktopLayoutData>
+          <f:FlexibleColumnLayoutDataForDesktop
+            twoColumnsMidExpanded="17/83/0"
+            threeColumnsMidExpanded="17/58/25"
+            threeColumnsEndExpanded="17/25/58" />
+        </f:desktopLayoutData>
+      </f:FlexibleColumnLayoutData>
+    </f:layoutData>
+    <f:beginColumnPages>
+      <Page title="{i18n>bomLibraryTreeTitle}" class="libraryTreePage">
+        <subHeader><Toolbar><SearchField width="100%" placeholder="{i18n>searchCategory}" /></Toolbar></subHeader>
+        <content><Tree id="bomCategoryTree" items="{bomLibrary>/tree}" mode="SingleSelectMaster" includeItemInSelection="true" selectionChange=".onCategorySelectionChange" class="libraryTree"><StandardTreeItem title="{bomLibrary>title}" icon="{bomLibrary>icon}" counter="{bomLibrary>count}" type="Active" /></Tree></content>
+      </Page>
+    </f:beginColumnPages>
+    <f:midColumnPages>
+      <f:DynamicPage id="bomLibraryDynamicPage" headerExpanded="true" preserveHeaderStateOnScroll="true" class="libraryDynamicPage bomListDynamicPage">
+        <f:title><f:DynamicPageTitle><f:heading><VBox><Title text="{i18n>bomLibraryTitle}" level="H1" /><Text text="{i18n>bomLibrarySubtitle}" /></VBox></f:heading><f:expandedContent><ObjectStatus text="{bomLibrary>/selectedCategoryTitle}" icon="sap-icon://folder" state="Information" /></f:expandedContent><f:snappedContent><Text text="{bomLibrary>/selectedCategoryTitle}" /></f:snappedContent><f:actions><Button text="{i18n>createBom}" type="Emphasized" icon="sap-icon://add" /></f:actions></f:DynamicPageTitle></f:title>
+        <f:header><f:DynamicPageHeader pinnable="true"><HBox wrap="Wrap" alignItems="End" class="librarySubheader"><VBox><Label text="{i18n>searchBomLibrary}" /><SearchField width="22rem" liveChange=".onSearch" /></VBox><VBox><Label text="{i18n>lifecycle}" /><Select selectedKey="{bomLibrary>/status}" change=".onStatusChange"><items><core:Item key="All" text="{i18n>allStatuses}" /><core:Item key="Released" text="{i18n>released}" /><core:Item key="In Development" text="{i18n>inDevelopment}" /></items></Select></VBox><ObjectStatus text="{= ${bomLibrary>/visibleItems}.length + ' ' + ${i18n>records}}" icon="sap-icon://tree" state="Information" /></HBox></f:DynamicPageHeader></f:header>
+        <f:content>
+          <VBox height="100%" fitContainer="true" class="bomTableContent">
+            <OverflowToolbar class="materialTableToolbar"><Title text="{i18n>boms}" level="H3" /><ToolbarSpacer /><Button icon="sap-icon://sort" type="Transparent" tooltip="{i18n>sort}" /><Button icon="sap-icon://filter" type="Transparent" tooltip="{i18n>filter}" /></OverflowToolbar>
+            <t:Table id="bomTable" width="100%" height="100%" rows="{bomLibrary>/visibleItems}" selectionMode="Single" selectionBehavior="RowOnly" cellClick=".onBomCellPress" visibleRowCountMode="Auto" minAutoRowCount="6" rowHeight="38" columnHeaderHeight="40" enableColumnReordering="true" enableSelectAll="false" class="bomAnalyticalTable">
+              <t:columns>
+                <t:Column width="13rem" sortProperty="number" filterProperty="number"><Label text="{i18n>bomNumber}" /><t:template><ObjectIdentifier title="{bomLibrary>number}" /></t:template></t:Column>
+                <t:Column width="20rem" sortProperty="name" filterProperty="name"><Label text="{i18n>bomName}" /><t:template><Text text="{bomLibrary>name}" /></t:template></t:Column>
+                <t:Column width="12rem" sortProperty="category" filterProperty="category"><Label text="{i18n>category}" /><t:template><Text text="{bomLibrary>category}" /></t:template></t:Column>
+                <t:Column width="7rem" sortProperty="revision" filterProperty="revision"><Label text="{i18n>revision}" /><t:template><Text text="{bomLibrary>revision}" /></t:template></t:Column>
+                <t:Column width="12rem" sortProperty="view" filterProperty="view"><Label text="{i18n>bomView}" /><t:template><Text text="{bomLibrary>view}" /></t:template></t:Column>
+                <t:Column width="7rem" sortProperty="lineCount" filterProperty="lineCount" hAlign="End"><Label text="{i18n>lineCount}" /><t:template><ObjectNumber number="{bomLibrary>lineCount}" /></t:template></t:Column>
+                <t:Column width="9rem" sortProperty="status" filterProperty="status"><Label text="{i18n>state}" /><t:template><ObjectStatus text="{bomLibrary>status}" state="{= ${bomLibrary>status} === 'Released' ? 'Success' : 'Warning'}" /></t:template></t:Column>
+              </t:columns>
+            </t:Table>
+          </VBox>
+        </f:content>
+      </f:DynamicPage>
+    </f:midColumnPages>
+
+    <f:endColumnPages>
+      <f:DynamicPage id="bomDetailDynamicPage" headerExpanded="true" preserveHeaderStateOnScroll="true" stickySubheaderProvider="bomDetailTabs" class="libraryDynamicPage materialDetailPage">
+        <f:title>
+          <f:DynamicPageTitle>
+            <f:heading>
+              <VBox class="materialObjectHeader">
+                <Title text="{bomLibrary>/selected/name}" level="H2" />
+                <Text text="{bomLibrary>/selected/number}" class="materialObjectCode" />
+              </VBox>
+            </f:heading>
+            <f:actions>
+              <Button icon="{= ${bomLibrary>/detailFullScreen} ? 'sap-icon://exit-full-screen' : 'sap-icon://full-screen'}" tooltip="{= ${bomLibrary>/detailFullScreen} ? ${i18n>exitFullScreen} : ${i18n>fullScreen}}" type="Transparent" press=".onToggleDetailFullScreen"><layoutData><OverflowToolbarLayoutData priority="NeverOverflow" /></layoutData></Button>
+              <Button icon="sap-icon://decline" tooltip="{i18n>closeDetails}" type="Transparent" press=".onCloseDetail"><layoutData><OverflowToolbarLayoutData priority="NeverOverflow" /></layoutData></Button>
+            </f:actions>
+          </f:DynamicPageTitle>
+        </f:title>
+        <f:header>
+          <f:DynamicPageHeader pinnable="true" class="materialDetailSubheader">
+            <HBox width="100%" wrap="NoWrap" alignItems="Center" class="materialDetailSummary">
+              <Avatar displayShape="Square" displaySize="Custom" customDisplaySize="4.5rem" customFontSize="2rem" fallbackIcon="sap-icon://tree" class="materialImagePlaceholder" />
+              <HBox wrap="NoWrap" alignItems="Start" class="materialMetadataBar">
+                <layoutData><FlexItemData growFactor="1" shrinkFactor="1" baseSize="0%" /></layoutData>
+                <VBox class="materialMetadataItem"><Label text="{i18n>category}" /><Text text="{bomLibrary>/selected/category}" /></VBox>
+                <VBox class="materialMetadataItem"><Label text="{i18n>revision}" /><Text text="{bomLibrary>/selected/revision}" /></VBox>
+                <VBox class="materialMetadataItem"><Label text="{i18n>bomView}" /><Text text="{bomLibrary>/selected/view}" /></VBox>
+                <VBox class="materialMetadataItem"><Label text="{i18n>lineCount}" /><ObjectNumber number="{bomLibrary>/selected/lineCount}" /></VBox>
+                <VBox class="materialMetadataItem"><Label text="{i18n>state}" /><ObjectStatus text="{bomLibrary>/selected/status}" state="{= ${bomLibrary>/selected/status} === 'Released' ? 'Success' : 'Warning'}" /></VBox>
+              </HBox>
+            </HBox>
+          </f:DynamicPageHeader>
+        </f:header>
+        <f:content>
+          <IconTabBar id="bomDetailTabs" selectedKey="{bomLibrary>/detailTabKey}" expandable="false" applyContentPadding="false" select=".onDetailTabSelect" class="materialDetailTabs">
+            <items>
+              <IconTabFilter key="general" text="{i18n>generalInformation}">
+                <VBox class="materialDetailContent sapUiContentPadding">
+                  <Panel headerText="{i18n>bomDetails}" class="sapUiSmallMarginBottom">
+                    <form:SimpleForm editable="false" layout="ResponsiveGridLayout" columnsXL="2" columnsL="2" columnsM="1">
+                      <form:content>
+                        <Label text="{i18n>bomNumber}" /><Text text="{bomLibrary>/selected/number}" />
+                        <Label text="{i18n>bomName}" /><Text text="{bomLibrary>/selected/name}" />
+                        <Label text="{i18n>category}" /><Text text="{bomLibrary>/selected/category}" />
+                        <Label text="{i18n>revision}" /><Text text="{bomLibrary>/selected/revision}" />
+                        <Label text="{i18n>bomView}" /><Text text="{bomLibrary>/selected/view}" />
+                        <Label text="{i18n>rootMaterial}" /><Text text="{bomLibrary>/selected/rootMaterial}" />
+                        <Label text="{i18n>state}" /><ObjectStatus text="{bomLibrary>/selected/status}" state="{= ${bomLibrary>/selected/status} === 'Released' ? 'Success' : 'Warning'}" />
+                        <Label text="{i18n>description}" /><Text text="{bomLibrary>/selected/description}" wrapping="true" />
+                      </form:content>
+                    </form:SimpleForm>
+                  </Panel>
+                </VBox>
+              </IconTabFilter>
+              <IconTabFilter key="structure" text="{i18n>bomLines}">
+                <VBox class="materialDetailContent sapUiContentPadding">
+                  <Panel headerText="{i18n>bomLines}">
+                    <Table items="{bomLibrary>/selected/children}" noDataText="{i18n>noBoms}">
+                      <columns><Column><Text text="{i18n>bomNumber}" /></Column><Column><Text text="{i18n>bomName}" /></Column><Column hAlign="End"><Text text="{i18n>quantity}" /></Column><Column><Text text="{i18n>unit}" /></Column></columns>
+                      <items><ColumnListItem><cells><ObjectIdentifier title="{bomLibrary>number}" /><Text text="{bomLibrary>name}" /><ObjectNumber number="{bomLibrary>quantity}" /><Text text="{bomLibrary>unit}" /></cells></ColumnListItem></items>
+                    </Table>
+                  </Panel>
+                </VBox>
+              </IconTabFilter>
+            </items>
+          </IconTabBar>
+        </f:content>
+      </f:DynamicPage>
+    </f:endColumnPages>
+  </f:FlexibleColumnLayout>
+</mvc:View>

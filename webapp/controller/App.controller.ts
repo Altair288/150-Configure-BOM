@@ -10,6 +10,8 @@ export default class AppController extends BaseController {
     home: "home",
     configuration: "configuration",
     featureLibrary: "featureLibrary",
+    materialLibrary: "materialLibrary",
+    bomLibrary: "bomLibrary",
     bom: "bom",
     configurator: "configurator",
     products: "product",

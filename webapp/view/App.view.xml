@@ -38,6 +38,8 @@
         <tnt:NavigationList>
           <tnt:NavigationListItem key="configuration" text="{i18n>navConfiguration}" icon="sap-icon://product" />
           <tnt:NavigationListItem key="featureLibrary" text="{i18n>navFeatureLibrary}" icon="sap-icon://collections-management" />
+          <tnt:NavigationListItem key="materialLibrary" text="{i18n>navMaterialLibrary}" icon="sap-icon://database" />
+          <tnt:NavigationListItem key="bomLibrary" text="{i18n>navBomLibrary}" icon="sap-icon://tree" />
           <tnt:NavigationListItem key="home" text="{i18n>navHome}" icon="sap-icon://home" />
           <tnt:NavigationListItem key="products" text="{i18n>navProducts}" icon="sap-icon://product" />
           <tnt:NavigationListItem key="bom" text="{i18n>navBom}" icon="sap-icon://tree" />

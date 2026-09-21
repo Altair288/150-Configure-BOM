@@ -34,6 +34,7 @@
         "sap.ui.core": {},
         "sap.ui.layout": {},
         "sap.ui.table": {},
+        "sap.suite.ui.commons": {},
         "sap.ui.unified": {},
         "sap.uxap": {}
       }
@@ -79,6 +80,16 @@
           "target": "home"
         },
         {
+          "pattern": "material-library/:categoryId:/:materialId:",
+          "name": "materialLibrary",
+          "target": "materialLibrary"
+        },
+        {
+          "pattern": "bom-library/:categoryId:/:bomId:",
+          "name": "bomLibrary",
+          "target": "bomLibrary"
+        },
+        {
           "pattern": "configurator/{configId}",
           "name": "configurator",
           "target": "configurator"
@@ -107,6 +118,14 @@
         "home": {
           "viewName": "Home",
           "viewId": "home"
+        },
+        "materialLibrary": {
+          "viewName": "MaterialLibrary",
+          "viewId": "materialLibrary"
+        },
+        "bomLibrary": {
+          "viewName": "BomLibrary",
+          "viewId": "bomLibrary"
         },
         "bom": {
           "viewName": "Bom",

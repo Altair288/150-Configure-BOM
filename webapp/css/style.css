@@ -456,6 +456,298 @@ body,
   background: var(--sapGroup_ContentBackground);
 }
 
+.libraryFcl,
+.libraryFcl .sapFFCLColumn,
+.libraryDynamicPage {
+  height: 100%;
+  min-height: 0;
+}
+
+.libraryTreePage .sapMPageCont {
+  padding: 0;
+  background: var(--sapGroup_ContentBackground);
+}
+
+.libraryTree {
+  border-top: 1px solid var(--sapList_BorderColor);
+}
+
+.librarySubheader {
+  gap: 1.5rem;
+}
+
+.librarySubheader > .sapMFlexItem:last-child {
+  margin-bottom: 0.5rem;
+}
+
+.libraryContent {
+  max-width: 100rem;
+  margin: 0 auto;
+}
+
+.libraryContent .sapMListTblHeaderCell {
+  background: var(--sapList_HeaderBackground);
+}
+
+.materialListDynamicPage .sapFDynamicPageContent,
+.materialListDynamicPage .sapFDynamicPageContentFitContainer {
+  height: 100%;
+  min-height: 0;
+  padding: 0 !important;
+}
+
+.bomListDynamicPage .sapFDynamicPageContent,
+.bomListDynamicPage .sapFDynamicPageContentFitContainer {
+  height: 100%;
+  min-height: 0;
+  padding: 0 !important;
+}
+
+.materialTableContent {
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+}
+
+.materialTableContent > .sapMFlexItem:last-child {
+  flex: 1 1 0% !important;
+  min-height: 0;
+}
+
+.bomTableContent {
+  height: 100%;
+  min-height: 0;
+  padding: 0;
+}
+
+.bomTableContent > .sapMFlexItem:last-child {
+  flex: 1 1 0% !important;
+  min-height: 0;
+}
+
+.materialTableToolbar {
+  flex: 0 0 auto;
+  min-height: 2.75rem;
+  margin: 0.3rem 0;
+  padding: 0 0.75rem;
+  border-bottom: 1px solid var(--sapList_BorderColor);
+  background: var(--sapGroup_ContentBackground);
+}
+
+.materialAnalyticalTable {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.bomAnalyticalTable {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.materialAnalyticalTable .sapUiTableColHdrCnt {
+  background: var(--sapList_HeaderBackground);
+}
+
+.bomAnalyticalTable .sapUiTableColHdrCnt {
+  background: var(--sapList_HeaderBackground);
+}
+
+.materialAnalyticalTable .sapUiTableRowSel .sapUiTableCell {
+  background: var(--sapList_SelectionBackgroundColor);
+}
+
+.bomAnalyticalTable .sapUiTableRowSel .sapUiTableCell {
+  background: var(--sapList_SelectionBackgroundColor);
+}
+
+.materialDetailFacts {
+  gap: 1.5rem;
+}
+
+.materialDetailContent {
+  min-width: 0;
+}
+
+.materialObjectHeader {
+  width: 100%;
+  min-width: 0;
+  gap: 0.15rem;
+}
+
+.materialImagePlaceholder {
+  flex: 0 0 auto;
+  border: 1px solid var(--sapList_BorderColor);
+  background: var(--sapGroup_ContentBackground);
+}
+
+.materialDetailSummary {
+  min-width: 0;
+  gap: 0.75rem;
+}
+
+.materialMetadataBar {
+  min-width: 0;
+  gap: 0.5rem;
+  padding: 0.5rem 0 0.75rem;
+}
+
+.materialMetadataBar > .sapMFlexItem {
+  flex: 1 1 0% !important;
+  min-width: 0;
+}
+
+.materialMetadataItem {
+  box-sizing: border-box;
+  min-width: 0;
+  flex: 1 1 0%;
+  padding: 0;
+}
+
+.materialMetadataItem .sapMLabel {
+  display: block;
+  overflow: hidden;
+  color: var(--sapContent_LabelColor);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.materialMetadataItem .sapMText,
+.materialMetadataItem .sapMObjStatusText {
+  display: block;
+  overflow: hidden;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.5rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.materialMetadataItem .sapMObjStatus {
+  line-height: 1.5rem;
+}
+
+.materialObjectHeader .sapMTitle,
+.materialObjectHeader .sapMText {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.materialObjectCode {
+  color: var(--sapContent_LabelColor);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.materialDetailTabs .sapMITBContent,
+.materialDetailTabs .sapMITBContainerContent {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.materialDetailTabs .sapMITBHead {
+  margin-left: 0;
+  padding-left: 0.75rem;
+}
+
+.materialDetailSubheader.sapFDynamicPageHeader {
+  padding: 0;
+}
+
+.materialRelatedContent {
+  box-sizing: border-box;
+  height: 100%;
+  min-height: 0;
+  padding: 0.75rem;
+  min-width: 0;
+}
+
+.materialRelatedToolbar {
+  flex: 0 0 auto;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.materialRelatedActions {
+  gap: 0.5rem;
+}
+
+.materialRelatedToolbar .sapMText {
+  color: var(--sapContent_LabelColor);
+  font-size: 0.875rem;
+}
+
+.materialRelatedGraphHost {
+  flex: 1 1 0% !important;
+  height: auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--sapList_BorderColor);
+  background: var(--sapGroup_ContentBackground);
+}
+
+.materialRelatedGraphHost > .sapMFlexItem {
+  flex: 1 1 0% !important;
+  min-height: 0;
+}
+
+.materialRelatedGraph {
+  flex: 1 1 0%;
+  display: block;
+  height: 100% !important;
+  min-height: 0;
+}
+
+.materialRelatedGraph .sapSuiteUiCommonsNetworkGraphScroller {
+  cursor: grab;
+}
+
+.materialRelatedGraph .sapSuiteUiCommonsNetworkGraphPanning {
+  cursor: grabbing;
+}
+
+.materialDetailPage,
+.materialDetailPage .sapFDynamicPageContentWrapper,
+.materialDetailPage .sapFDynamicPageContent {
+  background: var(--sapBackgroundColor);
+}
+
+.materialDetailPage .sapFDynamicPageContentWrapper,
+.materialDetailPage .sapFDynamicPageContent,
+.materialDetailPage .sapFDynamicPageContentFitContainer,
+.materialDetailTabs {
+  height: 100%;
+  min-height: 0;
+}
+
+.materialDetailPage .sapFDynamicPageContent,
+.materialDetailPage .sapFDynamicPageContentFitContainer {
+  padding: 0 !important;
+}
+
+.materialDetailTabs {
+  display: flex;
+  flex-direction: column;
+}
+
+.materialDetailTabs .sapMITBContainerContent,
+.materialDetailTabs .sapMITBContent {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 0%;
+}
+
+.materialDetailTabs .sapMITBContent > .sapMFlexBox {
+  flex: 1 1 0%;
+  min-height: 0;
+}
+
+@media (max-width: 1100px) {
+}
+
 .cadViewCube {
   position: absolute;
   top: 0.75rem;

@@ -500,6 +500,26 @@
   padding: 0 1rem;
   background: #f7f9fa;
 }
+.cmProfileSummaryToolbar {
+  align-items: center;
+  min-height: 2.25rem;
+  line-height: 1.25rem;
+}
+.cmProfileSummaryToolbar .cmProfileSummaryTitle,
+.cmProfileSummaryToolbar .cmProfileSummaryStatus,
+.cmProfileSummaryToolbar .cmProfileSummaryText {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.cmProfileSummaryToolbar .cmProfileSummaryTitle {
+  font-weight: 600;
+}
+.cmProfileSummaryToolbar .sapMObjStatusText,
+.cmProfileSummaryToolbar .sapMText {
+  line-height: 1.25rem;
+}
 .cmModelColumns {
   align-items: stretch;
   overflow: hidden;

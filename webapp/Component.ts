@@ -9,6 +9,7 @@ import {
   createRuleModel,
   createUiModel
 } from "./model/models";
+import { createBomLibraryModel, createMaterialLibraryModel } from "./model/library";
 
 export default class Component extends UIComponent {
   public static metadata = {
@@ -33,6 +34,8 @@ export default class Component extends UIComponent {
     this.setModel(createConfiguratorModel(), "config");
     this.setModel(createProductModel(), "products");
     this.setModel(createRuleModel(), "rules");
+    this.setModel(createMaterialLibraryModel(), "materialLibrary");
+    this.setModel(createBomLibraryModel(), "bomLibrary");
 
     this.getRouter().initialize();
   }
