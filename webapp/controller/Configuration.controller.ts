@@ -6,7 +6,9 @@ import ResourceModel from "sap/ui/model/resource/ResourceModel";
 import VBox from "sap/m/VBox";
 import Button from "sap/m/Button";
 import Label from "sap/m/Label";
+import Text from "sap/m/Text";
 import Input from "sap/m/Input";
+import TextArea from "sap/m/TextArea";
 import CheckBox from "sap/m/CheckBox";
 import SearchField from "sap/m/SearchField";
 import Toolbar from "sap/m/OverflowToolbar";
@@ -33,7 +35,7 @@ import ConfigurationPreviewDialog from "./configuration/ConfigurationPreviewDial
 import ConfigurationScopeView from "./configuration/ConfigurationScopeView";
 import { buildContextTreeRows } from "./configuration/ConfigurationViewModel";
 import type { Field, Selection, Values } from "./configuration/types";
-import { button, form, setI18nBundle, tr, txt } from "../util/configurationUi";
+import { button, form, select, setI18nBundle, tr, txt } from "../util/configurationUi";
 import {
   createSeed,
   ensureLoadTestContexts,
@@ -50,7 +52,8 @@ import {
   definitionUsage,
   contextReferences,
   copyContext,
-  publishDefinition
+  publishDefinition,
+  normalizeFeatureModelStore
 } from "../model/configuration";
 import type {
   ConfigurationStore,
@@ -62,7 +65,7 @@ import type {
   FeatureReference,
   ProductModel,
   ProductModelGroup,
-  Named
+  Named,
 } from "../model/configuration";
 
 let activeI18nModel: ResourceModel | undefined;
@@ -109,6 +112,8 @@ export default class ConfigurationController extends BaseController {
   private profileFullscreenButton?: Button;
   private mainFullscreen = false;
   private mainFullscreenButton?: Button;
+  private featureWorkspaceView?: ConfigurationFeatureWorkspaceView;
+  private featureExpandedNodeIds?: string[];
   private scopeEditMode = false;
   private selectedProductGroup?: string;
   private selectedProductGroupName?: string;
@@ -135,7 +140,7 @@ export default class ConfigurationController extends BaseController {
     const saved = localStorage.getItem(storageKey);
     if (saved) {
       try {
-        const parsed = JSON.parse(saved) as ConfigurationStore;
+        const parsed = normalizeFeatureModelStore(JSON.parse(saved));
         if (validateStore(parsed).length) throw new Error();
         const beforeLoadTestData = parsed.contexts.length;
         this.store = ensureLoadTestContexts(parsed);
@@ -226,7 +231,6 @@ export default class ConfigurationController extends BaseController {
     this.contextId = this.currentContext().id;
     this.profileOpen = false;
     this.profileFullscreen = false;
-    this.mainFullscreen = false;
     this.mainFullscreenButton = undefined;
     this.refreshViewModel();
     this.refreshContextRows();
@@ -305,8 +309,11 @@ export default class ConfigurationController extends BaseController {
 
   private renderActiveMode(): void {
     if (this.libraryMode) return;
+    if (this.featureWorkspaceView)
+      this.featureExpandedNodeIds = this.featureWorkspaceView.expandedNodeIds();
     this.scopeHost?.destroyItems();
     this.featureHost?.destroyItems();
+    this.featureWorkspaceView = undefined;
     if (this.mode === "context") this.scopeHost?.addItem(this.buildScope());
     else this.featureHost?.addItem(this.buildFeatureWorkspace());
   }
@@ -494,6 +501,8 @@ export default class ConfigurationController extends BaseController {
       onToggleFullscreen: () => this.toggleMainFullscreen(),
       onMainFullscreenButtonCreated: (button) => {
         this.mainFullscreenButton = button;
+        button.setIcon(this.mainFullscreen ? "sap-icon://exit-full-screen" : "sap-icon://full-screen");
+        button.setTooltip(this.mainFullscreen ? "退出主体内容全屏" : "全屏主体内容");
       },
       commit: (change, message) => this.commit(change, message)
     }).build();
@@ -948,7 +957,7 @@ export default class ConfigurationController extends BaseController {
     );
   }
   private buildFeatureWorkspace(): VBox {
-    return new ConfigurationFeatureWorkspaceView({
+    this.featureWorkspaceView = new ConfigurationFeatureWorkspaceView({
       store: this.store,
       context: this.currentContext(),
       profile: this.currentProfile(),
@@ -956,6 +965,7 @@ export default class ConfigurationController extends BaseController {
       treeSearch: this.treeSearch,
       dimensionFilter: this.dimensionFilter,
       editorTab: this.editorTab,
+      expandedNodeIds: this.featureExpandedNodeIds,
       onTreeSearchChanged: (value) => {
         this.treeSearch = value;
       },
@@ -964,6 +974,9 @@ export default class ConfigurationController extends BaseController {
       },
       onEditorTabChanged: (value) => {
         this.editorTab = value;
+      },
+      onExpandedNodeIdsChanged: (ids) => {
+        this.featureExpandedNodeIds = ids;
       },
       onSelection: (selection) => {
         this.selection = selection;
@@ -978,12 +991,19 @@ export default class ConfigurationController extends BaseController {
       onMoveNode: () => this.moveNode(),
       onOpenLibrary: () => this.getRouter().navTo("featureLibrary"),
       onPreview: () => this.preview(),
+      onToggleFullscreen: () => this.toggleMainFullscreen(),
+      onMainFullscreenButtonCreated: (button) => {
+        this.mainFullscreenButton = button;
+        button.setIcon(this.mainFullscreen ? "sap-icon://exit-full-screen" : "sap-icon://full-screen");
+        button.setTooltip(this.mainFullscreen ? "退出主体内容全屏" : "全屏主体内容");
+      },
       onEditDefinition: (definition) => this.editDefinition(definition),
       onEditDomain: (definition) => this.editDomain(definition),
       saveDefinition: (definition) => this.saveDefinition(definition),
       canEdit: () => this.canEdit(),
       commit: (change, message) => this.commit(change, message)
-    }).build();
+    });
+    return this.featureWorkspaceView.build();
   }
   private selectedFamily(): FeatureFamily | undefined {
     if (this.selection?.kind === "family")
@@ -1046,13 +1066,9 @@ export default class ConfigurationController extends BaseController {
       displayName: "",
       businessQuestion: "",
       dimension: group.dimension,
-      selectionMode: "Single",
-      mandatory: true,
       sourceType: "Local",
       sort: this.store.families.filter((f) => f.groupId === group.id).length + 1,
-      active: true,
-      minSelections: 0,
-      maxSelections: 1
+      active: true
     };
     this.editDialog(
       existing ? "编辑 Feature Family" : `Add Family · ${group.name}`,
@@ -1068,37 +1084,16 @@ export default class ConfigurationController extends BaseController {
         },
         { key: "dimension", label: "Dimension", value: record.dimension, options: dimensions },
         {
-          key: "selectionMode",
-          label: "Selection Mode",
-          value: record.selectionMode,
-          options: ["Single", "Multiple", "Value Input"]
-        },
-        { key: "mandatory", label: "Mandatory", value: record.mandatory },
-        {
           key: "sourceType",
           label: "Feature Source",
           value: record.sourceType,
           options: ["Local", "Enterprise Library"]
-        },
-        {
-          key: "minSelections",
-          label: "Min Selection Count",
-          value: record.minSelections,
-          numeric: true
-        },
-        {
-          key: "maxSelections",
-          label: "Max Selection Count",
-          value: record.maxSelections,
-          numeric: true
         },
         { key: "sort", label: "Sort Order", value: record.sort, numeric: true },
         { key: "active", label: "Active", value: record.active }
       ],
       (v) =>
         this.commit((s) => {
-          if (v.selectionMode === "Multiple" && !this.currentProfile().allowMulti)
-            throw new Error("当前 Profile 不允许多选");
           if (existing)
             Object.assign(
               s.families.find((f) => f.id === record.id)!,
@@ -1114,6 +1109,7 @@ export default class ConfigurationController extends BaseController {
       MessageToast.show("请先选择一个 Family");
       return;
     }
+    let nextAction: (() => void) | undefined;
     const dialog = new Dialog({
       title: "Add Feature",
       contentWidth: "30rem",
@@ -1126,8 +1122,8 @@ export default class ConfigurationController extends BaseController {
               icon: "sap-icon://add",
               width: "100%",
               press: () => {
+                nextAction = () => this.editDefinition();
                 dialog.close();
-                this.editDefinition();
               }
             }),
             new Button({
@@ -1135,45 +1131,40 @@ export default class ConfigurationController extends BaseController {
               icon: "sap-icon://chain-link",
               width: "100%",
               press: () => {
+                nextAction = () => this.reuseFeature();
                 dialog.close();
-                this.reuseFeature();
               }
             })
           ]
         }).addStyleClass("sapUiMediumMargin")
       ],
       endButton: button("取消", () => dialog.close()),
-      afterClose: () => dialog.destroy()
+      afterClose: () => {
+        dialog.destroy();
+        nextAction?.();
+      }
     });
     this.getView()?.addDependent(dialog);
     dialog.setDraggable(true).setResizable(true);
     dialog.open();
   }
+
   private definitionFields(d: FeatureDefinition): Field[] {
-    return [
+    const fields: Field[] = [
       ...this.namedFields(d),
-      { key: "kind", label: "Feature Mode", value: d.kind, options: ["Choice", "Characteristic"] },
       { key: "dimension", label: "Dimension", value: d.dimension, options: dimensions },
+      { key: "sourceType", label: "Source", value: d.sourceType, options: ["Local", "Enterprise Library"] },
+      { key: "active", label: "Active", value: d.active },
       { key: "dataType", label: "Data Type", value: d.dataType, options: dataTypes },
-      {
-        key: "selectionType",
-        label: "Selection Type",
-        value: d.selectionType,
-        options: [
-          "Single Selection",
-          "Multi Selection",
-          "Boolean Selection",
-          "Range Input",
-          "Free Input"
-        ]
-      },
       { key: "mandatory", label: "Mandatory", value: d.mandatory },
-      { key: "defaultValue", label: "Default Value (Code / Literal)", value: d.defaultValue },
-      { key: "unit", label: "Unit", value: d.unit },
-      { key: "minSelections", label: "Min Selection Count", value: d.minSelections, numeric: true },
-      { key: "maxSelections", label: "Max Selection Count", value: d.maxSelections, numeric: true },
-      { key: "active", label: "Active", value: d.active }
+      { key: "unit", label: "Unit", value: d.unit }
     ];
+    if (d.dataType === "Multi Enumeration")
+      fields.push(
+        { key: "minSelections", label: "Min Selection Count", value: d.minSelections, numeric: true },
+        { key: "maxSelections", label: "Max Selection Count", value: d.maxSelections, numeric: true }
+      );
+    return fields;
   }
   private editDefinition(existing?: FeatureDefinition): void {
     if (!this.libraryMode && !this.canEdit()) return;
@@ -1199,9 +1190,7 @@ export default class ConfigurationController extends BaseController {
       version: 1,
       sourceType: this.libraryMode ? "Enterprise Library" : "Local",
       dimension: "Engineering",
-      kind: "Characteristic",
       dataType: "Enumeration",
-      selectionType: "Single Selection",
       unit: "",
       mandatory: true,
       defaultValue: "",
@@ -1211,27 +1200,110 @@ export default class ConfigurationController extends BaseController {
       domain: { values: [] },
       modified: today()
     };
-    this.editDialog(
-      existing
+    this.openFeatureDefinitionDialog(d, existing);
+  }
+
+  private openFeatureDefinitionDialog(d: FeatureDefinition, existing?: FeatureDefinition): void {
+    const nameInput = new Input({ value: d.name, width: "100%" });
+    const codeInput = new Input({ value: d.code, width: "100%" });
+    const descriptionInput = new TextArea({ value: d.description, width: "100%", rows: 3 });
+    const dimensionInput = select(dimensions, d.dimension);
+    const sourceInput = select(["Local", "Enterprise Library"], d.sourceType);
+    const activeInput = new CheckBox({ selected: d.active, text: tr("Yes") });
+    const dataTypeInput = select(dataTypes, d.dataType);
+    const mandatoryInput = new CheckBox({ selected: d.mandatory, text: tr("Yes") });
+    const unitInput = new Input({ value: d.unit, width: "100%" });
+    const minSelectionsInput = new Input({ value: String(d.minSelections), type: "Number", width: "100%" });
+    const maxSelectionsInput = new Input({ value: String(d.maxSelections), type: "Number", width: "100%" });
+    const parameterForm = form([
+      ["Data Type", dataTypeInput],
+      ["Mandatory", mandatoryInput],
+      ["Unit", unitInput]
+    ]);
+    const multiSelectionForm = form([
+      ["Min Selection Count", minSelectionsInput],
+      ["Max Selection Count", maxSelectionsInput]
+    ]);
+    const syncDataType = (): void => {
+      const multi = dataTypeInput.getSelectedKey() === "Multi Enumeration";
+      multiSelectionForm.setVisible(multi);
+      if (multi && Number(maxSelectionsInput.getValue()) < 1)
+        maxSelectionsInput.setValue(String(Math.max(1, d.domain.values.length)));
+    };
+    dataTypeInput.attachChange(syncDataType);
+    syncDataType();
+    const dialog = new Dialog({
+      title: existing
         ? `编辑 ${d.name} · 保存为新定义版本`
         : this.libraryMode
           ? "新建企业特征定义"
           : "Create Local Feature",
-      this.definitionFields(d),
-      (v) => {
-        const updated = { ...structuredClone(d), ...v } as FeatureDefinition;
-        if (updated.kind === "Choice") {
-          updated.dataType = "Enumeration";
-          updated.selectionType = "Single Selection";
-          updated.domain = { values: [] };
+      contentWidth: "48rem",
+      draggable: true,
+      resizable: true,
+      content: [
+        form([
+          ["Name / 名称", nameInput],
+          ["Code / 编码", codeInput],
+          ["Description / 描述", descriptionInput],
+          ["Dimension", dimensionInput],
+          ["Source", sourceInput],
+          ["Active", activeInput]
+        ]),
+        parameterForm,
+        multiSelectionForm,
+        new MessageStrip({
+          text: "Feature 按选择的数据类型维护。枚举值、默认项和类型值域规则可在 Values 页签维护。",
+          type: "Information",
+          showIcon: true
+        })
+      ],
+      beginButton: new Button({
+        text: "保存",
+        type: "Emphasized",
+        press: () => {
+          const dataType = dataTypeInput.getSelectedKey() as FeatureDefinition["dataType"];
+          const valueListTypes: FeatureDefinition["dataType"][] = [
+            "Enumeration",
+            "Multi Enumeration",
+            "Reference"
+          ];
+          const preserveValueList =
+            valueListTypes.includes(d.dataType) && valueListTypes.includes(dataType);
+          const domain =
+            dataType === d.dataType
+              ? d.domain
+              : preserveValueList
+                ? { values: d.domain.values }
+                : { values: [] };
+          const updated = {
+            ...structuredClone(d),
+            name: nameInput.getValue().trim(),
+            code: codeInput.getValue().trim(),
+            description: descriptionInput.getValue().trim(),
+            dimension: dimensionInput.getSelectedKey() as FeatureDefinition["dimension"],
+            sourceType: sourceInput.getSelectedKey() as FeatureDefinition["sourceType"],
+            active: activeInput.getSelected(),
+            dataType,
+            mandatory: mandatoryInput.getSelected(),
+            minSelections: dataType === "Multi Enumeration"
+              ? Number(minSelectionsInput.getValue())
+              : 0,
+            maxSelections: dataType === "Multi Enumeration"
+              ? Number(maxSelectionsInput.getValue())
+              : 1,
+            unit: unitInput.getValue().trim(),
+            domain
+          } as FeatureDefinition;
+          if (this.saveDefinition(updated, !existing)) dialog.close();
         }
-        if (existing && existing.dataType !== updated.dataType) {
-          updated.domain = { values: [] };
-          updated.defaultValue = "";
-        }
-        return this.saveDefinition(updated, !existing);
-      }
-    );
+      }),
+      endButton: button("取消", () => dialog.close()),
+      afterClose: () => dialog.destroy()
+    });
+    this.getView()?.addDependent(dialog);
+    dialog.addStyleClass("sapUiSizeCompact cmEditDialog");
+    dialog.open();
   }
   private saveDefinition(d: FeatureDefinition, create = false): boolean {
     const errors = validateDefinition(d);
@@ -1288,17 +1360,15 @@ export default class ConfigurationController extends BaseController {
       MessageBox.information("公共值域请在企业特征库修改。已有引用保留当前版本。");
       return;
     }
-    if (d.kind === "Choice") {
-      this.editDefinition(d);
-      return;
-    }
-    const draft = structuredClone(d);
-    if (["Enumeration", "Multi Enumeration", "Reference"].includes(d.dataType)) {
+    const draft = { ...structuredClone(d), domain: d.domain ?? { values: [] } };
+    const dataType = d.dataType ?? "Enumeration";
+    const domain = d.domain ?? { values: [] };
+    if (["Enumeration", "Multi Enumeration", "Reference"].includes(dataType)) {
       let selected = -1;
       const table = new Table({
         mode: "SingleSelectLeft",
         fixedLayout: false,
-        columns: ["Code *", "Display Value *", "Description", "Sequence", "Default", "Active"].map(
+        columns: ["Sequence", "Code *", "Display Value *", "Description", "Default", "Active"].map(
           (t) => new Column({ header: new Label({ text: t }) })
         ),
         selectionChange: (e) => {
@@ -1319,17 +1389,10 @@ export default class ConfigurationController extends BaseController {
           table.addItem(
             new ColumnListItem({
               cells: [
+                new Text({ text: String(v.sort) }),
                 input("code"),
                 input("value"),
                 input("description"),
-                new Input({
-                  value: String(v.sort),
-                  type: "Number",
-                  width: "5rem",
-                  liveChange: (e) => {
-                    v.sort = Number(e.getParameter("value"));
-                  }
-                }),
                 new CheckBox({
                   selected: v.defaultValue,
                   select: (e) => {
@@ -1360,7 +1423,7 @@ export default class ConfigurationController extends BaseController {
         draggable: true,
         resizable: true,
         content: [
-          ...(d.dataType === "Reference" ? [form([["Reference Catalog", targetInput]])] : []),
+          ...(dataType === "Reference" ? [form([["Reference Catalog", targetInput]])] : []),
           new Toolbar({
             content: [
               txt("允许值编码在当前定义内唯一；停用值不会出现在预览中。"),
@@ -1373,7 +1436,7 @@ export default class ConfigurationController extends BaseController {
                     code: "",
                     value: "",
                     description: "",
-                    sort: draft.domain.values.length + 1,
+                    sort: Math.max(0, ...draft.domain.values.map((value) => value.sort)) + 1,
                     defaultValue: false,
                     active: true
                   });
@@ -1389,6 +1452,7 @@ export default class ConfigurationController extends BaseController {
                     return;
                   }
                   draft.domain.values.splice(selected, 1);
+                  draft.domain.values.forEach((value, index) => { value.sort = index + 1; });
                   refresh();
                 },
                 "sap-icon://delete"
@@ -1401,6 +1465,11 @@ export default class ConfigurationController extends BaseController {
           text: "保存值域",
           type: "Emphasized",
           press: () => {
+            draft.domain.values = draft.domain.values
+              .filter((value) =>
+                [value.code, value.value, value.description].some((text) => text.trim())
+              )
+              .map((value, index) => ({ ...value, sort: index + 1 }));
             if (this.saveDefinition(draft)) dialog.close();
           }
         }),
@@ -1413,40 +1482,40 @@ export default class ConfigurationController extends BaseController {
       return;
     }
     const fields: Field[] = [];
-    if (["Integer", "Decimal", "Range"].includes(d.dataType))
+    if (["Integer", "Decimal", "Range"].includes(dataType))
       fields.push(
-        { key: "minimum", label: "Minimum", value: d.domain.minimum ?? "" },
-        { key: "maximum", label: "Maximum", value: d.domain.maximum ?? "" },
-        { key: "step", label: "Step", value: d.domain.step ?? "" },
+        { key: "minimum", label: "Minimum", value: domain.minimum ?? "" },
+        { key: "maximum", label: "Maximum", value: domain.maximum ?? "" },
+        { key: "step", label: "Step", value: domain.step ?? "" },
         { key: "unit", label: "Unit", value: d.unit }
       );
-    if (d.dataType === "String")
+    if (dataType === "String")
       fields.push(
-        { key: "maxLength", label: "Max Length", value: d.domain.maxLength ?? "" },
-        { key: "pattern", label: "Pattern (Optional)", value: d.domain.pattern ?? "" }
+        { key: "maxLength", label: "Max Length", value: domain.maxLength ?? "" },
+        { key: "pattern", label: "Pattern (Optional)", value: domain.pattern ?? "" }
       );
-    if (["Date", "DateTime"].includes(d.dataType))
+    if (["Date", "DateTime"].includes(dataType))
       fields.push(
         {
           key: "minimumDate",
           label:
-            d.dataType === "Date"
+            dataType === "Date"
               ? "Minimum Date · YYYY-MM-DD"
               : "Minimum DateTime · YYYY-MM-DDTHH:mm",
-          value: d.domain.minimumDate ?? ""
+          value: domain.minimumDate ?? ""
         },
         {
           key: "maximumDate",
           label:
-            d.dataType === "Date"
+            dataType === "Date"
               ? "Maximum Date · YYYY-MM-DD"
               : "Maximum DateTime · YYYY-MM-DDTHH:mm",
-          value: d.domain.maximumDate ?? ""
+          value: domain.maximumDate ?? ""
         }
       );
-    if (d.dataType === "Boolean") {
+    if (dataType === "Boolean") {
       MessageBox.information(
-        "Boolean 固定提供 Yes / No。可在完整属性中设置必填和默认值（true / false）。"
+        "Boolean 类型固定提供 Yes / No，无需维护额外值域。"
       );
       return;
     }
@@ -1571,7 +1640,9 @@ export default class ConfigurationController extends BaseController {
           if (a !== MessageBox.Action.OK) return;
           this.commit((s) => {
             if (node.kind === "feature")
-              s.references = s.references.filter((r) => r.id !== node.id);
+              {
+                s.references = s.references.filter((r) => r.id !== node.id);
+              }
             else {
               const ids = new Set(
                 s.families
@@ -1608,7 +1679,7 @@ export default class ConfigurationController extends BaseController {
       ],
       (v) =>
         this.commit((s) => {
-          const copyRef = (r: FeatureReference, familyId: string, rename = false): void => {
+          const copyRef = (r: FeatureReference, familyId: string, rename = false): string => {
             const d = resolveDefinition(s, r);
             let id = d.id,
               version = d.version;
@@ -1626,12 +1697,14 @@ export default class ConfigurationController extends BaseController {
               throw new Error(
                 "企业特征在同一个 Family 中只能引用一次。请使用移动，或在另一个 Family 中 Reuse Feature。"
               );
+            const referenceId = uid("ref");
             s.references.push({
-              id: uid("ref"),
+              id: referenceId,
               familyId,
               featureDefinitionId: id,
               definitionVersion: version
             });
+            return referenceId;
           };
           if (node.kind === "feature") {
             const r = s.references.find((x) => x.id === node.id)!;
@@ -1658,7 +1731,9 @@ export default class ConfigurationController extends BaseController {
                 groupId,
                 ...(node.kind === "family" ? { name: String(v.name), code: String(v.code) } : {})
               });
-              s.references.filter((r) => r.familyId === f.id).forEach((r) => copyRef(r, id));
+              s.references
+                .filter((r) => r.familyId === f.id)
+                .forEach((r) => copyRef(r, id));
             });
           }
         })
@@ -1753,7 +1828,7 @@ export default class ConfigurationController extends BaseController {
         return;
       }
       try {
-        const next = JSON.parse(await file.text()) as ConfigurationStore;
+        const next = normalizeFeatureModelStore(JSON.parse(await file.text()));
         const errors = validateStore(next);
         if (!next.contexts.length) errors.push("工作区至少需要一个 Context");
         if (errors.length) {

@@ -186,7 +186,6 @@ export default class ConfigurationFeatureLibraryView {
       new Toolbar({
         content: [
           status(definition.dimension),
-          status(definition.dataType),
           new ToolbarSpacer(),
           button("编辑定义", () => this.options.onEditDefinition(definition), "sap-icon://edit"),
           button("编辑值域", () => this.options.onEditDomain(definition))
@@ -200,15 +199,13 @@ export default class ConfigurationFeatureLibraryView {
         showIcon: true
       })
     );
-    box.addItem(
-      form([
-        ["Description", definition.description],
-        ["Selection", definition.selectionType],
-        ["Mandatory", definition.mandatory ? "Yes" : "No"],
-        ["Unit", definition.unit],
-        ["Last Modified", definition.modified]
-      ])
-    );
+    const detailPairs: [string, string][] = [
+      ["Description", definition.description],
+      ["Data Type", definition.dataType]
+    ];
+    detailPairs.push(["Mandatory", definition.mandatory ? "Yes" : "No"], ["Unit", definition.unit]);
+    detailPairs.push(["Last Modified", definition.modified]);
+    box.addItem(form(detailPairs));
     box.addItem(title("Value Domain").addStyleClass("sapUiSmallMargin"));
     box.addItem(contentView.domainDisplay(definition));
     box.addItem(contentView.usageContent(definition));

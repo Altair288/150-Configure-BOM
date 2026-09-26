@@ -52,7 +52,7 @@ export default class ConfigurationPreviewDialog {
     const content = new VBox({
       items: [
         new MessageStrip({
-          text: "Rule validation is not enabled in this modeling stage. 此预览仅检查必填、类型和值域，允许独立选择 FWD 与 Offroad Package。",
+          text: "Rule validation is not enabled in this modeling stage. 此预览检查必填、数据类型和值域。",
           type: "Information",
           showIcon: true
         })
@@ -81,16 +81,11 @@ export default class ConfigurationPreviewDialog {
         content.addItem(
           new Label({
             text: family.displayName || family.name,
-            required: family.mandatory,
             design: "Bold"
           })
         );
         content.addItem(txt(family.businessQuestion).addStyleClass("cmPreviewQuestion"));
-        const choices = definitions.filter(({ definition }) => definition.kind === "Choice");
-        if (choices.length) this.addChoiceControl(content, checks, values, family, choices, useDefault);
-        for (const { ref, definition } of definitions.filter(
-          ({ definition: item }) => item.kind !== "Choice"
-        )) {
+        for (const { ref, definition } of definitions) {
           this.addDefinitionControl(
             content,
             checks,
@@ -139,58 +134,6 @@ export default class ConfigurationPreviewDialog {
     dialog.open();
   }
 
-  private addChoiceControl(
-    content: VBox,
-    checks: (() => string[])[],
-    values: Map<string, unknown>,
-    family: FeatureFamily,
-    choices: { definition: FeatureDefinition }[],
-    useDefault: boolean
-  ): void {
-    const active = choices.map(({ definition }) => definition);
-    if (family.selectionMode === "Multiple") {
-      const input = new MultiComboBox({
-        width: "100%",
-        selectedKeys: useDefault
-          ? active.filter((definition) => definition.defaultValue === definition.code).map((definition) => definition.id)
-          : [],
-        items: active.map((definition) => new Item({ key: definition.id, text: definition.name })),
-        selectionFinish: () => values.set(family.id, input.getSelectedKeys())
-      });
-      content.addItem(input);
-      checks.push(() => {
-        const count = input.getSelectedKeys().length;
-        const error =
-          count < Math.max(family.mandatory ? 1 : 0, family.minSelections) ||
-          count > family.maxSelections;
-        input.setValueState(error ? "Error" : "None");
-        return error
-          ? [
-              `${family.name}: 请选择 ${Math.max(family.mandatory ? 1 : 0, family.minSelections)}–${family.maxSelections} 项`
-            ]
-          : [];
-      });
-      return;
-    }
-    const input = new RadioButtonGroup({
-      columns: 2,
-      selectedIndex:
-        useDefault && active.some((definition) => definition.defaultValue === definition.code)
-          ? active.findIndex((definition) => definition.defaultValue === definition.code)
-          : useDefault &&
-              this.options.profile.defaultBehavior === "Auto Select Single Value" &&
-              active.length === 1
-            ? 0
-            : -1,
-      buttons: active.map((definition) => new RadioButton({ text: definition.name })),
-      select: () => values.set(family.id, active[input.getSelectedIndex()]?.code)
-    });
-    content.addItem(input);
-    checks.push(() =>
-      family.mandatory && input.getSelectedIndex() < 0 ? [`${family.name}: 请选择一个值`] : []
-    );
-  }
-
   private addDefinitionControl(
     content: VBox,
     checks: (() => string[])[],
@@ -211,7 +154,9 @@ export default class ConfigurationPreviewDialog {
     let getValue: () => unknown;
     let control: Control;
     let setError: (errors: string[]) => void = () => undefined;
-    const allowed = definition.domain.values
+    const dataType = definition.dataType;
+    const domain = definition.domain;
+    const allowed = domain.values
       .filter((value) => value.active)
       .sort((a, b) => a.sort - b.sort);
     const initial = useDefault
@@ -221,7 +166,7 @@ export default class ConfigurationPreviewDialog {
           ? allowed[0].code
           : "")
       : "";
-    if (definition.dataType === "Multi Enumeration") {
+    if (dataType === "Multi Enumeration") {
       const input = new MultiComboBox({
         width: "100%",
         selectedKeys: useDefault
@@ -237,8 +182,8 @@ export default class ConfigurationPreviewDialog {
         input.setValueState(errors.length ? "Error" : "None");
         input.setValueStateText(errors[0] ?? "");
       };
-    } else if (["Enumeration", "Reference"].includes(definition.dataType)) {
-      if (definition.dataType === "Enumeration" && allowed.length <= 6) {
+    } else if (["Enumeration", "Reference"].includes(dataType)) {
+      if (dataType === "Enumeration" && allowed.length <= 6) {
         const input = new RadioButtonGroup({
           columns: 3,
           selectedIndex: allowed.findIndex((value) => value.code === initial),
@@ -259,8 +204,8 @@ export default class ConfigurationPreviewDialog {
         getValue = () => input.getSelectedKey();
         setError = (errors) => input.setValueState(errors.length ? "Error" : "None");
       }
-    } else if (definition.dataType === "Boolean") {
-      if (!definition.mandatory && !family.mandatory) {
+    } else if (dataType === "Boolean") {
+      if (!definition.mandatory) {
         const input = new CheckBox({ text: definition.name, selected: initial === "true" });
         control = input;
         getValue = () => input.getSelected();
@@ -282,18 +227,18 @@ export default class ConfigurationPreviewDialog {
       const input = new Input({
         value: initial,
         width: "100%",
-        type: ["Integer", "Decimal"].includes(definition.dataType)
+        type: ["Integer", "Decimal"].includes(dataType)
           ? "Number"
-          : definition.dataType === "Date"
+          : dataType === "Date"
             ? "Date"
-            : definition.dataType === "DateTime"
+            : dataType === "DateTime"
               ? "DatetimeLocale"
               : "Text",
         placeholder:
-          definition.dataType === "Range"
+          dataType === "Range"
             ? "起始值 ~ 结束值"
-            : definition.dataType === "String"
-              ? `最多 ${definition.domain.maxLength ?? "不限"} 字符`
+            : dataType === "String"
+              ? `最多 ${domain.maxLength ?? "不限"} 字符`
               : "输入值",
         description: definition.unit
       });
@@ -305,16 +250,16 @@ export default class ConfigurationPreviewDialog {
       };
     }
     content.addItem(control);
-    if (["Decimal", "Integer", "Range"].includes(definition.dataType))
+    if (["Decimal", "Integer", "Range"].includes(dataType))
       content.addItem(
         txt(
-          `${definition.domain.minimum ?? "不限"} – ${definition.domain.maximum ?? "不限"} ${definition.unit}  ·  Step ${definition.domain.step ?? "Any"}`
+          `${domain.minimum ?? "不限"} – ${domain.maximum ?? "不限"} ${definition.unit}  ·  Step ${domain.step ?? "Any"}`
         ).addStyleClass("cmDomainHint")
       );
     checks.push(() => {
       const value = getValue();
       values.set(referenceId, value);
-      const errors = validateValue(definition, value, definition.mandatory || family.mandatory);
+      const errors = validateValue(definition, value, definition.mandatory);
       setError(errors);
       return errors.map((error) => `${definition.name}: ${error}`);
     });

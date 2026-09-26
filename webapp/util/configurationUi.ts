@@ -67,6 +67,7 @@ const rawI18nKeys: Record<string, string> = {
   Unit: "cmUnit",
   Source: "cmSource",
   "Min / Max Selection": "cmMinMaxSelection",
+  "Default Selected": "cmDefaultSelected",
   "Sort Order": "cmSortOrder",
   Add: "cmAdd",
   "Add Group": "cmAddGroup",

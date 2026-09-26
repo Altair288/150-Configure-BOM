@@ -75,33 +75,43 @@ export default class ConfigurationFeatureContentView {
   }
 
   public domainDisplay(definition: FeatureDefinition): Control {
-    if (definition.kind === "Choice")
-      return form([
-        ["Choice Code", definition.code],
-        ["Display Value", definition.name],
-        ["Active", definition.active ? "Yes" : "No"]
-      ]);
-    if (["Enumeration", "Multi Enumeration", "Reference"].includes(definition.dataType))
-      return this.valueTable(definition.domain.values);
+    const domain = definition.domain ?? { values: [] };
+    if (["Enumeration", "Multi Enumeration", "Reference"].includes(definition.dataType)) {
+      return new VBox({
+        items: [
+          ...(definition.dataType === "Multi Enumeration"
+            ? [
+                form([
+                  ["Minimum Selections", String(definition.minSelections)],
+                  ["Maximum Selections", String(definition.maxSelections)]
+                ])
+              ]
+            : []),
+          this.valueTable(domain.values)
+        ]
+      });
+    }
     const pairs: [string, string][] = [
       ["Data Type", definition.dataType],
       ["Unit", definition.unit]
     ];
-    if (["Integer", "Decimal", "Range"].includes(definition.dataType))
+    if (definition.dataType === "Multi Enumeration")
+      pairs.push(["Selection Count", `${definition.minSelections} – ${definition.maxSelections}`]);
+    if (["Integer", "Decimal", "Range"].includes(definition.dataType ?? ""))
       pairs.push(
-        ["Minimum", String(definition.domain.minimum ?? "—")],
-        ["Maximum", String(definition.domain.maximum ?? "—")],
-        ["Step", String(definition.domain.step ?? "—")]
+        ["Minimum", String(domain.minimum ?? "—")],
+        ["Maximum", String(domain.maximum ?? "—")],
+        ["Step", String(domain.step ?? "—")]
       );
     else if (definition.dataType === "String")
       pairs.push(
-        ["Max Length", String(definition.domain.maxLength ?? "—")],
-        ["Pattern", definition.domain.pattern || "—"]
+        ["Max Length", String(domain.maxLength ?? "—")],
+        ["Pattern", domain.pattern || "—"]
       );
-    else if (["Date", "DateTime"].includes(definition.dataType))
+    else if (["Date", "DateTime"].includes(definition.dataType ?? ""))
       pairs.push(
-        ["Minimum Date", definition.domain.minimumDate || "—"],
-        ["Maximum Date", definition.domain.maximumDate || "—"]
+        ["Minimum Date", domain.minimumDate || "—"],
+        ["Maximum Date", domain.maximumDate || "—"]
       );
     else pairs.push(["Allowed Values", "Yes / No"]);
     return form(pairs);
@@ -185,7 +195,7 @@ export default class ConfigurationFeatureContentView {
     return new Table({
       fixedLayout: false,
       noDataText: "尚未定义允许值",
-      columns: ["Value Code", "Display Value", "Description", "Sequence", "Default", "Active"].map(
+      columns: ["Sequence", "Value Code", "Display Value", "Description", "Default", "Active"].map(
         (text) => new Column({ header: new Label({ text }) })
       ),
       items: [...values]
@@ -194,10 +204,10 @@ export default class ConfigurationFeatureContentView {
           (value) =>
             new ColumnListItem({
               cells: [
+                txt(String(value.sort)),
                 txt(value.code),
                 txt(value.value),
                 txt(value.description || "—"),
-                txt(String(value.sort)),
                 status(value.defaultValue ? "Yes" : "—"),
                 status(value.active ? "Active" : "Inactive")
               ]

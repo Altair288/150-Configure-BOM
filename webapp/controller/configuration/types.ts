@@ -57,9 +57,11 @@ export interface FeatureWorkspaceOptions {
   treeSearch: string;
   dimensionFilter: string;
   editorTab: string;
+  expandedNodeIds?: string[];
   onTreeSearchChanged: (value: string) => void;
   onDimensionChanged: (value: string) => void;
   onEditorTabChanged: (value: string) => void;
+  onExpandedNodeIdsChanged: (ids: string[]) => void;
   onSelection: (selection: Selection | undefined) => void;
   onEditGroup: (group?: FeatureGroup) => void;
   onEditFamily: (family?: FeatureFamily) => void;
@@ -70,6 +72,8 @@ export interface FeatureWorkspaceOptions {
   onMoveNode: () => void;
   onOpenLibrary: () => void;
   onPreview: () => void;
+  onToggleFullscreen: () => void;
+  onMainFullscreenButtonCreated: (button: import("sap/m/Button").default) => void;
   onEditDefinition: (definition: FeatureDefinition) => void;
   onEditDomain: (definition: FeatureDefinition) => void;
   saveDefinition: (definition: FeatureDefinition) => boolean;

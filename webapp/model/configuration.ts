@@ -73,13 +73,9 @@ export interface FeatureFamily extends Named {
   displayName: string;
   businessQuestion: string;
   dimension: Dimension;
-  selectionMode: "Single" | "Multiple" | "Value Input";
-  mandatory: boolean;
   sourceType: "Local" | "Enterprise Library";
   sort: number;
   active: boolean;
-  minSelections: number;
-  maxSelections: number;
 }
 export interface FeatureValue {
   id: string;
@@ -106,9 +102,7 @@ export interface FeatureDefinition extends Named {
   sourceType: "Local" | "Enterprise Library";
   dimension: Dimension;
   dataType: DataType;
-  kind: "Choice" | "Characteristic";
   unit: string;
-  selectionType: string;
   mandatory: boolean;
   defaultValue: string;
   minSelections: number;
@@ -144,9 +138,121 @@ export interface ConfigurationStore {
   references: FeatureReference[];
   revisions: ContextRevision[];
 }
-export const storageKey = "plm.configuration-vocabulary.v1";
+export const storageKey = "plm.configuration-vocabulary.v2";
 export const uid = (prefix: string): string => `${prefix}-${crypto.randomUUID()}`;
 export const today = (): string => new Date().toISOString().slice(0, 10);
+
+/** Upgrades workspaces saved by the earlier Feature Mode / Selection Group model. */
+export function normalizeFeatureModelStore(input: unknown): ConfigurationStore {
+  const store = structuredClone(input) as ConfigurationStore & {
+    definitions: Array<FeatureDefinition & { featureMode?: string; defaultSelected?: boolean }>;
+    selectionGroups?: Array<{
+      id: string;
+      familyId: string;
+      code: string;
+      name: string;
+      description: string;
+      featureReferenceIds: string[];
+      minSelections: number;
+      maxSelections: number;
+      active: boolean;
+    }>;
+  };
+  const legacyReferences = [...store.references];
+  const legacyDefinitions = [...store.definitions];
+  const convertedDefinitionIds = new Set<string>();
+
+  for (const selectionGroup of store.selectionGroups ?? []) {
+    const memberReferences = selectionGroup.featureReferenceIds
+      .map((id) => legacyReferences.find((reference) => reference.id === id))
+      .filter((reference): reference is FeatureReference => !!reference && reference.familyId === selectionGroup.familyId);
+    const members = memberReferences
+      .map((reference) => ({
+        reference,
+        definition: legacyDefinitions.find(
+          (definition) =>
+            definition.id === reference.featureDefinitionId &&
+            definition.version === reference.definitionVersion
+        )
+      }))
+      .filter((item): item is { reference: FeatureReference; definition: FeatureDefinition & { featureMode?: string; defaultSelected?: boolean } } => !!item.definition);
+    if (!members.length) continue;
+
+    const family = store.families.find((item) => item.id === selectionGroup.familyId);
+    const values = members.map(({ definition }, index) => ({
+      id: uid("value"),
+      code: definition.code,
+      value: definition.name,
+      description: definition.description,
+      sort: index + 1,
+      defaultValue: definition.defaultSelected ?? definition.defaultValue === "true",
+      active: definition.active
+    }));
+    const minimum = Math.min(selectionGroup.minSelections, values.length);
+    const maximum = Math.max(1, Math.min(selectionGroup.maxSelections, values.length));
+    const multi = maximum > 1;
+    const converted: FeatureDefinition = {
+      id: uid("def"),
+      code: `MIG_${selectionGroup.id.replace(/[^a-zA-Z0-9]+/g, "_").toUpperCase()}`,
+      name: family?.displayName || family?.name || selectionGroup.name,
+      description: selectionGroup.description || family?.description || "",
+      version: 1,
+      sourceType: members.every(({ definition }) => definition.sourceType === "Enterprise Library")
+        ? "Enterprise Library"
+        : "Local",
+      dimension: members[0].definition.dimension,
+      dataType: multi ? "Multi Enumeration" : "Enumeration",
+      unit: "",
+      mandatory: minimum > 0,
+      defaultValue: "",
+      minSelections: minimum,
+      maxSelections: multi ? maximum : 1,
+      active: selectionGroup.active && members.some(({ definition }) => definition.active),
+      domain: { values },
+      modified: today()
+    };
+    store.definitions.push(converted);
+    const memberIds = new Set(memberReferences.map((reference) => reference.id));
+    store.references = store.references.filter((reference) => !memberIds.has(reference.id));
+    store.references.push({
+      id: uid("ref"),
+      familyId: selectionGroup.familyId,
+      featureDefinitionId: converted.id,
+      definitionVersion: converted.version
+    });
+    members.forEach(({ definition }) => convertedDefinitionIds.add(definition.id));
+  }
+  delete store.selectionGroups;
+  store.definitions = store.definitions.filter(
+    (definition) =>
+      !convertedDefinitionIds.has(definition.id) ||
+      store.references.some((reference) => reference.featureDefinitionId === definition.id)
+  );
+  store.definitions = store.definitions.map((rawDefinition) => {
+    const definition = rawDefinition as FeatureDefinition & {
+      featureMode?: string;
+      defaultSelected?: boolean;
+    };
+    const { featureMode, defaultSelected, ...rest } = definition;
+    const legacyFunctional = featureMode === "Functional Option";
+    const dataType = definition.dataType ?? (legacyFunctional ? "Boolean" : "Enumeration");
+    const domain = definition.domain ?? { values: [] };
+    return {
+      ...rest,
+      dataType,
+      unit: definition.unit ?? "",
+      mandatory: legacyFunctional ? false : definition.mandatory ?? true,
+      defaultValue: definition.defaultValue || (defaultSelected ? "true" : ""),
+      minSelections: dataType === "Multi Enumeration" ? definition.minSelections ?? 0 : 0,
+      maxSelections:
+        dataType === "Multi Enumeration"
+          ? definition.maxSelections ?? Math.max(1, domain.values.length)
+          : 1,
+      domain
+    };
+  });
+  return store;
+}
 export function resolveDefinition(
   store: ConfigurationStore,
   ref: FeatureReference
@@ -194,24 +300,8 @@ export function validateDefinition(d: FeatureDefinition): string[] {
   if (!dimensions.includes(d.dimension)) errors.push("请选择有效维度");
   if (!Number.isInteger(d.version) || d.version < 1) errors.push("版本必须是正整数");
   if (!["Local", "Enterprise Library"].includes(d.sourceType)) errors.push("特征来源无效");
-  if (!["Choice", "Characteristic"].includes(d.kind)) errors.push("特征模式无效");
   if (typeof d.active !== "boolean" || typeof d.mandatory !== "boolean")
     errors.push("Active / Mandatory 必须为布尔值");
-  const selection =
-    d.dataType === "Boolean"
-      ? "Boolean Selection"
-      : d.dataType === "Multi Enumeration"
-        ? "Multi Selection"
-        : ["Enumeration", "Reference"].includes(d.dataType)
-          ? "Single Selection"
-          : d.dataType === "Range"
-            ? "Range Input"
-            : "Free Input";
-  if (d.selectionType !== selection) errors.push(`${d.dataType} 应使用 ${selection}`);
-  if (d.kind === "Choice" && d.dataType !== "Enumeration")
-    errors.push("Choice 模式使用 Enumeration 值");
-  if (d.kind === "Choice" && d.defaultValue && d.defaultValue !== d.code)
-    errors.push("Choice 的默认值需填写其自身编码，留空表示不默认选中");
   if (!d.domain || !Array.isArray(d.domain.values)) return [...errors, "值域格式错误"];
   const { minimum, maximum, step, maxLength, pattern, minimumDate, maximumDate } = d.domain;
   if ([minimum, maximum, step, maxLength].some((n) => n !== undefined && !Number.isFinite(n)))
@@ -226,6 +316,13 @@ export function validateDefinition(d: FeatureDefinition): string[] {
     [minimum, maximum, step].some((n) => n !== undefined && !Number.isInteger(n))
   )
     errors.push("Integer 的边界和步长必须为整数");
+  if (
+    d.dataType === "Multi Enumeration" &&
+    (!Number.isInteger(d.minSelections) ||
+      !Number.isInteger(d.maxSelections) ||
+      d.minSelections < 0 ||
+      d.maxSelections < Math.max(1, d.minSelections))
+  ) errors.push("多选数量范围无效");
   if (pattern) {
     try {
       new RegExp(pattern);
@@ -241,13 +338,6 @@ export function validateDefinition(d: FeatureDefinition): string[] {
     )
   )
     errors.push("日期边界格式无效");
-  if (
-    !Number.isInteger(d.minSelections) ||
-    !Number.isInteger(d.maxSelections) ||
-    d.minSelections < 0 ||
-    d.maxSelections < Math.max(1, d.minSelections)
-  )
-    errors.push("选择数量范围无效");
   const codes = d.domain.values.map((v) => v.code.trim().toUpperCase());
   if (codes.some((c) => !c) || new Set(codes).size !== codes.length)
     errors.push("允许值编码不能为空或重复");
@@ -257,7 +347,7 @@ export function validateDefinition(d: FeatureDefinition): string[] {
   if (d.domain.values.some((v) => v.defaultValue && !v.active)) errors.push("停用值不能作为默认值");
   if (d.dataType === "Enumeration" && d.domain.values.filter((v) => v.defaultValue).length > 1)
     errors.push("单选值域只能有一个默认值");
-  if (d.defaultValue && d.kind !== "Choice")
+  if (d.defaultValue)
     errors.push(
       ...validateValue(
         d,
@@ -267,13 +357,12 @@ export function validateDefinition(d: FeatureDefinition): string[] {
         false
       )
     );
-  const defaults = d.domain.values.filter((v) => v.defaultValue);
   if (
     d.dataType === "Multi Enumeration" &&
-    defaults.length &&
-    (defaults.length < d.minSelections || defaults.length > d.maxSelections)
-  )
-    errors.push("默认值数量超出选择范围");
+    d.domain.values.some((value) => value.defaultValue) &&
+    (d.domain.values.filter((value) => value.defaultValue).length < d.minSelections ||
+      d.domain.values.filter((value) => value.defaultValue).length > d.maxSelections)
+  ) errors.push("默认值数量超出选择范围");
   return errors;
 }
 /** Checks only the value's own domain, never relationships between features. */
@@ -282,6 +371,7 @@ export function validateValue(
   value: unknown,
   mandatory = d.mandatory
 ): string[] {
+  const domain = d.domain;
   if (
     value === undefined ||
     value === "" ||
@@ -294,18 +384,17 @@ export function validateValue(
     return [true, false, "true", "false"].includes(value as boolean | string)
       ? []
       : ["请选择 Yes 或 No"];
-  if (["Enumeration", "Multi Enumeration", "Reference"].includes(d.dataType)) {
+  if (["Enumeration", "Multi Enumeration", "Reference"].includes(d.dataType ?? "")) {
     const values = Array.isArray(value) ? value : [text];
-    const allowed = d.domain.values.filter((v) => v.active).map((v) => v.code);
+    const allowed = domain.values.filter((v) => v.active).map((v) => v.code);
     if (values.some((v) => !allowed.includes(String(v)))) return ["包含不在允许值域中的值"];
     if (
       d.dataType === "Multi Enumeration" &&
       (values.length < d.minSelections || values.length > d.maxSelections)
-    )
-      return [`请选择 ${d.minSelections}–${d.maxSelections} 项`];
+    ) return [`请选择 ${d.minSelections}–${d.maxSelections} 项`];
     return [];
   }
-  if (["Integer", "Decimal", "Range"].includes(d.dataType)) {
+  if (["Integer", "Decimal", "Range"].includes(d.dataType ?? "")) {
     const entries = d.dataType === "Range" ? text.split("~").map((s) => s.trim()) : [text];
     if (d.dataType === "Range" && entries.length !== 2) return ["请输入 起始值 ~ 结束值"];
     const numbers = entries.map(Number);
@@ -317,34 +406,34 @@ export function validateValue(
     if (
       numbers.some(
         (n) =>
-          (d.domain.minimum !== undefined && n < d.domain.minimum) ||
-          (d.domain.maximum !== undefined && n > d.domain.maximum)
+          (domain.minimum !== undefined && n < domain.minimum) ||
+          (domain.maximum !== undefined && n > domain.maximum)
       )
     )
       return ["超出允许的数值范围"];
-    const step = d.domain.step;
+    const step = domain.step;
     if (
       step &&
       numbers.some(
         (n) =>
           Math.abs(
-            (n - (d.domain.minimum ?? 0)) / step - Math.round((n - (d.domain.minimum ?? 0)) / step)
+            (n - (domain.minimum ?? 0)) / step - Math.round((n - (domain.minimum ?? 0)) / step)
           ) > 1e-7
       )
     )
       return [`数值需符合步长 ${step}`];
   }
   if (d.dataType === "String") {
-    if (d.domain.maxLength && text.length > d.domain.maxLength)
-      return [`最多 ${d.domain.maxLength} 个字符`];
-    if (d.domain.pattern && !new RegExp(d.domain.pattern).test(text))
+    if (domain.maxLength && text.length > domain.maxLength)
+      return [`最多 ${domain.maxLength} 个字符`];
+    if (domain.pattern && !new RegExp(domain.pattern).test(text))
       return ["不符合字符串格式要求"];
   }
-  if (["Date", "DateTime"].includes(d.dataType)) {
+  if (["Date", "DateTime"].includes(d.dataType ?? "")) {
     if (!validDate(text, d.dataType === "DateTime")) return ["日期格式无效"];
     if (
-      (d.domain.minimumDate && text < d.domain.minimumDate) ||
-      (d.domain.maximumDate && text > d.domain.maximumDate)
+      (domain.minimumDate && text < domain.minimumDate) ||
+      (domain.maximumDate && text > domain.maximumDate)
     )
       return ["日期超出允许范围"];
   }
@@ -414,7 +503,6 @@ export function validateStore(s: ConfigurationStore): string[] {
         "displayName",
         "businessQuestion",
         "dimension",
-        "selectionMode",
         "sourceType"
       ]
     ],
@@ -428,9 +516,7 @@ export function validateStore(s: ConfigurationStore): string[] {
         "sourceType",
         "dimension",
         "dataType",
-        "kind",
         "unit",
-        "selectionType",
         "defaultValue",
         "modified"
       ]
@@ -454,7 +540,7 @@ export function validateStore(s: ConfigurationStore): string[] {
   if (
     s.definitions.some(
       (d) =>
-        !d.domain ||
+        (!d.domain ||
         !Array.isArray(d.domain.values) ||
         d.domain.values.some(
           (v) =>
@@ -462,7 +548,7 @@ export function validateStore(s: ConfigurationStore): string[] {
             [v.id, v.code, v.value, v.description].some((x) => typeof x !== "string") ||
             typeof v.active !== "boolean" ||
             typeof v.defaultValue !== "boolean"
-        )
+        ))
     )
   )
     return ["特征值域结构无效"];
@@ -552,9 +638,7 @@ export function validateStore(s: ConfigurationStore): string[] {
   for (const f of s.families) {
     if (
       !dimensions.includes(f.dimension) ||
-      !["Single", "Multiple", "Value Input"].includes(f.selectionMode) ||
       !["Local", "Enterprise Library"].includes(f.sourceType) ||
-      typeof f.mandatory !== "boolean" ||
       typeof f.active !== "boolean" ||
       !Number.isInteger(f.sort) ||
       f.sort < 0
@@ -562,13 +646,6 @@ export function validateStore(s: ConfigurationStore): string[] {
       errors.push("Family 属性格式无效");
     if (!s.groups.some((g) => g.id === f.groupId)) errors.push("Family 所属 Group 不存在");
     if (!f.businessQuestion?.trim()) errors.push(`${f.name}: 业务问题不能为空`);
-    if (
-      !Number.isInteger(f.minSelections) ||
-      !Number.isInteger(f.maxSelections) ||
-      f.minSelections < 0 ||
-      f.maxSelections < Math.max(1, f.minSelections)
-    )
-      errors.push(`${f.name}: 选择数量范围无效`);
   }
   for (const p of s.profiles) {
     if (
@@ -620,18 +697,8 @@ export function validateContext(store: ConfigurationStore, contextId: string): s
       .map((r) => resolveDefinition(store, r))
       .filter((d) => d.active);
     if (!definitions.length) errors.push(`${family.name}: 尚无有效特征`);
-    const choices = definitions.filter((d) => d.kind === "Choice");
-    if (choices.length && choices.length !== definitions.length)
-      errors.push(`${family.name}: 请将 Choice 与 Typed Characteristic 分开建模`);
-    if (choices.length && family.selectionMode === "Value Input")
-      errors.push(`${family.name}: Choice 应使用 Single 或 Multiple`);
-    if (family.selectionMode === "Single" && choices.filter((d) => d.defaultValue).length > 1)
-      errors.push(`${family.name}: 单选问题不能默认选中多个 Choice`);
-    if (family.selectionMode === "Multiple" && !profile.allowMulti)
-      errors.push(`${family.name}: Profile 不允许多选`);
     for (const d of definitions) {
       if (
-        d.kind !== "Choice" &&
         ["Enumeration", "Multi Enumeration", "Reference"].includes(d.dataType) &&
         !d.domain.values.some((v) => v.active)
       )
@@ -643,9 +710,9 @@ export function validateContext(store: ConfigurationStore, contextId: string): s
       )
         errors.push(`${d.name}: 特征来源与 Profile 不一致`);
       if (
-        (!profile.allowMulti && d.dataType === "Multi Enumeration") ||
+        ((!profile.allowMulti && d.dataType === "Multi Enumeration") ||
         (!profile.allowRange && d.dataType === "Range") ||
-        (!profile.allowText && d.dataType === "String")
+        (!profile.allowText && d.dataType === "String"))
       )
         errors.push(`${d.name}: 输入类型与 Profile 不一致`);
     }
@@ -726,9 +793,10 @@ export function copyContext(
             });
           localMap.set(d.id, definitionId);
         }
+        const referenceId = uid("ref");
         s.references.push({
           ...ref,
-          id: uid("ref"),
+          id: referenceId,
           familyId,
           featureDefinitionId: definitionId,
           definitionVersion: d.sourceType === "Local" ? 1 : d.version
@@ -884,22 +952,11 @@ export function createSeed(): ConfigurationStore {
       dimension,
       sourceType: local ? "Local" : "Enterprise Library",
       version: 1,
-      kind: "Characteristic",
       unit,
-      selectionType:
-        type === "Boolean"
-          ? "Boolean Selection"
-          : type === "Multi Enumeration"
-            ? "Multi Selection"
-            : ["Enumeration", "Reference"].includes(type)
-              ? "Single Selection"
-              : type === "Range"
-                ? "Range Input"
-                : "Free Input",
       mandatory: true,
       defaultValue: "",
       minSelections: 0,
-      maxSelections: type === "Multi Enumeration" ? 5 : 1,
+      maxSelections: type === "Multi Enumeration" ? Math.max(1, values.length) : 1,
       active: true,
       modified: "2026-09-17",
       domain: {
@@ -975,8 +1032,7 @@ export function createSeed(): ConfigurationStore {
     code: string,
     name: string,
     question: string,
-    definitions: FeatureDefinition[],
-    mode: FeatureFamily["selectionMode"] = "Single"
+    definitions: FeatureDefinition[]
   ): void => {
     const id = `${groupId}-${code}`;
     s.families.push({
@@ -988,15 +1044,11 @@ export function createSeed(): ConfigurationStore {
       description: question,
       businessQuestion: question,
       dimension: definitions[0].dimension,
-      selectionMode: mode,
-      mandatory: true,
       sourceType: definitions.every((d) => d.sourceType === "Enterprise Library")
         ? "Enterprise Library"
         : "Local",
       sort: s.families.length + 1,
-      active: true,
-      minSelections: 0,
-      maxSelections: mode === "Multiple" ? 5 : 1
+      active: true
     });
     definitions.forEach((d) =>
       s.references.push({
@@ -1011,13 +1063,12 @@ export function createSeed(): ConfigurationStore {
   family(interior, "FAM_SEAT", "Seat Material", "What material should the seats use?", [seat]);
   const driver = define(
     "DRIVER_ADJUST",
-    "Adjustable Driver Seat",
-    "Boolean",
+    "Driver Seat Adjustment",
+    "Enumeration",
     "Engineering",
-    [],
+    ["Manual", "4-way Electric", "8-way Electric"],
     true
   );
-  driver.mandatory = false;
   const steering = define(
     "STEERING_ADJUST",
     "Adjustable Steering",
@@ -1027,15 +1078,23 @@ export function createSeed(): ConfigurationStore {
     true
   );
   steering.mandatory = false;
+  const steeringRange = define(
+    "STEERING_RANGE",
+    "Steering Adjustment Range",
+    "Decimal",
+    "Engineering",
+    [],
+    true,
+    { minimum: 0, maximum: 120, step: 1 },
+    "mm"
+  );
   family(
     interior,
     "FAM_CONVENIENCE",
     "Convenience",
     "Which convenience features are required?",
-    [driver, steering],
-    "Value Input"
+    [steering, driver, steeringRange]
   );
-  s.families[s.families.length - 1].mandatory = false;
   family(
     interior,
     "FAM_THEME",
@@ -1043,31 +1102,26 @@ export function createSeed(): ConfigurationStore {
     "How should the interior theme be named?",
     [
       define("INTERIOR_THEME", "Interior Theme", "String", "Marketing", [], true, { maxLength: 50 })
-    ],
-    "Value Input"
+    ]
   );
   const exterior = group("SUV", "EXTERIOR", "Exterior", "Engineering");
   family(exterior, "FAM_WHEEL_SIZE", "Wheel Size", "Which wheel size should this vehicle use?", [
     wheel
   ]);
-  const choices = ["Steel", "Aluminum", "Forged Aluminum"].map((name, i) => {
-    const d = define(
-      `WHEEL_${["STEEL", "AL", "FORGED"][i]}`,
-      `${name} Wheel`,
-      "Enumeration",
-      "Engineering",
-      [],
-      true
-    );
-    d.kind = "Choice";
-    return d;
-  });
+  const wheelMaterial = define(
+    "WHEEL_MATERIAL",
+    "Wheel Material",
+    "Enumeration",
+    "Engineering",
+    ["Steel", "Aluminum", "Forged Aluminum"],
+    true
+  );
   family(
     exterior,
     "FAM_WHEEL_MATERIAL",
     "Wheel Material",
     "Which wheel material should this vehicle use?",
-    choices
+    [wheelMaterial]
   );
   const power = group("SUV", "POWERTRAIN", "Powertrain", "Engineering");
   family(power, "FAM_DRIVE", "Drive Type", "Which drive type is required?", [drive]);
@@ -1087,8 +1141,7 @@ export function createSeed(): ConfigurationStore {
         { minimum: 40, maximum: 150, step: 5 },
         "kWh"
       )
-    ],
-    "Value Input"
+    ]
   );
   const market = group("SUV", "MARKET", "Market", "Common");
   family(market, "FAM_REGION", "Region", "Which market is the product intended for?", [region]);
@@ -1116,8 +1169,7 @@ export function createSeed(): ConfigurationStore {
         ["Offroad Package", "Winter Package", "Comfort Package"],
         true
       )
-    ],
-    "Multiple"
+    ]
   );
   const engineering = group("SUV", "ENGINEERING", "Engineering Parameters", "Engineering");
   family(
@@ -1130,16 +1182,14 @@ export function createSeed(): ConfigurationStore {
         minimumDate: "2026-01-01",
         maximumDate: "2030-12-31"
       })
-    ],
-    "Value Input"
+    ]
   );
   family(
     engineering,
     "FAM_TIME",
     "Delivery Window",
     "When does the delivery window start?",
-    [define("DELIVERY_TIME", "Delivery Start", "DateTime", "Common", [], true)],
-    "Value Input"
+    [define("DELIVERY_TIME", "Delivery Start", "DateTime", "Common", [], true)]
   );
   family(
     engineering,
@@ -1157,8 +1207,7 @@ export function createSeed(): ConfigurationStore {
         { minimum: -40, maximum: 80, step: 1 },
         "°C"
       )
-    ],
-    "Value Input"
+    ]
   );
   family(
     engineering,
@@ -1171,8 +1220,7 @@ export function createSeed(): ConfigurationStore {
         maximum: 9,
         step: 1
       })
-    ],
-    "Value Input"
+    ]
   );
   family(engineering, "FAM_PLATFORM", "Platform", "Which platform catalog entry is used?", [
     define(
@@ -1207,8 +1255,7 @@ export function createSeed(): ConfigurationStore {
             { minimum: 80, maximum: 200, step: 10 },
             "mm"
           )
-        ],
-        "Value Input"
+        ]
       );
   }
   return s;

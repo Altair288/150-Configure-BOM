@@ -1,4 +1,6 @@
 import Control from "sap/ui/core/Control";
+import Event from "sap/ui/base/Event";
+import Popup from "sap/ui/core/Popup";
 import Icon from "sap/ui/core/Icon";
 import JSONModel from "sap/ui/model/json/JSONModel";
 import VBox from "sap/m/VBox";
@@ -11,18 +13,26 @@ import CheckBox from "sap/m/CheckBox";
 import SearchField from "sap/m/SearchField";
 import Toolbar from "sap/m/OverflowToolbar";
 import ToolbarSpacer from "sap/m/ToolbarSpacer";
-import ObjectIdentifier from "sap/m/ObjectIdentifier";
+import Text from "sap/m/Text";
+import Title from "sap/m/Title";
+import Breadcrumbs from "sap/m/Breadcrumbs";
+import Link from "sap/m/Link";
 import IconTabBar from "sap/m/IconTabBar";
 import IconTabFilter from "sap/m/IconTabFilter";
 import MessageStrip from "sap/m/MessageStrip";
 import ScrollContainer from "sap/m/ScrollContainer";
 import TreeTable from "sap/ui/table/TreeTable";
 import TreeColumn from "sap/ui/table/Column";
-import Fixed from "sap/ui/table/rowmodes/Fixed";
+import Row from "sap/ui/table/Row";
+import Auto from "sap/ui/table/rowmodes/Auto";
 import MenuButton from "sap/m/MenuButton";
 import Menu from "sap/m/Menu";
 import MenuItem from "sap/m/MenuItem";
-import ObjectPageHeader from "sap/uxap/ObjectPageHeader";
+import UnifiedMenu from "sap/ui/unified/Menu";
+import UnifiedMenuItem from "sap/ui/unified/MenuItem";
+import DynamicPage from "sap/f/DynamicPage";
+import DynamicPageHeader from "sap/f/DynamicPageHeader";
+import DynamicPageTitle from "sap/f/DynamicPageTitle";
 import {
   contextReferences,
   dataTypes,
@@ -44,6 +54,9 @@ export default class ConfigurationFeatureWorkspaceView {
   private tree?: TreeTable;
   private editor?: VBox;
   private inspector?: VBox;
+  private contextMenu?: UnifiedMenu;
+  private contextMenuRoot?: Element;
+  private contextMenuHandler?: EventListener;
 
   public constructor(options: FeatureWorkspaceOptions) {
     this.options = options;
@@ -73,20 +86,16 @@ export default class ConfigurationFeatureWorkspaceView {
           text: tr("Add Feature"),
           icon: "sap-icon://action-settings",
           press: () => this.options.onAddFeature()
-        }),
-        new MenuItem({
-          text: tr("Reuse Feature"),
-          icon: "sap-icon://chain-link",
-          press: () => this.options.onReuseFeature()
         })
       ]
     });
     this.tree = new TreeTable({
       width: "100%",
-      rowMode: new Fixed({ rowCount: 18, rowContentHeight: 36 }),
+      rowMode: new Auto({ minRowCount: 1, rowContentHeight: 32 }),
       selectionMode: "Single",
       selectionBehavior: "RowOnly",
       enableSelectAll: false,
+      toggleOpenState: () => this.options.onExpandedNodeIdsChanged(this.expandedNodeIds()),
       columns: [
         new TreeColumn({
           label: new Label({ text: tr("Group / Family / Feature") }),
@@ -96,7 +105,12 @@ export default class ConfigurationFeatureWorkspaceView {
               new Icon({ src: "{icon}", size: ".875rem", color: "#5c7081" }).addStyleClass(
                 "sapUiTinyMarginEnd"
               ),
-              new ObjectIdentifier({ title: "{name}", text: "{type}" })
+              new Text({
+                text: "{= ${name} + ' · ' + ${type} }",
+                wrapping: false,
+                maxLines: 1,
+                tooltip: "{= ${name} + ' · ' + ${type} }"
+              }).addStyleClass("cmModelTreeNodeText")
             ]
           }),
           width: "100%",
@@ -115,9 +129,10 @@ export default class ConfigurationFeatureWorkspaceView {
         this.renderSelected();
       }
     });
+    this.tree.addEventDelegate({ onAfterRendering: () => this.attachTreeContextMenu() });
     this.populateTree();
     const treePanel = new VBox({
-      width: "21rem",
+      width: "23rem",
       height: "100%",
       fitContainer: true,
       items: [
@@ -149,10 +164,16 @@ export default class ConfigurationFeatureWorkspaceView {
         txt("Group › Family › Feature · 链接图标表示企业引用").addStyleClass("cmTreeLegend")
       ]
     }).addStyleClass("cmModelTree");
-    this.editor = new VBox({ width: "100%" }).addStyleClass("cmEditorContent");
-    this.inspector = new VBox({ width: "19rem", height: "100%", fitContainer: true }).addStyleClass(
-      "cmInspector"
+    this.editor = new VBox({ width: "100%", height: "100%", fitContainer: true }).addStyleClass(
+      "cmEditorContent"
     );
+    const mainFullscreenButton = new Button({
+      icon: "sap-icon://full-screen",
+      tooltip: "全屏主体内容",
+      type: "Transparent",
+      press: () => this.options.onToggleFullscreen()
+    });
+    this.options.onMainFullscreenButtonCreated(mainFullscreenButton);
     const workspace = new VBox({
       height: "100%",
       fitContainer: true,
@@ -164,6 +185,7 @@ export default class ConfigurationFeatureWorkspaceView {
             button("复制", () => this.options.onCopyNode(), "sap-icon://copy"),
             button("移动", () => this.options.onMoveNode(), "sap-icon://move"),
             new ToolbarSpacer(),
+            mainFullscreenButton,
             button(
               "企业特征库",
               () => this.options.onOpenLibrary(),
@@ -183,15 +205,7 @@ export default class ConfigurationFeatureWorkspaceView {
             fitContainer: true,
             items: [
               treePanel,
-              grow(
-                new ScrollContainer({
-                  vertical: true,
-                  horizontal: false,
-                  height: "100%",
-                  content: [this.editor]
-                })
-              ),
-              this.inspector
+              grow(this.editor)
             ]
           }).addStyleClass("cmModelColumns")
         )
@@ -282,7 +296,7 @@ export default class ConfigurationFeatureWorkspaceView {
                   code: definition.code,
                   dimension: definition.dimension,
                   source: definition.sourceType,
-                  type: `${definition.kind === "Choice" ? "Choice" : definition.dataType} · V${definition.version}${definition.active ? "" : " · Inactive"}`,
+                  type: `${definition.dataType} · V${definition.version}${definition.active ? "" : " · Inactive"}`,
                   children: []
                 };
               })
@@ -308,7 +322,27 @@ export default class ConfigurationFeatureWorkspaceView {
         : filtered;
     this.tree.setModel(new JSONModel({ rows }));
     this.tree.bindRows({ path: "/rows", parameters: { arrayNames: ["children"] } });
-    this.tree.expandToLevel(3);
+    if (this.options.expandedNodeIds === undefined) this.tree.expandToLevel(3);
+    else {
+      const expanded = new Set(this.options.expandedNodeIds);
+      for (let pass = 0; pass < 3; pass++) {
+        const length = (this.tree.getBinding("rows") as unknown as { getLength(): number } | undefined)?.getLength() ?? 0;
+        for (let index = 0; index < length; index++)
+          if (expanded.has(String(this.tree.getContextByIndex(index)?.getProperty("id"))))
+            this.tree.expand(index);
+      }
+    }
+  }
+
+  public expandedNodeIds(): string[] {
+    if (!this.tree) return [];
+    const ids: string[] = [];
+    const length = (this.tree.getBinding("rows") as unknown as { getLength(): number } | undefined)?.getLength() ?? 0;
+    for (let index = 0; index < length; index++) {
+      const context = this.tree.getContextByIndex(index);
+      if (context && this.tree.isExpanded(index)) ids.push(String(context.getProperty("id")));
+    }
+    return ids;
   }
 
   private selectedFamily(selection = this.options.getSelection()): FeatureFamily | undefined {
@@ -327,10 +361,108 @@ export default class ConfigurationFeatureWorkspaceView {
     return this.options.store.groups.find((group) => group.id === id);
   }
 
+  private attachTreeContextMenu(): void {
+    const root = this.tree?.getDomRef();
+    if (!root || root === this.contextMenuRoot) return;
+    if (this.contextMenuRoot && this.contextMenuHandler)
+      this.contextMenuRoot.removeEventListener("contextmenu", this.contextMenuHandler);
+    this.contextMenuRoot = root;
+    this.contextMenuHandler = (event) => this.openTreeContextMenu(event as MouseEvent);
+    root.addEventListener("contextmenu", this.contextMenuHandler);
+  }
+
+  private openTreeContextMenu(event: MouseEvent): void {
+    const tree = this.tree;
+    const root = this.contextMenuRoot;
+    const target = event.target instanceof Element ? event.target : undefined;
+    if (!tree || !root || !target) return;
+    const row = tree.getRows().find((visibleRow: Row) => visibleRow.getDomRef()?.contains(target));
+    if (!row || row.getIndex() < 0) return;
+    const rowIndex = row.getIndex();
+    const context = tree.getContextByIndex(rowIndex);
+    if (!context) return;
+    const kind = context.getProperty("kind") as Selection["kind"];
+    if (!["group", "family", "feature"].includes(kind)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const selection = { kind, id: String(context.getProperty("id")) } as Selection;
+    tree.setSelectedIndex(rowIndex);
+    this.options.onSelection(selection);
+    this.renderSelected();
+    this.contextMenu?.destroy();
+
+    const actions = new Map<string, () => void>();
+    const menuItem = (text: string, icon: string, action: () => void, startsSection = false) => {
+      const item = new UnifiedMenuItem({ text, icon, startsSection });
+      actions.set(item.getId(), action);
+      return item;
+    };
+    const items: UnifiedMenuItem[] = [];
+    const selectedGroup = this.selectedGroup(selection);
+    const selectedFamily = this.selectedFamily(selection);
+    const selectedDefinition =
+      selection.kind === "feature"
+        ? (() => {
+            const reference = this.options.store.references.find((item) => item.id === selection.id);
+            return reference ? resolveDefinition(this.options.store, reference) : undefined;
+          })()
+        : undefined;
+
+    if (selection.kind === "group") {
+      items.push(
+        menuItem("新增同级 Group", "sap-icon://add", () => this.options.onEditGroup()),
+        menuItem("新增子级 Family", "sap-icon://question-mark", () => this.options.onEditFamily()),
+        menuItem("编辑 Group 属性", "sap-icon://edit", () => this.options.onEditGroup(selectedGroup), true)
+      );
+    } else if (selection.kind === "family") {
+      items.push(
+        menuItem("新增同级 Family", "sap-icon://add", () => this.options.onEditFamily()),
+        menuItem("新增子级 Feature", "sap-icon://action-settings", () => this.options.onAddFeature()),
+        menuItem("编辑 Family 属性", "sap-icon://edit", () => this.options.onEditFamily(selectedFamily), true)
+      );
+    } else {
+      items.push(
+        menuItem("新增同级 Feature", "sap-icon://add", () => this.options.onAddFeature()),
+        ...(selectedDefinition
+          ? [menuItem("编辑 Feature 属性", "sap-icon://edit", () => this.options.onEditDefinition(selectedDefinition), true)]
+          : [])
+      );
+    }
+    items.push(
+      menuItem("复制", "sap-icon://copy", () => this.options.onCopyNode(), true),
+      menuItem("移动", "sap-icon://move", () => this.options.onMoveNode()),
+      menuItem("删除", "sap-icon://delete", () => this.options.onDeleteNode(), true)
+    );
+
+    const menu = new UnifiedMenu({
+      items,
+      itemSelect: (menuEvent: Event) => {
+        const selectedItem = (menuEvent as Event & {
+          getParameter: (name: "item") => UnifiedMenuItem | undefined;
+        }).getParameter("item");
+        const action = selectedItem ? actions.get(selectedItem.getId()) : undefined;
+        if (action) window.setTimeout(action, 0);
+      }
+    });
+    this.contextMenu = menu;
+    tree.addDependent(menu);
+    const rootBounds = root.getBoundingClientRect();
+    const offset = `${Math.round(event.clientX - rootBounds.left)} ${Math.round(event.clientY - rootBounds.top)}`;
+    menu.open(
+      false,
+      target,
+      Popup.Dock.LeftTop,
+      Popup.Dock.LeftTop,
+      root,
+      offset
+    );
+  }
+
   private renderSelected(): void {
-    if (!this.editor || !this.inspector) return;
+    if (!this.editor) return;
     this.editor.destroyItems();
-    this.inspector.destroyItems();
+    this.inspector?.destroyItems();
     const selection = this.options.getSelection();
     if (!selection || !this.nodeExists(selection)) {
       this.editor.addItem(
@@ -349,39 +481,6 @@ export default class ConfigurationFeatureWorkspaceView {
     const family = this.selectedFamily(selection);
     const group = this.selectedGroup(selection);
     const record = (definition ?? (selection.kind === "family" ? family : group))!;
-    this.editor.addItem(
-      txt(
-        `${this.options.context.name}  /  ${group?.name ?? ""}${family ? `  /  ${family.name}` : ""}`
-      ).addStyleClass("cmBreadcrumb")
-    );
-    this.editor.addItem(
-      new ObjectPageHeader({
-        objectTitle: record.name,
-        objectSubtitle: record.code,
-        isObjectTitleAlwaysVisible: true,
-        isObjectSubtitleAlwaysVisible: true
-      })
-    );
-    this.editor.addItem(
-      new HBox({
-        wrap: "Wrap",
-        items: [
-          status(record.dimension),
-          status(
-            selection.kind === "group"
-              ? "组织分组"
-              : definition
-                ? `${definition.kind} · ${definition.dataType}`
-                : "配置问题 / Family"
-          ),
-          ...(definition
-            ? [status(definition.sourceType), status(`V${definition.version}`)]
-            : family
-              ? [status(family.selectionMode), status(family.mandatory ? "Mandatory" : "Optional")]
-              : [])
-        ]
-      }).addStyleClass("cmObjectTags")
-    );
     const tabs = new IconTabBar({
       expandable: false,
       applyContentPadding: false,
@@ -422,8 +521,60 @@ export default class ConfigurationFeatureWorkspaceView {
         })
       ]
     });
-    this.editor.addItem(tabs);
-    this.buildInspector(selection, record, definition, family, group);
+    const breadcrumbs = new Breadcrumbs({
+      links: [
+        new Link({ text: this.options.context.name }),
+        ...(group ? [new Link({ text: group.name })] : [])
+      ],
+      currentLocationText: family?.name ?? record.name
+    }).addStyleClass("cmFeatureBreadcrumbs");
+    const detailPage = new DynamicPage({
+      fitContent: false,
+      headerExpanded: true,
+      preserveHeaderStateOnScroll: true,
+      toggleHeaderOnTitleClick: false,
+      title: new DynamicPageTitle({
+        heading: new HBox({
+          alignItems: "Center",
+          wrap: "Wrap",
+          items: [
+            new VBox({
+              items: [
+                new Title({ text: record.name, level: "H3" }),
+                new Text({ text: record.code, wrapping: false })
+              ]
+            }).addStyleClass("cmFeatureTitleBlock"),
+            breadcrumbs
+          ]
+        }).addStyleClass("cmFeatureTitleHeading")
+      }),
+      header: new DynamicPageHeader({
+        pinnable: true,
+        content: [
+          new HBox({
+            wrap: "Wrap",
+            items: [
+              status(record.dimension),
+              status(
+                selection.kind === "group"
+                  ? "组织分组"
+                  : definition
+                    ? definition.dataType
+                    : "业务主题 / Family"
+              ),
+              ...(definition
+                ? [status(definition.sourceType), status(`V${definition.version}`)]
+                : family
+                  ? [status(family.sourceType), status(family.active ? "Active" : "Inactive")]
+                  : [])
+            ]
+          }).addStyleClass("cmObjectTags")
+        ]
+      }),
+      content: tabs
+    }).addStyleClass("cmFeatureDynamicPage");
+    detailPage.setStickySubheaderProvider(tabs);
+    this.editor.addItem(detailPage);
   }
 
   private generalContent(
@@ -441,32 +592,31 @@ export default class ConfigurationFeatureWorkspaceView {
         ["Sort Order", String(group!.sort)],
         ["Purpose", "只负责组织业务问题，不参与配置取值"]
       );
-    else if (definition)
+    else if (definition) {
       fields.push(
-        ["Mode", definition.kind === "Choice" ? "A · Feature as Choice" : "B · Typed Characteristic"],
         ["Data Type", definition.dataType],
-        ["Selection Type", definition.selectionType],
-        ["Mandatory", definition.mandatory ? "Yes" : "No"],
         ["Source", definition.sourceType],
-        ["Unit", definition.unit],
-        ["Default", definition.defaultValue],
-        ["Min / Max Selection", `${definition.minSelections} / ${definition.maxSelections}`],
         ["Active", definition.active ? "Yes" : "No"]
       );
+      fields.push(
+        ["Mandatory", definition.mandatory ? "Yes" : "No"],
+        ["Unit", definition.unit],
+        ["Value Domain", this.domainSummary(definition)],
+        ...(definition.dataType === "Multi Enumeration"
+          ? [["Selection Count", `${definition.minSelections} – ${definition.maxSelections}`] as [string, string]]
+          : [])
+      );
+    }
     else if (family)
       fields.push(
         ["Display Name", family.displayName],
         ["Business Question", family.businessQuestion],
         ["Dimension", family.dimension],
-        ["Selection Mode", family.selectionMode],
-        ["Mandatory", family.mandatory ? "Yes" : "No"],
         ["Source", family.sourceType],
-        ["Min / Max Selection", `${family.minSelections} / ${family.maxSelections}`],
         ["Sort Order", String(family.sort)],
         ["Active", family.active ? "Yes" : "No"]
       );
-    return new VBox({
-      items: [
+    const items: Control[] = [
         new Toolbar({
           content: [
             title(selection.kind === "family" ? "Business Question" : "Overview"),
@@ -481,8 +631,21 @@ export default class ConfigurationFeatureWorkspaceView {
           ]
         }),
         form(fields)
-      ]
-    });
+      ];
+    return new VBox({ items });
+  }
+
+  private domainSummary(definition: FeatureDefinition): string {
+    const domain = definition.domain;
+    if (!domain) return "—";
+    if (["Enumeration", "Multi Enumeration", "Reference"].includes(definition.dataType ?? ""))
+      return `${domain.values.length} values`;
+    if (["Integer", "Decimal", "Range"].includes(definition.dataType ?? ""))
+      return `${domain.minimum ?? "—"} .. ${domain.maximum ?? "—"}`;
+    if (definition.dataType === "String") return `max ${domain.maxLength ?? "—"}`;
+    if (["Date", "DateTime"].includes(definition.dataType ?? ""))
+      return `${domain.minimumDate ?? "—"} .. ${domain.maximumDate ?? "—"}`;
+    return "Yes / No";
   }
 
   private buildInspector(
@@ -499,26 +662,15 @@ export default class ConfigurationFeatureWorkspaceView {
       ...this.namedFields(record),
       { key: "dimension", label: "Dimension", value: record.dimension, options: dimensions }
     ];
-    if (definition)
+    if (definition) {
       fields.push(
         { key: "dataType", label: "Data Type", value: definition.dataType, options: dataTypes },
-        {
-          key: "selectionType",
-          label: "Selection Type",
-          value: definition.selectionType,
-          options: [
-            "Single Selection",
-            "Multi Selection",
-            "Boolean Selection",
-            "Range Input",
-            "Free Input"
-          ]
-        },
-        { key: "unit", label: "Unit", value: definition.unit },
+        { key: "sourceType", label: "Source", value: definition.sourceType, options: ["Local", "Enterprise Library"] },
+        { key: "active", label: "Active", value: definition.active },
         { key: "mandatory", label: "Mandatory", value: definition.mandatory },
-        { key: "defaultValue", label: "Default Value", value: definition.defaultValue },
-        { key: "active", label: "Active", value: definition.active }
+        { key: "unit", label: "Unit", value: definition.unit }
       );
+    }
     else if (selection.kind === "family" && family)
       fields.push(
         {
@@ -528,7 +680,6 @@ export default class ConfigurationFeatureWorkspaceView {
           required: true,
           multiline: true
         },
-        { key: "mandatory", label: "Mandatory", value: family.mandatory },
         { key: "active", label: "Active", value: family.active }
       );
     const draft: Values = {};
@@ -556,7 +707,7 @@ export default class ConfigurationFeatureWorkspaceView {
       else {
         const input = field.multiline
           ? new TextArea({ value: String(field.value), width: "100%", rows: 3, editable: !locked })
-          : new Input({ value: String(field.value), width: "100%", editable: !locked });
+          : new Input({ value: String(field.value), width: "100%", type: field.numeric ? "Number" : "Text", editable: !locked });
         input.attachEvent("liveChange", () => {
           draft[field.key] = input.getValue();
           input.setValueState(field.required && !String(draft[field.key]).trim() ? "Error" : "None");
@@ -573,10 +724,7 @@ export default class ConfigurationFeatureWorkspaceView {
       })
     );
     const box = new VBox({ items: controls }).addStyleClass("cmInspectorForm");
-    if (definition) {
-      box.addItem(new Label({ text: tr("Data Type / Selection Type") }));
-      box.addItem(txt(`${definition.dataType} / ${definition.selectionType}`));
-    }
+    if (definition) box.addItem(txt(definition.dataType));
     if (locked)
       box.addItem(
         new MessageStrip({
@@ -598,7 +746,9 @@ export default class ConfigurationFeatureWorkspaceView {
             press: () => {
               let valid = true;
               inputs.forEach(({ field, input }) => {
-                draft[field.key] = input.getValue().trim();
+                draft[field.key] = field.numeric
+                  ? Number(input.getValue())
+                  : input.getValue().trim();
                 const invalid = !!field.required && !input.getValue().trim();
                 input.setValueState(invalid ? "Error" : "None");
                 if (invalid) valid = false;
@@ -606,9 +756,22 @@ export default class ConfigurationFeatureWorkspaceView {
               if (!valid) return;
               if (definition) {
                 const edited = { ...structuredClone(definition), ...draft } as FeatureDefinition;
-                if (edited.dataType !== definition.dataType) {
-                  edited.domain = { values: [] };
+                const dataTypeChanged = edited.dataType !== definition.dataType;
+                if (dataTypeChanged) {
+                  const isListType = (value: FeatureDefinition["dataType"]): boolean =>
+                    ["Enumeration", "Multi Enumeration", "Reference"].includes(value);
+                  edited.domain =
+                    isListType(edited.dataType) && isListType(definition.dataType)
+                      ? definition.domain
+                      : { values: [] };
                   edited.defaultValue = "";
+                  if (edited.dataType === "Multi Enumeration") {
+                    edited.minSelections = 0;
+                    edited.maxSelections = Math.max(1, edited.domain.values.length);
+                  } else {
+                    edited.minSelections = 0;
+                    edited.maxSelections = 1;
+                  }
                 }
                 this.options.saveDefinition(edited);
               } else

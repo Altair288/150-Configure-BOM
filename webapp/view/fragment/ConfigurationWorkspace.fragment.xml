@@ -7,7 +7,7 @@
     fitContent="false"
     height="100%"
     headerExpanded="true"
-    toggleHeaderOnTitleClick="{= ${view>/mode} !== 'features'}"
+    toggleHeaderOnTitleClick="true"
     class="cmWorkspace cmContextDynamicPage sapUiNoContentPadding">
     <f:title>
       <f:DynamicPageTitle>

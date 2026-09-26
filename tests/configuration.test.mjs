@@ -102,12 +102,22 @@ test("enum defaults, inactive values, date boundaries and string patterns are va
   assert.ok(validateDefinition(theme).some((e) => e.includes("表达式无效")));
 });
 
-test("optional false is a valid boolean and FWD plus Offroad are independently valid", () => {
+test("features use data types directly and discrete choices belong to one feature domain", () => {
   const store = createSeed();
-  const bool = store.definitions.find((d) => d.code === "DRIVER_ADJUST");
-  assert.deepEqual(validateValue(bool, false, true), []);
-  assert.deepEqual(validateValue(bool, "", false), []);
-  assert.ok(validateValue(bool, "", true).length);
+  const functional = store.definitions.find((d) => d.code === "STEERING_ADJUST");
+  assert.equal(functional.dataType, "Boolean");
+  assert.equal("featureMode" in functional, false);
+  assert.deepEqual(validateValue(functional, false, true), []);
+  const convenienceFamily = store.families.find((family) => family.code === "FAM_CONVENIENCE");
+  const convenienceDefinitions = store.references
+    .filter((reference) => reference.familyId === convenienceFamily.id)
+    .map((reference) => store.definitions.find((definition) => definition.id === reference.featureDefinitionId));
+  assert.deepEqual(convenienceDefinitions.map((definition) => definition.dataType), ["Boolean", "Enumeration", "Decimal"]);
+  const wheelFamily = store.families.find((family) => family.code === "FAM_WHEEL_MATERIAL");
+  const wheelFeatures = store.references.filter((reference) => reference.familyId === wheelFamily.id);
+  assert.equal(wheelFeatures.length, 1);
+  assert.equal(store.definitions.find((definition) => definition.id === wheelFeatures[0].featureDefinitionId).domain.values.length, 3);
+  assert.equal("selectionGroups" in store, false);
   assert.deepEqual(
     validateValue(
       store.definitions.find((d) => d.code === "DRIVE_TYPE"),

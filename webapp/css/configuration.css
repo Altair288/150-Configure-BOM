@@ -549,12 +549,13 @@
 .cmModelTree .sapUiTableRowHdrScr {
   width: 0;
 }
-.cmModelTree .sapMObjectIdentifierTitle .sapMText {
-  font-size: 0.8125rem;
-}
-.cmModelTree .sapMObjectIdentifierText {
-  margin-top: 0.1rem;
-  font-size: 0.7rem;
+.cmModelTreeNodeText {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
 }
 .cmModelTree .sapUiTableCell {
   border-bottom-color: #e7ebee;
@@ -565,14 +566,57 @@
   font-size: 0.7rem;
 }
 .cmEditorContent {
-  padding: 0 0 1rem;
   background: white;
   min-width: 26rem;
+  min-height: 0;
+  overflow: hidden;
 }
-.cmBreadcrumb {
-  padding: 0.85rem 1.25rem 0;
-  font-size: 0.75rem;
-  color: #647787;
+.cmEditorContent > .sapMFlexItem,
+.cmFeatureDynamicPage {
+  min-height: 0;
+  height: 100%;
+}
+.cmFeatureDynamicPage .sapFDynamicPageTitle {
+  min-height: auto;
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
+}
+.cmFeatureDynamicPage .sapFDynamicPageTitleMainHeading .sapMTitle {
+  font-size: 1.125rem;
+  line-height: 1.35rem;
+}
+.cmFeatureTitleHeading {
+  gap: 1rem;
+}
+.cmFeatureTitleBlock .sapMText,
+.cmFeatureBreadcrumbs,
+.cmFeatureBreadcrumbs .sapMLnk,
+.cmFeatureBreadcrumbs .sapMBreadcrumbsCurrentLocation {
+  font-size: 0.6875rem;
+  line-height: 1rem;
+}
+.cmFeatureBreadcrumbs {
+  min-width: 0;
+}
+.cmFeatureDynamicPage .sapFDynamicPageHeader {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+.cmFeatureDynamicPage .sapFDynamicPageHeaderContent {
+  padding: 0.25rem 1rem;
+}
+.cmFeatureDynamicPage .cmObjectTags {
+  gap: 0.35rem;
+  padding: 0;
+}
+.cmFeatureDynamicPage .cmObjectTags .sapMObjStatusText {
+  font-size: 0.6875rem;
+}
+.cmFeatureDynamicPage .sapMITBHead {
+  margin-left: 0.75rem;
+}
+.cmFeatureDynamicPage .sapMITBContent {
+  border-bottom: 0;
 }
 .cmObjectTags {
   gap: 1rem;
@@ -646,12 +690,12 @@
 }
 @media (min-width: 2200px) {
   .cmModelTree {
-    width: 25rem !important;
+    width: 27rem !important;
   }
   .cmInspector {
     width: 22rem !important;
   }
   .cmEditorContent {
-    padding: 0 1rem 1.5rem;
+    min-width: 30rem;
   }
 }
