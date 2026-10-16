@@ -643,6 +643,197 @@
 .cmInspectorForm {
   padding: 0.5rem 1rem 1rem;
 }
+
+.cmRuleWorkspace,
+.cmBlueprintEditorColumn {
+  min-height: 0;
+  height: 100%;
+}
+.cmRuleWorkspace {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--sapGroup_ContentBackground);
+}
+.cmRuleWorkspace > .sapMFlexItem,
+.cmBlueprintEditorColumn > .sapMFlexItem {
+  min-height: 0;
+}
+.cmRuleWorkspace > .sapMFlexItem:last-child {
+  flex: 1 1 0%;
+}
+.cmBlueprintWorkspaceToolbar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--sapList_BorderColor);
+  padding: 0 0.65rem;
+  background: var(--sapGroup_ContentBackground);
+}
+.cmBlueprintPageTitle {
+  font-size: 1rem;
+}
+.cmBlueprintPalette {
+  box-sizing: border-box;
+  gap: 0.35rem;
+  padding: 0.75rem;
+  max-height: calc(100% - 1.5rem);
+  overflow-y: auto;
+  border: 1px solid var(--sapList_BorderColor);
+  border-radius: 0.5rem;
+  background: var(--sapGroup_ContentBackground);
+  background-color: color-mix(in srgb, var(--sapGroup_ContentBackground) 96%, transparent);
+  -webkit-backdrop-filter: blur(8px) saturate(110%);
+  backdrop-filter: blur(8px) saturate(110%);
+  box-shadow: 0 0.3rem 1.1rem rgb(0 0 0 / 22%);
+}
+.cmBlueprintPaletteIntro {
+  margin: -0.15rem 0 0.4rem;
+  color: var(--sapContent_LabelColor);
+  font-size: 0.75rem;
+  line-height: 1.2rem;
+}
+.cmBlueprintSectionLabel {
+  margin: 0.55rem 0 0.1rem;
+  color: var(--sapContent_LabelColor);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.cmBlueprintPaletteButton {
+  text-align: left;
+}
+.cmBlueprintPaletteButton .sapMBtnInner {
+  justify-content: flex-start;
+  border: 1px solid var(--sapList_BorderColor);
+  background: var(--sapGroup_ContentBackground);
+}
+.cmBlueprintPaletteNote {
+  margin-top: 0.8rem;
+}
+.cmBlueprintEditorColumn {
+  min-width: 0;
+  overflow: hidden;
+  background: #f4f7fa;
+}
+.cmBlueprintCanvasFrame {
+  position: relative;
+  min-height: 0;
+  flex: 1 1 0%;
+  overflow: hidden;
+}
+.cmBlueprintCanvasFrame > .sapMFlexItem {
+  position: relative;
+  height: 100%;
+  min-height: 0;
+}
+.cmBlueprintCanvasFrame > .sapMFlexItem:first-child {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+.cmBlueprintCanvasFrame > .sapMFlexItem:last-child {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+.cmBlueprintFloatingLayer {
+  box-sizing: border-box;
+  padding: 0.75rem;
+  pointer-events: none;
+}
+.cmBlueprintFloatingLayer > .sapMFlexItem {
+  min-height: 0;
+  max-height: calc(100% - 1.5rem);
+  pointer-events: auto;
+}
+.cmBlueprintCanvasCrumb {
+  max-width: 18rem;
+  margin-left: 0.5rem;
+  overflow: hidden;
+  color: var(--sapContent_LabelColor);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cmBlueprintCanvasHost {
+  position: relative !important;
+  display: block !important;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 0;
+  overflow: hidden;
+  background-color: #f7f9fb;
+  background-image:
+    linear-gradient(rgb(105 126 146 / 6%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(105 126 146 / 6%) 1px, transparent 1px),
+    radial-gradient(circle, rgb(76 101 125 / 17%) 0.8px, transparent 1px);
+  background-position:
+    var(--cmBlueprintGridMajorOffsetX, 0px) var(--cmBlueprintGridMajorOffsetY, 0px),
+    var(--cmBlueprintGridMajorOffsetX, 0px) var(--cmBlueprintGridMajorOffsetY, 0px),
+    var(--cmBlueprintGridMinorOffsetX, 0px) var(--cmBlueprintGridMinorOffsetY, 0px);
+  background-size:
+    var(--cmBlueprintGridMajorSize, 120px) var(--cmBlueprintGridMajorSize, 120px),
+    var(--cmBlueprintGridMajorSize, 120px) var(--cmBlueprintGridMajorSize, 120px),
+    var(--cmBlueprintGridMinorSize, 24px) var(--cmBlueprintGridMinorSize, 24px);
+}
+.cmBlueprintCanvasHost .cmBlueprintArea {
+  position: absolute !important;
+  inset: 0;
+}
+.cmBlueprintCanvasFooter {
+  flex: 0 0 auto;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0.7rem;
+  color: var(--sapContent_LabelColor);
+  background: var(--sapGroup_ContentBackground);
+  font-size: 0.6875rem;
+}
+.cmBlueprintCanvasFooter > .sapMFlexItem {
+  min-width: 0;
+}
+.cmBlueprintCanvasHost rete-node {
+  --node-width: 248px;
+  font-family: "72", Arial, sans-serif;
+}
+.cmBlueprintInspector {
+  box-sizing: border-box;
+  width: 17rem;
+  max-height: calc(100% - 1.5rem);
+  overflow-y: auto;
+  border: 1px solid var(--sapList_BorderColor);
+  border-radius: 0.5rem;
+  background: var(--sapGroup_ContentBackground);
+  background-color: color-mix(in srgb, var(--sapGroup_ContentBackground) 96%, transparent);
+  -webkit-backdrop-filter: blur(8px) saturate(110%);
+  backdrop-filter: blur(8px) saturate(110%);
+  box-shadow: 0 0.3rem 1.1rem rgb(0 0 0 / 22%);
+}
+.cmBlueprintInspectorToolbar {
+  border-bottom: 1px solid var(--sapList_BorderColor);
+  background: transparent;
+}
+.cmBlueprintInspectorForm {
+  gap: 0.35rem;
+  padding: 0.8rem;
+}
+.cmBlueprintInspectorForm .sapMLabel {
+  margin-top: 0.55rem;
+  color: var(--sapContent_LabelColor);
+  font-size: 0.75rem;
+}
+.cmBlueprintInspectorExpression {
+  padding: 0.55rem;
+  border: 1px solid var(--sapList_BorderColor);
+  border-radius: 0.25rem;
+  background: var(--sapGroup_ContentBackground);
+  font-size: 0.75rem;
+  line-height: 1.2rem;
+}
+.cmBlueprintInspectorNote {
+  margin-top: 0.35rem;
+}
 .cmInspectorForm .sapMLabel {
   margin-top: 0.65rem;
   font-size: 0.75rem;

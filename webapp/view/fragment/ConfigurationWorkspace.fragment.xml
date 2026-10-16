@@ -76,6 +76,7 @@
               key="features"
               text="特征模型 / Feature Model"
               count="{view>/featureReferenceCount}" />
+            <IconTabFilter key="rules" text="约束管理 / Constraint Blueprint" />
           </items>
         </IconTabBar>
         <VBox id="contextContentSurface" fitContainer="true" class="cmContentSurface">
@@ -84,6 +85,7 @@
           </layoutData>
           <VBox id="scopeHost" visible="{= ${view>/mode} === 'context'}" />
           <VBox id="featureHost" visible="{= ${view>/mode} === 'features'}" />
+          <VBox id="ruleHost" visible="{= ${view>/mode} === 'rules'}" />
         </VBox>
       </VBox>
     </f:content>

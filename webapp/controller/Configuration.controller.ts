@@ -32,6 +32,7 @@ import ConfigurationDialogService from "./configuration/ConfigurationDialogServi
 import ConfigurationFeatureLibraryView from "./configuration/ConfigurationFeatureLibraryView";
 import ConfigurationFeatureWorkspaceView from "./configuration/ConfigurationFeatureWorkspaceView";
 import ConfigurationPreviewDialog from "./configuration/ConfigurationPreviewDialog";
+import ConfigurationRuleWorkspaceView from "./configuration/ConfigurationRuleWorkspaceView";
 import ConfigurationScopeView from "./configuration/ConfigurationScopeView";
 import { buildContextTreeRows } from "./configuration/ConfigurationViewModel";
 import type { Field, Selection, Values } from "./configuration/types";
@@ -93,7 +94,7 @@ export default class ConfigurationController extends BaseController {
   private readonly categoryValueHelp = new ConfigurationCategoryValueHelp(() => this.getView());
   private readonly onLocalizationChangedBound = (): void => this.onLocalizationChanged();
   private contextId = "ctx-SUV";
-  private mode: "context" | "features" = "context";
+  private mode: "context" | "features" | "rules" = "context";
   private libraryMode = false;
   private selection?: Selection;
   private selectedProduct?: string;
@@ -113,6 +114,7 @@ export default class ConfigurationController extends BaseController {
   private mainFullscreen = false;
   private mainFullscreenButton?: Button;
   private featureWorkspaceView?: ConfigurationFeatureWorkspaceView;
+  private ruleWorkspaceView?: ConfigurationRuleWorkspaceView;
   private featureExpandedNodeIds?: string[];
   private scopeEditMode = false;
   private selectedProductGroup?: string;
@@ -120,6 +122,7 @@ export default class ConfigurationController extends BaseController {
   private contextList?: Tree;
   private scopeHost?: VBox;
   private featureHost?: VBox;
+  private ruleHost?: VBox;
   private libraryHost?: VBox;
 
   public onInit(): void {
@@ -244,6 +247,7 @@ export default class ConfigurationController extends BaseController {
     this.mainLayout = this.byId("mainLayout") as FlexibleColumnLayout;
     this.scopeHost = this.byId("scopeHost") as VBox;
     this.featureHost = this.byId("featureHost") as VBox;
+    this.ruleHost = this.byId("ruleHost") as VBox;
     this.libraryHost = this.byId("libraryHost") as VBox;
     this.profileFullscreenButton = this.byId("profileFullscreenButton") as Button;
     this.contextList?.addDragDropConfig(
@@ -313,9 +317,16 @@ export default class ConfigurationController extends BaseController {
       this.featureExpandedNodeIds = this.featureWorkspaceView.expandedNodeIds();
     this.scopeHost?.destroyItems();
     this.featureHost?.destroyItems();
+    this.ruleWorkspaceView?.disposeWorkspace();
+    this.ruleWorkspaceView = undefined;
+    this.ruleHost?.destroyItems();
     this.featureWorkspaceView = undefined;
     if (this.mode === "context") this.scopeHost?.addItem(this.buildScope());
-    else this.featureHost?.addItem(this.buildFeatureWorkspace());
+    else if (this.mode === "features") this.featureHost?.addItem(this.buildFeatureWorkspace());
+    else {
+      this.ruleWorkspaceView = new ConfigurationRuleWorkspaceView(this.currentContext().name);
+      this.ruleHost?.addItem(this.ruleWorkspaceView.build());
+    }
   }
   public onContextSearchChange(event: Event): void {
     const parameters = event.getParameters() as { newValue?: string };
@@ -450,7 +461,8 @@ export default class ConfigurationController extends BaseController {
 
   public onModeSelect(event: Event): void {
     const parameters = event.getParameters() as { key?: string };
-    this.mode = parameters.key === "features" ? "features" : "context";
+    this.mode =
+      parameters.key === "features" ? "features" : parameters.key === "rules" ? "rules" : "context";
     this.viewModel.setProperty("/mode", this.mode);
     this.renderActiveMode();
   }
