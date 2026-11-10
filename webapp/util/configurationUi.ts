@@ -246,6 +246,8 @@ const rawI18nKeys: Record<string, string> = {
   "不满足以下条件（NOT）": "cmConstraintGroupNot",
   在此组中添加条件: "cmConstraintAddToGroup",
   删除条件: "cmConstraintRemoveCondition",
+  "示例场景：双向互斥": "cmConstraintPreviewDemoHint",
+  "加载 B 型行李架示例": "cmConstraintPreviewDemo",
   "+ AND": "cmConstraintAddAnd",
   "+ OR": "cmConstraintAddOr",
   "+ NOT": "cmConstraintAddNot",

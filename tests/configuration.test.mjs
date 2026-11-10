@@ -14,10 +14,12 @@ import {
   ensureConstraintSampleFeatures
 } from "../webapp/model/configuration.ts";
 import {
+  activeConstraintEffects,
   createConstraintRule,
   createConstraintRuleSamples,
   constraintOperatorsFor,
   formatConstraintExpression,
+  previewConstraintRules,
   migrateLegacyConstraintRuleAst,
   parseConstraintExpression,
   validateConstraintRule
@@ -209,6 +211,164 @@ test("constraint seeds use current context features and respect value domains", 
   assert.equal(rules[0].ast.actions[0].type, "REQUIRE");
   assert.match(rules[0].expression, /SUNROOF_TYPE == "PANORAMIC"/);
   assert.match(rules[0].expression, /INTERIOR_PACKAGE == "PREMIUM"/);
+});
+
+test("constraint preview reports triggered REQUIRE and EXCLUDE conflicts without changing selections", () => {
+  const store = createSeed();
+  const features = contextReferences(store, "ctx-SUV").map((reference) =>
+    resolveDefinition(store, reference)
+  );
+  const rules = createConstraintRuleSamples(features).slice(0, 2);
+  const conflictingValues = new Map([
+    ["SUNROOF_TYPE", "PANORAMIC"],
+    ["INTERIOR_PACKAGE", "STANDARD"],
+    ["ROOF_RACK", "TYPE_B"]
+  ]);
+  const conflicts = previewConstraintRules(rules, features, conflictingValues);
+
+  assert.deepEqual(
+    conflicts.map((rule) => rule.status),
+    ["conflict", "conflict"]
+  );
+  assert.deepEqual(
+    conflicts.map((rule) => rule.actions[0].status),
+    ["conflict", "conflict"]
+  );
+  assert.equal(conflictingValues.get("INTERIOR_PACKAGE"), "STANDARD");
+
+  const activeEffects = activeConstraintEffects(
+    rules,
+    features,
+    new Map([["SUNROOF_TYPE", "PANORAMIC"]])
+  );
+  assert.deepEqual(
+    activeEffects.map((effect) => effect.status),
+    ["pending", "satisfied"]
+  );
+  assert.deepEqual(
+    activeEffects.map((effect) => effect.direction),
+    ["action", "action"]
+  );
+
+  const reverseExclusion = activeConstraintEffects(
+    [rules[1]],
+    features,
+    new Map([["ROOF_RACK", "TYPE_B"]])
+  );
+  assert.equal(reverseExclusion.length, 1);
+  assert.equal(reverseExclusion[0].direction, "condition");
+  assert.equal(reverseExclusion[0].status, "satisfied");
+  assert.deepEqual(reverseExclusion[0].target, {
+    type: "EQUALS",
+    feature: "SUNROOF_TYPE",
+    value: "PANORAMIC"
+  });
+
+  const bidirectionalConflict = activeConstraintEffects(
+    [rules[1]],
+    features,
+    new Map([
+      ["SUNROOF_TYPE", "PANORAMIC"],
+      ["ROOF_RACK", "TYPE_B"]
+    ])
+  );
+  assert.deepEqual(
+    bidirectionalConflict.map((effect) => [effect.direction, effect.status]),
+    [
+      ["action", "conflict"],
+      ["condition", "conflict"]
+    ]
+  );
+
+  const validValues = new Map([
+    ["SUNROOF_TYPE", "PANORAMIC"],
+    ["INTERIOR_PACKAGE", "PREMIUM"],
+    ["ROOF_RACK", "TYPE_A"]
+  ]);
+  assert.deepEqual(
+    previewConstraintRules(rules, features, validValues).map((rule) => rule.status),
+    ["satisfied", "satisfied"]
+  );
+  assert.deepEqual(
+    activeConstraintEffects(rules, features, validValues).map((effect) => effect.status),
+    ["satisfied", "satisfied"]
+  );
+});
+
+test("constraint preview keeps missing requirements pending and evaluates numeric restrictions", () => {
+  const store = createSeed();
+  const features = contextReferences(store, "ctx-SUV").map((reference) =>
+    resolveDefinition(store, reference)
+  );
+  const rules = createConstraintRuleSamples(features);
+  const missingTarget = previewConstraintRules(
+    [rules[0]],
+    features,
+    new Map([["SUNROOF_TYPE", "PANORAMIC"]])
+  );
+  assert.equal(missingTarget[0].status, "pending");
+  assert.equal(missingTarget[0].actions[0].status, "pending");
+
+  const restrictedBattery = previewConstraintRules(
+    [rules[2]],
+    features,
+    new Map([
+      ["DRIVE_TYPE", "AWD"],
+      ["BATTERY_CAPACITY", "40"]
+    ])
+  );
+  assert.equal(restrictedBattery[0].status, "conflict");
+  assert.equal(restrictedBattery[0].actions[0].status, "conflict");
+  assert.equal(
+    activeConstraintEffects(
+      [rules[2]],
+      features,
+      new Map([
+        ["DRIVE_TYPE", "AWD"],
+        ["BATTERY_CAPACITY", "40"]
+      ])
+    )[0].status,
+    "conflict"
+  );
+  const validBattery = previewConstraintRules(
+    [rules[2]],
+    features,
+    new Map([
+      ["DRIVE_TYPE", "AWD"],
+      ["BATTERY_CAPACITY", "80"]
+    ])
+  );
+  assert.equal(validBattery[0].status, "satisfied");
+});
+
+test("constraint preview never auto-applies SET actions", () => {
+  const store = createSeed();
+  const features = contextReferences(store, "ctx-SUV").map((reference) =>
+    resolveDefinition(store, reference)
+  );
+  const rule = createConstraintRule({
+    id: "preview-set",
+    code: "CR-PREVIEW-SET",
+    name: "Preview set action",
+    ast: {
+      condition: { type: "EQUALS", feature: "SUNROOF_TYPE", value: "PANORAMIC" },
+      actions: [
+        {
+          type: "SET",
+          target: { type: "EQUALS", feature: "INTERIOR_PACKAGE", value: "PREMIUM" }
+        }
+      ]
+    }
+  });
+  const values = new Map([
+    ["SUNROOF_TYPE", "PANORAMIC"],
+    ["INTERIOR_PACKAGE", "STANDARD"]
+  ]);
+  const [preview] = previewConstraintRules([rule], features, values);
+
+  assert.equal(preview.status, "not-applied");
+  assert.equal(preview.actions[0].status, "not-applied");
+  assert.equal(values.get("INTERIOR_PACKAGE"), "STANDARD");
 });
 
 test("constraint operators follow feature data types and selected action semantics", () => {

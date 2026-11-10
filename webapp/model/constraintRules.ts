@@ -84,6 +84,32 @@ export interface ConstraintValidationIssue {
   feature?: string;
 }
 
+export type ConstraintPreviewStatus =
+  "not-triggered" | "satisfied" | "pending" | "conflict" | "not-applied";
+
+export interface ConstraintActionPreview {
+  type: ConstraintActionType;
+  target: ConstraintExpression;
+  status: ConstraintPreviewStatus;
+}
+
+export interface ConstraintPreviewEffect extends ConstraintActionPreview {
+  ruleId: string;
+  code: string;
+  name: string;
+  description: string;
+  direction: "action" | "condition";
+}
+
+export interface ConstraintRulePreview {
+  ruleId: string;
+  code: string;
+  name: string;
+  description: string;
+  status: ConstraintPreviewStatus;
+  actions: ConstraintActionPreview[];
+}
+
 const operatorSymbols: Record<ConstraintOperator, string> = {
   EQUALS: "==",
   NOT_EQUALS: "!=",
@@ -663,6 +689,227 @@ export function validateConstraintRule(
       message: "Circular dependency detected"
     });
   return issues;
+}
+
+type PreviewTruth = boolean | undefined;
+
+function isPreviewValueSet(value: unknown): boolean {
+  return (
+    value !== undefined &&
+    value !== null &&
+    value !== "" &&
+    !(Array.isArray(value) && !value.length)
+  );
+}
+
+function normalizePreviewValue(
+  value: unknown,
+  feature: FeatureDefinition
+): ConstraintLiteral | ConstraintLiteral[] | undefined {
+  if (!isPreviewValueSet(value)) return undefined;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizePreviewScalar(item, feature))
+      .filter((item): item is ConstraintLiteral => item !== undefined);
+  }
+  return normalizePreviewScalar(value, feature);
+}
+
+function normalizePreviewScalar(
+  value: unknown,
+  feature: FeatureDefinition
+): ConstraintLiteral | undefined {
+  if (feature.dataType === "Boolean") {
+    if (typeof value === "boolean") return value;
+    if (value === "true") return true;
+    if (value === "false") return false;
+    return undefined;
+  }
+  if (["Integer", "Decimal"].includes(feature.dataType)) {
+    const number = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(number) ? number : undefined;
+  }
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+    return value;
+  return undefined;
+}
+
+function equalPreviewValues(
+  left: ConstraintLiteral | ConstraintLiteral[],
+  right: ConstraintLiteral | ConstraintLiteral[]
+): boolean {
+  if (!Array.isArray(left) && !Array.isArray(right)) return left === right;
+  const leftValues = Array.isArray(left) ? left : [left];
+  const rightValues = Array.isArray(right) ? right : [right];
+  return (
+    leftValues.length === rightValues.length &&
+    leftValues.every((value) => rightValues.includes(value))
+  );
+}
+
+function evaluatePreviewPredicate(
+  predicate: ConstraintPredicate,
+  features: Map<string, FeatureDefinition>,
+  values: ReadonlyMap<string, unknown>
+): PreviewTruth {
+  const feature = features.get(predicate.feature);
+  if (!feature) return undefined;
+  const actual = normalizePreviewValue(values.get(predicate.feature), feature);
+  if (actual === undefined) return undefined;
+
+  const expected = predicate.value;
+  const actualValues = Array.isArray(actual) ? actual : [actual];
+  const expectedValues = Array.isArray(expected) ? expected : [expected];
+  const intersects = actualValues.some((value) => expectedValues.includes(value));
+
+  switch (predicate.type) {
+    case "EQUALS":
+      return equalPreviewValues(actual, expected);
+    case "NOT_EQUALS":
+      return !equalPreviewValues(actual, expected);
+    case "IN":
+      return intersects;
+    case "NOT_IN":
+      return !intersects;
+    case "CONTAINS":
+      return Array.isArray(actual)
+        ? actual.includes(expectedValues[0] ?? "")
+        : typeof actual === "string"
+          ? actual.includes(String(expectedValues[0] ?? ""))
+          : false;
+    case "STARTS_WITH":
+      return typeof actual === "string" && actual.startsWith(String(expectedValues[0] ?? ""));
+    case "ENDS_WITH":
+      return typeof actual === "string" && actual.endsWith(String(expectedValues[0] ?? ""));
+    case "GREATER_THAN":
+    case "GREATER_THAN_OR_EQUAL":
+    case "LESS_THAN":
+    case "LESS_THAN_OR_EQUAL": {
+      if (Array.isArray(actual) || Array.isArray(expected)) return undefined;
+      if (typeof actual !== typeof expected) return undefined;
+      if (predicate.type === "GREATER_THAN") return actual > expected;
+      if (predicate.type === "GREATER_THAN_OR_EQUAL") return actual >= expected;
+      if (predicate.type === "LESS_THAN") return actual < expected;
+      return actual <= expected;
+    }
+  }
+}
+
+function evaluatePreviewExpression(
+  expression: ConstraintExpression,
+  features: Map<string, FeatureDefinition>,
+  values: ReadonlyMap<string, unknown>
+): PreviewTruth {
+  if ("feature" in expression) return evaluatePreviewPredicate(expression, features, values);
+  if (expression.type === "NOT") {
+    const result = evaluatePreviewExpression(expression.expression, features, values);
+    return result === undefined ? undefined : !result;
+  }
+
+  const results = expression.expressions.map((child) =>
+    evaluatePreviewExpression(child, features, values)
+  );
+  if (expression.type === "AND") {
+    if (results.includes(false)) return false;
+    return results.includes(undefined) ? undefined : true;
+  }
+  if (results.includes(true)) return true;
+  return results.includes(undefined) ? undefined : false;
+}
+
+function previewStatusForRule(
+  condition: PreviewTruth,
+  actions: ConstraintActionPreview[]
+): ConstraintPreviewStatus {
+  if (condition === false) return "not-triggered";
+  if (condition === undefined) return "pending";
+  if (actions.some((action) => action.status === "conflict")) return "conflict";
+  if (actions.some((action) => action.status === "not-applied")) return "not-applied";
+  if (actions.some((action) => action.status === "pending")) return "pending";
+  return "satisfied";
+}
+
+function previewStatusForAction(
+  type: ConstraintActionType,
+  target: ConstraintExpression,
+  features: Map<string, FeatureDefinition>,
+  values: ReadonlyMap<string, unknown>
+): ConstraintPreviewStatus {
+  if (type === "SET" || type === "DERIVE") return "not-applied";
+  const result = evaluatePreviewExpression(target, features, values);
+  if (type === "EXCLUDE") return result === true ? "conflict" : "satisfied";
+  if (result === undefined) return "pending";
+  return result ? "satisfied" : "conflict";
+}
+
+export function activeConstraintEffects(
+  rules: ConstraintRule[],
+  featureDefinitions: FeatureDefinition[],
+  values: ReadonlyMap<string, unknown>
+): ConstraintPreviewEffect[] {
+  const features = new Map(featureDefinitions.map((feature) => [feature.code, feature]));
+  const effects: ConstraintPreviewEffect[] = [];
+  for (const rule of rules) {
+    const conditionStatus = evaluatePreviewExpression(rule.ast.condition, features, values);
+    if (conditionStatus === true)
+      for (const action of rule.ast.actions)
+        effects.push({
+          ruleId: rule.id,
+          code: rule.code,
+          name: rule.name,
+          description: rule.description,
+          type: action.type,
+          target: action.target,
+          status: previewStatusForAction(action.type, action.target, features, values),
+          direction: "action"
+        });
+
+    if (!("feature" in rule.ast.condition)) continue;
+    for (const action of rule.ast.actions) {
+      if (action.type !== "EXCLUDE" || !("feature" in action.target)) continue;
+      if (evaluatePreviewExpression(action.target, features, values) !== true) continue;
+      effects.push({
+        ruleId: rule.id,
+        code: rule.code,
+        name: rule.name,
+        description: rule.description,
+        type: "EXCLUDE",
+        target: rule.ast.condition,
+        status: conditionStatus === true ? "conflict" : "satisfied",
+        direction: "condition"
+      });
+    }
+  }
+  return effects;
+}
+
+export function previewConstraintRules(
+  rules: ConstraintRule[],
+  featureDefinitions: FeatureDefinition[],
+  values: ReadonlyMap<string, unknown>
+): ConstraintRulePreview[] {
+  const features = new Map(featureDefinitions.map((feature) => [feature.code, feature]));
+  return rules.map((rule) => {
+    const condition = evaluatePreviewExpression(rule.ast.condition, features, values);
+    const actions: ConstraintActionPreview[] =
+      condition === true
+        ? rule.ast.actions.map((action) => {
+            return {
+              type: action.type,
+              target: action.target,
+              status: previewStatusForAction(action.type, action.target, features, values)
+            };
+          })
+        : [];
+    return {
+      ruleId: rule.id,
+      code: rule.code,
+      name: rule.name,
+      description: rule.description,
+      status: previewStatusForRule(condition, actions),
+      actions
+    };
+  });
 }
 
 function predicate(

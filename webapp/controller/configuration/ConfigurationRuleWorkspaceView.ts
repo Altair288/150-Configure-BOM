@@ -101,6 +101,7 @@ interface ConfigurationRuleWorkspaceOptions {
   features: FeatureDefinition[];
   repository: ConstraintRuleRepository;
   canEdit: () => boolean;
+  onPreview: (rules: ConstraintRule[]) => void;
 }
 
 export default class ConfigurationRuleWorkspaceView {
@@ -110,6 +111,7 @@ export default class ConfigurationRuleWorkspaceView {
   private features: FeatureDefinition[];
   private readonly repository: ConstraintRuleRepository;
   private readonly canEdit: () => boolean;
+  private readonly onPreview: (rules: ConstraintRule[]) => void;
   private readonly aiService = new MockConstraintAIService();
   private rules: ConstraintRule[];
   private currentRule: ConstraintRule;
@@ -147,6 +149,7 @@ export default class ConfigurationRuleWorkspaceView {
     this.features = options.features;
     this.repository = options.repository;
     this.canEdit = options.canEdit;
+    this.onPreview = options.onPreview;
     this.rules = this.repository.list(this.context.id, this.features);
     this.currentRule = this.rules[0] ?? this.createNewRule();
     this.rulesModel = new JSONModel({ currentRule: this.currentRule });
@@ -359,6 +362,11 @@ export default class ConfigurationRuleWorkspaceView {
         this.ruleMetaStatus,
         this.detailsStatus,
         new Button({
+          text: tr("Preview Configuration"),
+          icon: "sap-icon://display",
+          press: () => this.onPreview(this.rulesForPreview())
+        }),
+        new Button({
           text: tr("保存规则"),
           icon: "sap-icon://save",
           type: "Emphasized",
@@ -372,6 +380,17 @@ export default class ConfigurationRuleWorkspaceView {
       fitContainer: true,
       items: [toolbar, this.modeSelector]
     }).addStyleClass("cmConstraintRuleDetail");
+  }
+
+  private rulesForPreview(): ConstraintRule[] {
+    let replaced = false;
+    const rules = this.rules.map((rule) => {
+      if (rule.id !== this.currentRule.id) return rule;
+      replaced = true;
+      return structuredClone(this.currentRule);
+    });
+    if (!replaced) rules.push(structuredClone(this.currentRule));
+    return rules;
   }
 
   private setMode(mode: WorkspaceMode): void {
