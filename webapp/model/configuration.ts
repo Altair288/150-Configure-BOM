@@ -1088,12 +1088,14 @@ export function createSeed(): ConfigurationStore {
     { minimum: 0, maximum: 120, step: 1 },
     "mm"
   );
+  const heatedSteering = define("HEATED_STEERING", "Heated Steering", "Boolean", "Engineering", [], true);
+  const heatedSeat = define("HEATED_SEAT", "Heated Seat", "Boolean", "Engineering", [], true);
   family(
     interior,
     "FAM_CONVENIENCE",
     "Convenience",
     "Which convenience features are required?",
-    [steering, driver, steeringRange]
+    [steering, driver, steeringRange, heatedSteering, heatedSeat]
   );
   family(
     interior,
@@ -1104,7 +1106,23 @@ export function createSeed(): ConfigurationStore {
       define("INTERIOR_THEME", "Interior Theme", "String", "Marketing", [], true, { maxLength: 50 })
     ]
   );
+  family(interior, "FAM_INTERIOR_PACKAGE", "Interior Package", "Which interior package is required?", [
+    define("INTERIOR_PACKAGE", "Interior Package", "Enumeration", "Marketing", [
+      "Standard",
+      "Premium",
+      "Luxury"
+    ], true)
+  ]);
   const exterior = group("SUV", "EXTERIOR", "Exterior", "Engineering");
+  family(exterior, "FAM_SUNROOF", "Sunroof Type", "Which sunroof configuration is required?", [
+    define("SUNROOF_TYPE", "Sunroof Type", "Enumeration", "Engineering", [
+      "Standard",
+      "Panoramic"
+    ], true)
+  ]);
+  family(exterior, "FAM_ROOF_RACK", "Roof Rack", "Which roof rack is installed?", [
+    define("ROOF_RACK", "Roof Rack", "Enumeration", "Engineering", ["Type A", "Type B"], true)
+  ]);
   family(exterior, "FAM_WHEEL_SIZE", "Wheel Size", "Which wheel size should this vehicle use?", [
     wheel
   ]);
@@ -1168,7 +1186,8 @@ export function createSeed(): ConfigurationStore {
         "Marketing",
         ["Offroad Package", "Winter Package", "Comfort Package"],
         true
-      )
+      ),
+      define("WINTER_PACKAGE", "Winter Package", "Boolean", "Marketing", [], true)
     ]
   );
   const engineering = group("SUV", "ENGINEERING", "Engineering Parameters", "Engineering");
@@ -1259,6 +1278,75 @@ export function createSeed(): ConfigurationStore {
       );
   }
   return s;
+}
+
+const constraintSampleFeatureCodes = new Set([
+  "SUNROOF_TYPE",
+  "INTERIOR_PACKAGE",
+  "ROOF_RACK",
+  "WINTER_PACKAGE",
+  "HEATED_STEERING",
+  "HEATED_SEAT"
+]);
+
+export function ensureConstraintSampleFeatures(store: ConfigurationStore): ConfigurationStore {
+  if (!store.contexts.some((context) => context.id === "ctx-SUV")) return store;
+  const seed = createSeed();
+  const sampleFamilies = seed.families.filter((family) =>
+    seed.references
+      .filter((reference) => reference.familyId === family.id)
+      .some((reference) =>
+        constraintSampleFeatureCodes.has(
+          seed.definitions.find((definition) => definition.id === reference.featureDefinitionId)
+            ?.code ?? ""
+        )
+      )
+  );
+  let next: ConfigurationStore | undefined;
+
+  for (const family of sampleFamilies) {
+    const seedGroup = seed.groups.find((group) => group.id === family.groupId);
+    if (!seedGroup) continue;
+    const familyReferences = seed.references.filter((reference) => reference.familyId === family.id);
+    const missingFeatures = familyReferences.some((reference) => {
+      const definition = seed.definitions.find((item) => item.id === reference.featureDefinitionId);
+      if (!definition || !constraintSampleFeatureCodes.has(definition.code)) return false;
+      const existing = (next ?? store).definitions.some((item) => item.code === definition.code);
+      const existingReference = (next ?? store).references.some(
+        (item) => item.familyId === family.id && item.featureDefinitionId === definition.id
+      );
+      return !existing || !existingReference;
+    });
+    if (!missingFeatures) continue;
+    next ??= structuredClone(store);
+    if (!next.groups.some((group) => group.id === seedGroup.id)) next.groups.push(structuredClone(seedGroup));
+    if (!next.families.some((item) => item.id === family.id)) next.families.push(structuredClone(family));
+
+    for (const reference of familyReferences) {
+      const definition = seed.definitions.find((item) => item.id === reference.featureDefinitionId);
+      if (!definition || !constraintSampleFeatureCodes.has(definition.code)) continue;
+      let existingDefinition = next.definitions.find((item) => item.code === definition.code);
+      if (!existingDefinition) {
+        existingDefinition = structuredClone(definition);
+        next.definitions.push(existingDefinition);
+      }
+      if (
+        next.references.some(
+          (item) =>
+            item.familyId === family.id && item.featureDefinitionId === existingDefinition?.id
+        )
+      )
+        continue;
+      next.references.push({
+        id: `${family.id}-${existingDefinition.id}`,
+        familyId: family.id,
+        featureDefinitionId: existingDefinition.id,
+        definitionVersion: existingDefinition.version
+      });
+    }
+  }
+
+  return next && validateStore(next).length === 0 ? next : store;
 }
 
 export function ensureLoadTestContexts(

@@ -76,7 +76,7 @@
               key="features"
               text="特征模型 / Feature Model"
               count="{view>/featureReferenceCount}" />
-            <IconTabFilter key="rules" text="约束管理 / Constraint Blueprint" />
+            <IconTabFilter key="rules" text="约束管理 / Constraint Management" />
           </items>
         </IconTabBar>
         <VBox id="contextContentSurface" fitContainer="true" class="cmContentSurface">

@@ -10,8 +10,18 @@ import {
   publishDefinition,
   copyContext,
   contextReferences,
-  definitionUsage
+  definitionUsage,
+  ensureConstraintSampleFeatures
 } from "../webapp/model/configuration.ts";
+import {
+  createConstraintRule,
+  createConstraintRuleSamples,
+  constraintOperatorsFor,
+  formatConstraintExpression,
+  migrateLegacyConstraintRuleAst,
+  parseConstraintExpression,
+  validateConstraintRule
+} from "../webapp/model/constraintRules.ts";
 
 test("seed vocabulary has valid links and all ten data types", () => {
   const store = createSeed();
@@ -111,12 +121,25 @@ test("features use data types directly and discrete choices belong to one featur
   const convenienceFamily = store.families.find((family) => family.code === "FAM_CONVENIENCE");
   const convenienceDefinitions = store.references
     .filter((reference) => reference.familyId === convenienceFamily.id)
-    .map((reference) => store.definitions.find((definition) => definition.id === reference.featureDefinitionId));
-  assert.deepEqual(convenienceDefinitions.map((definition) => definition.dataType), ["Boolean", "Enumeration", "Decimal"]);
+    .map((reference) =>
+      store.definitions.find((definition) => definition.id === reference.featureDefinitionId)
+    );
+  assert.deepEqual(
+    convenienceDefinitions.map((definition) => definition.dataType),
+    ["Boolean", "Enumeration", "Decimal", "Boolean", "Boolean"]
+  );
+  assert.ok(convenienceDefinitions.some((definition) => definition.code === "HEATED_STEERING"));
+  assert.ok(convenienceDefinitions.some((definition) => definition.code === "HEATED_SEAT"));
   const wheelFamily = store.families.find((family) => family.code === "FAM_WHEEL_MATERIAL");
-  const wheelFeatures = store.references.filter((reference) => reference.familyId === wheelFamily.id);
+  const wheelFeatures = store.references.filter(
+    (reference) => reference.familyId === wheelFamily.id
+  );
   assert.equal(wheelFeatures.length, 1);
-  assert.equal(store.definitions.find((definition) => definition.id === wheelFeatures[0].featureDefinitionId).domain.values.length, 3);
+  assert.equal(
+    store.definitions.find((definition) => definition.id === wheelFeatures[0].featureDefinitionId)
+      .domain.values.length,
+    3
+  );
   assert.equal("selectionGroups" in store, false);
   assert.deepEqual(
     validateValue(
@@ -132,4 +155,173 @@ test("features use data types directly and discrete choices belong to one featur
     ),
     []
   );
+});
+
+test("constraint AST parses and formats nested AND OR NOT without string-based synchronization", () => {
+  const expression =
+    'TRIM_LEVEL == "PREMIUM" AND NOT (VEHICLE_REGION == "JAPAN" OR ROOF_RACK == "TYPE_B") => DRIVE_TYPE IN ("AWD", "4WD")';
+  const ast = parseConstraintExpression(expression);
+  assert.equal(ast.condition.type, "AND");
+  assert.equal(ast.actions[0].type, "REQUIRE");
+  assert.equal(ast.actions[0].target.type, "IN");
+  assert.equal(
+    formatConstraintExpression(ast),
+    'WHEN TRIM_LEVEL == "PREMIUM" AND NOT (VEHICLE_REGION == "JAPAN" OR ROOF_RACK == "TYPE_B") THEN REQUIRE DRIVE_TYPE IN ("AWD", "4WD")'
+  );
+
+  const store = createSeed();
+  const features = contextReferences(store, "ctx-SUV").map((reference) =>
+    resolveDefinition(store, reference)
+  );
+  const samples = createConstraintRuleSamples(features);
+  for (const rule of samples)
+    assert.deepEqual(parseConstraintExpression(formatConstraintExpression(rule.ast)), rule.ast);
+  assert.match(samples[0].expression, /^WHEN .* THEN REQUIRE /);
+  assert.match(samples[1].expression, /^WHEN .* THEN EXCLUDE /);
+  assert.equal(samples[3].ast.actions.length, 2);
+  assert.match(samples[3].expression, / AND REQUIRE /);
+  assert.deepEqual(parseConstraintExpression(samples[3].expression), samples[3].ast);
+
+  const migrated = migrateLegacyConstraintRuleAst({
+    type: "EXCLUDES",
+    when: { type: "EQUALS", feature: "SUNROOF_TYPE", value: "PANORAMIC" },
+    then: { type: "NOT_EQUALS", feature: "ROOF_RACK", value: "TYPE_B" }
+  });
+  assert.equal(migrated.actions[0].type, "EXCLUDE");
+  assert.deepEqual(migrated.actions[0].target, {
+    type: "EQUALS",
+    feature: "ROOF_RACK",
+    value: "TYPE_B"
+  });
+});
+
+test("constraint seeds use current context features and respect value domains", () => {
+  const store = createSeed();
+  const features = contextReferences(store, "ctx-SUV").map((reference) =>
+    resolveDefinition(store, reference)
+  );
+  const rules = createConstraintRuleSamples(features);
+  assert.equal(rules.length, 5);
+  assert.deepEqual(
+    rules.flatMap((rule) => validateConstraintRule(rule, rules, features)),
+    []
+  );
+  assert.equal(rules[0].ast.actions[0].type, "REQUIRE");
+  assert.match(rules[0].expression, /SUNROOF_TYPE == "PANORAMIC"/);
+  assert.match(rules[0].expression, /INTERIOR_PACKAGE == "PREMIUM"/);
+});
+
+test("constraint operators follow feature data types and selected action semantics", () => {
+  assert.deepEqual(constraintOperatorsFor("Boolean"), ["EQUALS", "NOT_EQUALS"]);
+  assert.deepEqual(constraintOperatorsFor("Enumeration"), ["EQUALS", "NOT_EQUALS", "IN", "NOT_IN"]);
+  assert.deepEqual(constraintOperatorsFor("Integer"), [
+    "EQUALS",
+    "NOT_EQUALS",
+    "GREATER_THAN",
+    "GREATER_THAN_OR_EQUAL",
+    "LESS_THAN",
+    "LESS_THAN_OR_EQUAL"
+  ]);
+  assert.ok(constraintOperatorsFor("String").includes("ENDS_WITH"));
+  assert.deepEqual(constraintOperatorsFor("Integer", "SET"), ["EQUALS"]);
+  assert.deepEqual(constraintOperatorsFor("Enumeration", "EXCLUDE"), ["EQUALS", "IN"]);
+});
+
+test("constraint validation reports invalid features, operators, values and cycles", () => {
+  const store = createSeed();
+  const features = contextReferences(store, "ctx-SUV").map((reference) =>
+    resolveDefinition(store, reference)
+  );
+  const rules = createConstraintRuleSamples(features);
+  const invalid = createConstraintRule({
+    id: "invalid-expression",
+    code: "CR-INVALID",
+    name: "Invalid expression",
+    ast: {
+      condition: { type: "GREATER_THAN_OR_EQUAL", feature: "DRIVE_TYPE", value: "AWD" },
+      actions: [
+        {
+          type: "REQUIRE",
+          target: { type: "EQUALS", feature: "UNKNOWN_FEATURE", value: "X" }
+        }
+      ]
+    }
+  });
+  const issues = validateConstraintRule(invalid, rules, features);
+  assert.ok(issues.some((issue) => issue.code === "OPERATOR_NOT_SUPPORTED"));
+  assert.ok(issues.some((issue) => issue.code === "FEATURE_NOT_FOUND"));
+  assert.throws(() => parseConstraintExpression('DRIVE_TYPE == "AWD"'), /WHEN .* THEN/);
+  const inactiveFeatures = features.map((feature) =>
+    feature.code === "SUNROOF_TYPE" ? { ...feature, active: false } : feature
+  );
+  assert.ok(
+    validateConstraintRule(rules[0], rules, inactiveFeatures).some(
+      (issue) => issue.code === "FEATURE_INACTIVE"
+    )
+  );
+
+  const circular = createConstraintRule({
+    id: "circular-rule",
+    code: "CR-CYCLE",
+    name: "Circular rule",
+    ast: {
+      condition: { type: "EQUALS", feature: "BATTERY_CAPACITY", value: 80 },
+      actions: [
+        { type: "REQUIRE", target: { type: "EQUALS", feature: "DRIVE_TYPE", value: "AWD" } }
+      ]
+    }
+  });
+  const existing = createConstraintRule({
+    id: "reverse-rule",
+    code: "CR-REVERSE",
+    name: "Reverse rule",
+    ast: {
+      condition: { type: "EQUALS", feature: "DRIVE_TYPE", value: "AWD" },
+      actions: [
+        {
+          type: "RESTRICT",
+          target: { type: "EQUALS", feature: "BATTERY_CAPACITY", value: 80 }
+        }
+      ]
+    }
+  });
+  assert.ok(
+    validateConstraintRule(circular, [existing], features).some(
+      (issue) => issue.code === "CIRCULAR_DEPENDENCY"
+    )
+  );
+});
+
+test("constraint sample feature migration is additive and idempotent", () => {
+  const store = createSeed();
+  const sampleCodes = new Set([
+    "SUNROOF_TYPE",
+    "INTERIOR_PACKAGE",
+    "ROOF_RACK",
+    "WINTER_PACKAGE",
+    "HEATED_STEERING",
+    "HEATED_SEAT"
+  ]);
+  const removedDefinitionIds = new Set(
+    store.definitions
+      .filter((definition) => sampleCodes.has(definition.code))
+      .map((item) => item.id)
+  );
+  store.definitions = store.definitions.filter(
+    (definition) => !removedDefinitionIds.has(definition.id)
+  );
+  store.references = store.references.filter(
+    (reference) => !removedDefinitionIds.has(reference.featureDefinitionId)
+  );
+  store.families = store.families.filter(
+    (family) => !["FAM_INTERIOR_PACKAGE", "FAM_SUNROOF", "FAM_ROOF_RACK"].includes(family.code)
+  );
+  const migrated = ensureConstraintSampleFeatures(store);
+  assert.ok(
+    [...sampleCodes].every((code) => migrated.definitions.some((item) => item.code === code))
+  );
+  assert.deepEqual(validateStore(migrated), []);
+  const repeated = ensureConstraintSampleFeatures(migrated);
+  assert.equal(repeated.definitions.length, migrated.definitions.length);
+  assert.equal(repeated.references.length, migrated.references.length);
 });

@@ -33,6 +33,7 @@ import ConfigurationFeatureLibraryView from "./configuration/ConfigurationFeatur
 import ConfigurationFeatureWorkspaceView from "./configuration/ConfigurationFeatureWorkspaceView";
 import ConfigurationPreviewDialog from "./configuration/ConfigurationPreviewDialog";
 import ConfigurationRuleWorkspaceView from "./configuration/ConfigurationRuleWorkspaceView";
+import { ConstraintRuleRepository } from "../service/constraintRuleRepository";
 import ConfigurationScopeView from "./configuration/ConfigurationScopeView";
 import { buildContextTreeRows } from "./configuration/ConfigurationViewModel";
 import type { Field, Selection, Values } from "./configuration/types";
@@ -54,7 +55,8 @@ import {
   contextReferences,
   copyContext,
   publishDefinition,
-  normalizeFeatureModelStore
+  normalizeFeatureModelStore,
+  ensureConstraintSampleFeatures
 } from "../model/configuration";
 import type {
   ConfigurationStore,
@@ -92,6 +94,7 @@ export default class ConfigurationController extends BaseController {
   });
   private readonly dialogService = new ConfigurationDialogService(() => this.getView());
   private readonly categoryValueHelp = new ConfigurationCategoryValueHelp(() => this.getView());
+  private readonly constraintRuleRepository = new ConstraintRuleRepository();
   private readonly onLocalizationChangedBound = (): void => this.onLocalizationChanged();
   private contextId = "ctx-SUV";
   private mode: "context" | "features" | "rules" = "context";
@@ -115,6 +118,7 @@ export default class ConfigurationController extends BaseController {
   private mainFullscreenButton?: Button;
   private featureWorkspaceView?: ConfigurationFeatureWorkspaceView;
   private ruleWorkspaceView?: ConfigurationRuleWorkspaceView;
+  private ruleWorkspaceContextId?: string;
   private featureExpandedNodeIds?: string[];
   private scopeEditMode = false;
   private selectedProductGroup?: string;
@@ -139,14 +143,15 @@ export default class ConfigurationController extends BaseController {
       setI18nBundle(
         bundle as { getText?: (resourceKey: string) => string | undefined } | undefined
       );
-    this.store = createSeed();
+    this.store = ensureConstraintSampleFeatures(createSeed());
     const saved = localStorage.getItem(storageKey);
     if (saved) {
       try {
         const parsed = normalizeFeatureModelStore(JSON.parse(saved));
         if (validateStore(parsed).length) throw new Error();
-        const beforeLoadTestData = parsed.contexts.length;
-        this.store = ensureLoadTestContexts(parsed);
+        const featureCompleteStore = ensureConstraintSampleFeatures(parsed);
+        const beforeLoadTestData = featureCompleteStore.contexts.length;
+        this.store = ensureLoadTestContexts(featureCompleteStore);
         localStorage.setItem(storageKey, JSON.stringify(this.store));
         if (this.store.contexts.length > beforeLoadTestData)
           MessageToast.show(`已补充测试数据，当前共有 ${this.store.contexts.length} 个配置上下文。`);
@@ -159,6 +164,7 @@ export default class ConfigurationController extends BaseController {
     this.initializeXmlView();
     this.render();
     this.getRouter().getRoute("configuration")?.attachPatternMatched(this.openContext, this);
+    this.getRouter().getRoute("rules")?.attachPatternMatched(this.openRules, this);
     this.getRouter().getRoute("featureLibrary")?.attachPatternMatched(this.openLibrary, this);
     // ResourceModel may finish its locale bundle just after the controller is created.
     window.setTimeout(() => this.onLocalizationChanged(), 300);
@@ -166,7 +172,9 @@ export default class ConfigurationController extends BaseController {
   public onExit(): void {
     Localization.detachChange(this.onLocalizationChangedBound);
     this.getRouter().getRoute("configuration")?.detachPatternMatched(this.openContext, this);
+    this.getRouter().getRoute("rules")?.detachPatternMatched(this.openRules, this);
     this.getRouter().getRoute("featureLibrary")?.detachPatternMatched(this.openLibrary, this);
+    this.ruleWorkspaceView?.disposeWorkspace();
   }
   private onLocalizationChanged(): void {
     const bundle = activeI18nModel?.getResourceBundle();
@@ -184,6 +192,12 @@ export default class ConfigurationController extends BaseController {
   }
   private openContext(): void {
     this.libraryMode = false;
+    this.mode = "context";
+    this.render();
+  }
+  private openRules(): void {
+    this.libraryMode = false;
+    this.mode = "rules";
     this.render();
   }
   private openLibrary(): void {
@@ -317,15 +331,48 @@ export default class ConfigurationController extends BaseController {
       this.featureExpandedNodeIds = this.featureWorkspaceView.expandedNodeIds();
     this.scopeHost?.destroyItems();
     this.featureHost?.destroyItems();
-    this.ruleWorkspaceView?.disposeWorkspace();
-    this.ruleWorkspaceView = undefined;
-    this.ruleHost?.destroyItems();
     this.featureWorkspaceView = undefined;
+    const context = this.currentContext();
+    const features = contextReferences(this.store, context.id).map((reference) =>
+      resolveDefinition(this.store, reference)
+    );
+    if (this.ruleWorkspaceContextId && this.ruleWorkspaceContextId !== context.id) {
+      this.ruleWorkspaceView?.disposeWorkspace();
+      this.ruleWorkspaceView = undefined;
+      this.ruleWorkspaceContextId = undefined;
+      this.ruleHost?.destroyItems();
+    } else {
+      this.ruleWorkspaceView?.setFeatures(features);
+    }
     if (this.mode === "context") this.scopeHost?.addItem(this.buildScope());
     else if (this.mode === "features") this.featureHost?.addItem(this.buildFeatureWorkspace());
-    else {
-      this.ruleWorkspaceView = new ConfigurationRuleWorkspaceView(this.currentContext().name);
-      this.ruleHost?.addItem(this.ruleWorkspaceView.build());
+    else if (!this.ruleWorkspaceView) {
+      this.ruleHost?.destroyItems();
+      try {
+        this.ruleWorkspaceView = new ConfigurationRuleWorkspaceView({
+          context,
+          features,
+          repository: this.constraintRuleRepository,
+          canEdit: () => this.canEdit()
+        });
+        this.ruleWorkspaceContextId = context.id;
+        this.ruleHost?.addItem(this.ruleWorkspaceView.build());
+      } catch (error) {
+        this.ruleWorkspaceView?.disposeWorkspace();
+        this.ruleWorkspaceView = undefined;
+        this.ruleWorkspaceContextId = undefined;
+        const message = error instanceof Error ? error.message : String(error);
+        this.ruleHost?.destroyItems();
+        this.ruleHost?.addItem(
+          new MessageStrip({
+            text: `约束工作区加载失败：${message}`,
+            type: "Error",
+            showIcon: true,
+            showCloseButton: false
+          })
+        );
+        MessageBox.error(`约束工作区加载失败：${message}`);
+      }
     }
   }
   public onContextSearchChange(event: Event): void {
