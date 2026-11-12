@@ -1885,11 +1885,15 @@ export default class ConfigurationController extends BaseController {
     const features = contextReferences(this.store, context.id).map((reference) =>
       resolveDefinition(this.store, reference)
     );
+    const workingRules =
+      this.ruleWorkspaceContextId === context.id
+        ? this.ruleWorkspaceView?.rulesForPreview()
+        : undefined;
     new ConfigurationPreviewDialog({
       store: this.store,
       context,
       profile: this.currentProfile(),
-      rules: rules ?? this.constraintRuleRepository.list(context.id, features),
+      rules: rules ?? workingRules ?? this.constraintRuleRepository.list(context.id, features),
       getHost: () => this.getView()
     }).open();
   }

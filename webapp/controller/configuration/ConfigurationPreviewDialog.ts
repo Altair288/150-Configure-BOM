@@ -1,4 +1,3 @@
-import Button from "sap/m/Button";
 import CheckBox from "sap/m/CheckBox";
 import Dialog from "sap/m/Dialog";
 import Input from "sap/m/Input";
@@ -6,12 +5,9 @@ import Item from "sap/ui/core/Item";
 import Label from "sap/m/Label";
 import MessageStrip from "sap/m/MessageStrip";
 import MultiComboBox from "sap/m/MultiComboBox";
-import OverflowToolbar from "sap/m/OverflowToolbar";
 import RadioButton from "sap/m/RadioButton";
 import RadioButtonGroup from "sap/m/RadioButtonGroup";
 import Select from "sap/m/Select";
-import Text from "sap/m/Text";
-import ToolbarSpacer from "sap/m/ToolbarSpacer";
 import VBox from "sap/m/VBox";
 import type { Input$LiveChangeEvent } from "sap/m/Input";
 import Control from "sap/ui/core/Control";
@@ -51,7 +47,6 @@ type PreviewValueState = "None" | "Error" | "Warning";
 interface PreviewFeatureField {
   definition: FeatureDefinition;
   getValue: () => unknown;
-  setValue: (value: string) => void;
   setAvailableValues: (codes: Set<string> | undefined) => void;
   setValueState: (state: PreviewValueState, message?: string) => void;
 }
@@ -238,7 +233,6 @@ export default class ConfigurationPreviewDialog {
   }
 
   public open(): void {
-    const presetters = new Map<string, (value: string) => void>();
     const touchedFeatureCodes = new Set<string>();
     const groups = this.options.store.groups
       .filter((group) => group.contextId === this.options.context.id)
@@ -321,25 +315,6 @@ export default class ConfigurationPreviewDialog {
       });
     };
 
-    content.addItem(
-      new OverflowToolbar({
-        content: [
-          new Text({ text: tr("示例场景：双向互斥") }),
-          new ToolbarSpacer(),
-          new Button({
-            text: tr("加载 B 型行李架示例"),
-            type: "Transparent",
-            press: () => {
-              presetters.get("SUNROOF_TYPE")?.("STANDARD");
-              presetters.get("INTERIOR_PACKAGE")?.("STANDARD");
-              presetters.get("ROOF_RACK")?.("TYPE_B");
-              updatePreview();
-            }
-          })
-        ]
-      })
-    );
-
     const useDefault = this.options.profile.defaultBehavior !== "No Default";
     for (const group of groups) {
       content.addItem(title(group.name).addStyleClass("cmPreviewGroup"));
@@ -364,7 +339,6 @@ export default class ConfigurationPreviewDialog {
             content,
             values,
             fields,
-            presetters,
             definition,
             definitions.length > 1 || definition.name !== family.name,
             useDefault,
@@ -403,7 +377,6 @@ export default class ConfigurationPreviewDialog {
     content: VBox,
     values: Map<string, unknown>,
     fields: Map<string, PreviewFeatureField>,
-    presetters: Map<string, (value: string) => void>,
     definition: FeatureDefinition,
     showLabel: boolean,
     useDefault: boolean,
@@ -419,7 +392,6 @@ export default class ConfigurationPreviewDialog {
       );
 
     let getValue: () => unknown;
-    let setValue: (value: string) => void = () => undefined;
     let setAvailableValues: (codes: Set<string> | undefined) => void = () => undefined;
     let setValueState: PreviewFeatureField["setValueState"] = () => undefined;
     let onValueChange = (): void => undefined;
@@ -448,7 +420,6 @@ export default class ConfigurationPreviewDialog {
       });
       control = input;
       getValue = () => input.getSelectedKeys();
-      setValue = (value) => input.setSelectedKeys(value ? value.split(",") : []);
       setAvailableValues = (codes) => {
         const current = getValue();
         const availableSelection = reconcileConstrainedSelection(current, codes);
@@ -470,10 +441,6 @@ export default class ConfigurationPreviewDialog {
         });
         control = input;
         getValue = () => allowed[input.getSelectedIndex()]?.code ?? "";
-        setValue = (value) => {
-          const index = allowed.findIndex((entry) => entry.code === value);
-          input.setSelectedIndex(index);
-        };
         setValueState = (state, message) =>
           input.setTooltip(state === "None" ? "" : (message ?? ""));
         setAvailableValues = (codes) => {
@@ -500,7 +467,6 @@ export default class ConfigurationPreviewDialog {
         });
         control = input;
         getValue = () => input.getSelectedKey();
-        setValue = (value) => input.setSelectedKey(value);
         setAvailableValues = (codes) => {
           const selected = String(getValue() ?? "");
           const retained = reconcileConstrainedSelection(selected, codes, true);
@@ -525,7 +491,6 @@ export default class ConfigurationPreviewDialog {
         });
         control = input;
         getValue = () => (input.getSelected() ? true : undefined);
-        setValue = (value) => input.setSelected(value === "true");
         setValueState = (state, message) =>
           input.setTooltip(state === "None" ? "" : (message ?? ""));
       } else {
@@ -541,7 +506,6 @@ export default class ConfigurationPreviewDialog {
         });
         control = input;
         getValue = () => input.getSelectedKey();
-        setValue = (value) => input.setSelectedKey(value);
         setAvailableValues = (codes) => {
           const selected = String(getValue() ?? "");
           const retained = reconcileConstrainedSelection(selected, codes, true);
@@ -582,7 +546,6 @@ export default class ConfigurationPreviewDialog {
       });
       control = input;
       getValue = () => input.getValue();
-      setValue = (value) => input.setValue(value);
       setValueState = (state, message) => {
         input.setValueState(state);
         input.setValueStateText(message ?? "");
@@ -595,11 +558,6 @@ export default class ConfigurationPreviewDialog {
       updatePreview();
     };
     values.set(definition.code, getValue());
-    presetters.set(definition.code, (value) => {
-      setValue(value);
-      touchedFeatureCodes.add(definition.code);
-      values.set(definition.code, getValue());
-    });
     content.addItem(control);
 
     if (["Decimal", "Integer", "Range"].includes(dataType))
@@ -612,7 +570,6 @@ export default class ConfigurationPreviewDialog {
     fields.set(definition.code, {
       definition,
       getValue,
-      setValue,
       setAvailableValues,
       setValueState
     });

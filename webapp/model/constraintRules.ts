@@ -130,6 +130,35 @@ export function reconcileConstrainedSelection(
   return Array.isArray(value) ? retainedValues : (retainedValues[0] ?? "");
 }
 
+export function appendConstraintPredicate(
+  current: ConstraintExpression,
+  operator: "AND" | "OR",
+  addition: ConstraintPredicate
+): ConstraintExpression {
+  if (operator === "OR") {
+    return current.type === "OR"
+      ? { ...current, expressions: [...current.expressions, addition] }
+      : { type: "OR", expressions: [current, addition] };
+  }
+
+  if (current.type === "AND")
+    return { ...current, expressions: [...current.expressions, addition] };
+
+  if (current.type === "OR") {
+    const expressions = [...current.expressions];
+    const lastIndex = expressions.length - 1;
+    const last = expressions[lastIndex];
+    if (!last) return { type: "AND", expressions: [current, addition] };
+    expressions[lastIndex] =
+      last.type === "AND"
+        ? { ...last, expressions: [...last.expressions, addition] }
+        : { type: "AND", expressions: [last, addition] };
+    return { ...current, expressions };
+  }
+
+  return { type: "AND", expressions: [current, addition] };
+}
+
 const operatorSymbols: Record<ConstraintOperator, string> = {
   EQUALS: "==",
   NOT_EQUALS: "!=",

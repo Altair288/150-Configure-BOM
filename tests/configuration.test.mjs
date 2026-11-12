@@ -14,6 +14,7 @@ import {
   ensureConstraintSampleFeatures
 } from "../webapp/model/configuration.ts";
 import {
+  appendConstraintPredicate,
   activeConstraintEffects,
   reconcileConstrainedSelection,
   createConstraintRule,
@@ -196,6 +197,30 @@ test("constraint AST parses and formats nested AND OR NOT without string-based s
     feature: "ROOF_RACK",
     value: "TYPE_B"
   });
+});
+
+test("adding AND and OR clauses follows normal precedence without nesting every click", () => {
+  const clause = (feature) => ({ type: "EQUALS", feature, value: true });
+  let condition = clause("A");
+  condition = appendConstraintPredicate(condition, "AND", clause("B"));
+  condition = appendConstraintPredicate(condition, "OR", clause("C"));
+  condition = appendConstraintPredicate(condition, "AND", clause("D"));
+  condition = appendConstraintPredicate(condition, "OR", clause("E"));
+  condition = appendConstraintPredicate(condition, "AND", clause("F"));
+
+  assert.deepEqual(condition, {
+    type: "OR",
+    expressions: [
+      { type: "AND", expressions: [clause("A"), clause("B")] },
+      { type: "AND", expressions: [clause("C"), clause("D")] },
+      { type: "AND", expressions: [clause("E"), clause("F")] }
+    ]
+  });
+  const ruleExpression = formatConstraintExpression({
+    condition,
+    actions: [{ type: "REQUIRE", target: clause("RESULT") }]
+  });
+  assert.deepEqual(parseConstraintExpression(ruleExpression).condition, condition);
 });
 
 test("constraint seeds use current context features and respect value domains", () => {

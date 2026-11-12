@@ -274,7 +274,7 @@ export default class ConfigurationRuleWorkspaceView {
   private actionLabel(type: ConstraintActionType): string {
     const labels: Record<ConstraintActionType, string> = {
       REQUIRE: "要求",
-      EXCLUDE: "排斥",
+      EXCLUDE: "互斥",
       SET: "设置",
       RESTRICT: "限制",
       DERIVE: "派生"
@@ -382,15 +382,13 @@ export default class ConfigurationRuleWorkspaceView {
     }).addStyleClass("cmConstraintRuleDetail");
   }
 
-  private rulesForPreview(): ConstraintRule[] {
-    let replaced = false;
-    const rules = this.rules.map((rule) => {
-      if (rule.id !== this.currentRule.id) return rule;
-      replaced = true;
-      return structuredClone(this.currentRule);
-    });
-    if (!replaced) rules.push(structuredClone(this.currentRule));
-    return rules;
+  public rulesForPreview(): ConstraintRule[] {
+    return [
+      structuredClone(this.currentRule),
+      ...this.rules
+        .filter((rule) => rule.id !== this.currentRule.id)
+        .map((rule) => structuredClone(rule))
+    ];
   }
 
   private setMode(mode: WorkspaceMode): void {
@@ -817,7 +815,10 @@ export default class ConfigurationRuleWorkspaceView {
     );
   }
 
-  private describeExpression(expression: ConstraintExpression): string {
+  private describeExpression(
+    expression: ConstraintExpression,
+    parentOperator?: "AND" | "OR"
+  ): string {
     if ("feature" in expression) {
       const feature = this.features.find((item) => item.code === expression.feature);
       const operatorLabels: Record<ConstraintOperator, string> = {
@@ -842,11 +843,14 @@ export default class ConfigurationRuleWorkspaceView {
         : describeValue(expression.value);
       return `${feature?.name ?? expression.feature} ${operatorLabels[expression.type]} ${value}`;
     }
-    if ("expression" in expression)
-      return `${tr("NOT")} (${this.describeExpression(expression.expression)})`;
-    return expression.expressions
-      .map((child) => this.describeExpression(child))
-      .join(` ${expression.type} `);
+    if ("expression" in expression) {
+      const negated = this.describeExpression(expression.expression);
+      return trFormat("cmConstraintNegatedCondition", [negated], `不满足（${negated}）`);
+    }
+    const text = expression.expressions
+      .map((child) => this.describeExpression(child, expression.type))
+      .join(` ${tr(expression.type === "AND" ? "且" : "或")} `);
+    return parentOperator && parentOperator !== expression.type ? `(${text})` : text;
   }
 
   private applyAISuggestion(id: string): void {

@@ -140,7 +140,7 @@ function createSunroofSuggestions(prompt: string): ConstraintAISuggestion[] {
     },
     {
       id: second.id,
-      explanation: "当 Sunroof Type 为 Panoramic 时，排斥 Roof Rack Type B。",
+      explanation: "当 Sunroof Type 为 Panoramic 时，Roof Rack Type B 与全景天窗互斥。",
       rule: second,
       selected: true
     }

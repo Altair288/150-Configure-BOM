@@ -21,6 +21,7 @@ import type { Select$ChangeEvent } from "sap/m/Select";
 import type { TextArea$LiveChangeEvent } from "sap/m/TextArea";
 import type { InputBase$ChangeEvent } from "sap/m/InputBase";
 import {
+  appendConstraintPredicate,
   constraintOperatorsFor,
   formatConstraintCondition,
   formatConstraintExpression,
@@ -31,7 +32,6 @@ import type {
   ConstraintAction,
   ConstraintActionType,
   ConstraintExpression,
-  ConstraintLogicalGroup,
   ConstraintLiteral,
   ConstraintOperator,
   ConstraintPredicate,
@@ -71,7 +71,7 @@ const operatorItems: OperatorItem[] = [
 
 const actionItems: Array<{ key: ConstraintActionType; label: string }> = [
   { key: "REQUIRE", label: "要求" },
-  { key: "EXCLUDE", label: "排斥" },
+  { key: "EXCLUDE", label: "互斥" },
   { key: "SET", label: "设置" },
   { key: "RESTRICT", label: "限制" },
   { key: "DERIVE", label: "派生" }
@@ -81,12 +81,66 @@ function isPredicate(expression: ConstraintExpression): expression is Constraint
   return "feature" in expression;
 }
 
+function conditionPredicates(expression: ConstraintExpression): ConstraintPredicate[] {
+  if (isPredicate(expression)) return [expression];
+  if (expression.type === "NOT") return conditionPredicates(expression.expression);
+  return expression.expressions.flatMap(conditionPredicates);
+}
+
+function describeConditionForUser(
+  expression: ConstraintExpression,
+  features: FeatureDefinition[],
+  parentOperator?: "AND" | "OR"
+): string {
+  if (isPredicate(expression)) {
+    const feature = features.find((item) => item.code === expression.feature);
+    const operatorLabels: Record<ConstraintOperator, string> = {
+      EQUALS: "等于",
+      NOT_EQUALS: "不等于",
+      GREATER_THAN: "大于",
+      GREATER_THAN_OR_EQUAL: "大于等于",
+      LESS_THAN: "小于",
+      LESS_THAN_OR_EQUAL: "小于等于",
+      IN: "属于",
+      NOT_IN: "不属于",
+      CONTAINS: "包含",
+      STARTS_WITH: "开头为",
+      ENDS_WITH: "结尾为"
+    };
+    const describeValue = (value: ConstraintLiteral): string => {
+      if (typeof value === "boolean") return tr(value ? "Yes" : "No");
+      if (typeof value !== "string") return String(value);
+      return feature?.domain.values.find((item) => item.code === value)?.value ?? value;
+    };
+    const value = Array.isArray(expression.value)
+      ? expression.value.map(describeValue).join(", ")
+      : describeValue(expression.value);
+    const unit =
+      feature && ["Integer", "Decimal", "Range"].includes(feature.dataType) && feature.unit
+        ? ` ${feature.unit}`
+        : "";
+    return `${feature?.name ?? expression.feature} ${tr(operatorLabels[expression.type])} ${value}${unit}`;
+  }
+
+  if (expression.type === "NOT")
+    return trFormat(
+      "cmConstraintNegatedCondition",
+      [describeConditionForUser(expression.expression, features)],
+      `不满足（${describeConditionForUser(expression.expression, features)}）`
+    );
+
+  const childSeparator = expression.type === "AND" ? "且" : "或";
+  const text = expression.expressions
+    .map((child) => describeConditionForUser(child, features, expression.type))
+    .join(` ${tr(childSeparator)} `);
+  return parentOperator && parentOperator !== expression.type ? `(${text})` : text;
+}
+
 function conditionGroup(
   expression: ConstraintExpression,
   path: ExpressionPathPart[],
   onPredicateChange: (path: ExpressionPathPart[], predicate: ConstraintPredicate) => void,
   onPredicateRemove: (path: ExpressionPathPart[]) => void,
-  onGroupAddCondition: (path: ExpressionPathPart[], group: ConstraintLogicalGroup) => void,
   canRemoveCondition: boolean,
   predicateControl: (
     predicate: ConstraintPredicate,
@@ -121,7 +175,6 @@ function conditionGroup(
           [...path, "expression"],
           onPredicateChange,
           onPredicateRemove,
-          onGroupAddCondition,
           canRemoveCondition,
           predicateControl
         )
@@ -140,14 +193,6 @@ function conditionGroup(
           new ObjectStatus({
             text: tr(groupTitle),
             state: expression.type === "AND" ? "Information" : "Warning"
-          }),
-          new ToolbarSpacer(),
-          new Button({
-            text: tr("+ 条件"),
-            icon: "sap-icon://add",
-            tooltip: tr("在此组中添加条件"),
-            type: "Transparent",
-            press: () => onGroupAddCondition(path, expression)
           })
         ]
       }).addStyleClass("cmConstraintGroupHeader"),
@@ -157,7 +202,6 @@ function conditionGroup(
           [...path, index],
           onPredicateChange,
           onPredicateRemove,
-          onGroupAddCondition,
           canRemoveCondition,
           predicateControl
         )
@@ -251,6 +295,9 @@ export default class ConfigurationExpressionEditor {
   private readonly conditionHost = new VBox({ width: "100%" }).addStyleClass(
     "cmConstraintConditionRows"
   );
+  private readonly conditionSummary = new Text({ width: "100%", wrapping: true }).addStyleClass(
+    "cmConstraintConditionSummary"
+  );
   private readonly actionsHost = new VBox({ width: "100%" }).addStyleClass(
     "cmConstraintActionRows"
   );
@@ -283,7 +330,12 @@ export default class ConfigurationExpressionEditor {
       items: [
         new VBox({
           width: "100%",
-          items: [new Label({ text: tr("条件") }), this.conditionHost, this.buildConditionToolbar()]
+          items: [
+            new Label({ text: tr("条件") }),
+            this.conditionSummary,
+            this.conditionHost,
+            this.buildConditionToolbar()
+          ]
         }).addStyleClass("cmConstraintConditionSection"),
         new VBox({
           width: "100%",
@@ -430,11 +482,6 @@ export default class ConfigurationExpressionEditor {
   private buildConditionToolbar(): OverflowToolbar {
     return new OverflowToolbar({
       content: [
-        new Button({
-          text: tr("+ 条件"),
-          icon: "sap-icon://add",
-          press: () => this.addCondition("AND")
-        }),
         new Button({ text: tr("+ AND"), press: () => this.addCondition("AND") }),
         new Button({ text: tr("+ OR"), press: () => this.addCondition("OR") }),
         new Button({ text: tr("+ NOT"), press: () => this.negateCondition() })
@@ -474,33 +521,23 @@ export default class ConfigurationExpressionEditor {
   }
 
   private addCondition(operator: "AND" | "OR"): void {
-    const feature = this.options.features.find((item) => item.active);
+    const feature = this.nextConditionFeature();
     if (!feature) {
       this.status.setType("Warning");
       this.status.setText(tr("当前 Context 没有活动 Feature"));
       return;
     }
     const addition = defaultPredicate(feature);
-    const current = this.rule.ast.condition;
-    const condition: ConstraintExpression =
-      "expressions" in current && current.type === operator
-        ? { ...current, expressions: [...current.expressions, addition] }
-        : { type: operator, expressions: [current, addition] };
+    const condition = appendConstraintPredicate(this.rule.ast.condition, operator, addition);
     this.commitAst({ ...this.rule.ast, condition });
   }
 
-  private addConditionToGroup(path: ExpressionPathPart[], group: ConstraintLogicalGroup): void {
-    const feature = this.options.features.find((item) => item.active);
-    if (!feature) {
-      this.status.setType("Warning");
-      this.status.setText(tr("当前 Context 没有活动 Feature"));
-      return;
-    }
-    const condition = replaceAtPath(this.rule.ast.condition, path, {
-      ...group,
-      expressions: [...group.expressions, defaultPredicate(feature)]
-    });
-    this.commitAst({ ...this.rule.ast, condition });
+  private nextConditionFeature(): FeatureDefinition | undefined {
+    const activeFeatures = this.options.features.filter((feature) => feature.active);
+    const usedCodes = new Set(
+      conditionPredicates(this.rule.ast.condition).map((predicate) => predicate.feature)
+    );
+    return activeFeatures.find((feature) => !usedCodes.has(feature.code)) ?? activeFeatures[0];
   }
 
   private removeCondition(path: ExpressionPathPart[]): void {
@@ -567,6 +604,10 @@ export default class ConfigurationExpressionEditor {
 
   private renderCondition(): void {
     this.conditionHost.destroyItems();
+    const description = describeConditionForUser(this.rule.ast.condition, this.options.features);
+    this.conditionSummary.setText(
+      trFormat("cmConstraintConditionSummary", [description], `条件关系：${description}`)
+    );
     const canRemoveCondition = countPredicates(this.rule.ast.condition) > 1;
     this.conditionHost.addItem(
       conditionGroup(
@@ -577,7 +618,6 @@ export default class ConfigurationExpressionEditor {
           this.commitAst({ ...this.rule.ast, condition });
         },
         (path) => this.removeCondition(path),
-        (path, group) => this.addConditionToGroup(path, group),
         canRemoveCondition,
         (predicate, change, remove) =>
           this.buildPredicateControls(predicate, change, undefined, remove)

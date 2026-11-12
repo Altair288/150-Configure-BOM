@@ -764,7 +764,16 @@
   gap: 0.5rem;
 }
 .cmConstraintConditionRows {
-  gap: 0.35rem;
+  gap: 0.15rem;
+}
+.cmConstraintConditionSummary {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0.4rem 0.6rem;
+  border-left: 2px solid var(--sapBrandColor);
+  background: var(--sapList_Background);
+  color: var(--sapContent_LabelColor);
+  line-height: 1.35rem;
 }
 .cmConstraintPredicateControls {
   gap: 0.5rem;
@@ -784,19 +793,16 @@
 }
 .cmConstraintExpressionGroup {
   box-sizing: border-box;
-  width: calc(100% - 0.5rem);
-  margin-left: 0.5rem;
-  gap: 0.4rem;
-  padding: 0.45rem 0.5rem;
-  border: 1px solid var(--sapList_BorderColor);
-  border-left-width: 3px;
-  border-radius: 0.25rem;
-  background: var(--sapGroup_ContentBackground);
+  width: calc(100% - 0.25rem);
+  margin-left: 0.25rem;
+  gap: 0.15rem;
+  padding: 0.2rem 0 0.2rem 0.35rem;
+  border-left: 2px solid var(--sapList_BorderColor);
 }
 .cmConstraintGroupHeader {
   gap: 0.5rem;
-  padding-bottom: 0.25rem;
-  border-bottom: 1px solid var(--sapList_BorderColor);
+  min-height: 1.75rem;
+  padding: 0.1rem 0;
 }
 .cmConstraintActionRows {
   gap: 0;
