@@ -15,6 +15,7 @@ import {
 } from "../webapp/model/configuration.ts";
 import {
   activeConstraintEffects,
+  reconcileConstrainedSelection,
   createConstraintRule,
   createConstraintRuleSamples,
   constraintOperatorsFor,
@@ -293,6 +294,19 @@ test("constraint preview reports triggered REQUIRE and EXCLUDE conflicts without
     activeConstraintEffects(rules, features, validValues).map((effect) => effect.status),
     ["satisfied", "satisfied"]
   );
+});
+
+test("constraint preview auto-selects unique forced values and clears ambiguous selections", () => {
+  const allowed = new Set(["PREMIUM"]);
+  assert.equal(reconcileConstrainedSelection("STANDARD", allowed, true), "PREMIUM");
+  assert.equal(reconcileConstrainedSelection(undefined, allowed, true), "PREMIUM");
+  assert.equal(reconcileConstrainedSelection("PREMIUM", allowed, true), "PREMIUM");
+  assert.equal(reconcileConstrainedSelection("STANDARD", new Set(["PREMIUM", "LUXURY"]), true), "");
+  assert.deepEqual(reconcileConstrainedSelection(["A", "B", "C"], new Set(["A", "C"]), true), [
+    "A",
+    "C"
+  ]);
+  assert.equal(reconcileConstrainedSelection("STANDARD", undefined, true), "STANDARD");
 });
 
 test("constraint preview keeps missing requirements pending and evaluates numeric restrictions", () => {

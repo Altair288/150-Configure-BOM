@@ -110,6 +110,26 @@ export interface ConstraintRulePreview {
   actions: ConstraintActionPreview[];
 }
 
+export function reconcileConstrainedSelection(
+  value: unknown,
+  availableValues: ReadonlySet<string> | undefined,
+  selectOnlyAvailable = false
+): string | string[] | undefined {
+  if (value === undefined || value === null)
+    return selectOnlyAvailable && availableValues?.size === 1 ? [...availableValues][0] : undefined;
+  const selectedValues = (Array.isArray(value) ? value : [value]).map(String);
+  if (!availableValues) return Array.isArray(value) ? selectedValues : (selectedValues[0] ?? "");
+  const retainedValues = selectedValues.filter((selected) => availableValues.has(selected));
+  if (
+    selectOnlyAvailable &&
+    !Array.isArray(value) &&
+    retainedValues.length === 0 &&
+    availableValues.size === 1
+  )
+    return [...availableValues][0];
+  return Array.isArray(value) ? retainedValues : (retainedValues[0] ?? "");
+}
+
 const operatorSymbols: Record<ConstraintOperator, string> = {
   EQUALS: "==",
   NOT_EQUALS: "!=",

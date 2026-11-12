@@ -21,7 +21,11 @@ import {
   validateContext,
   validateValue
 } from "../../model/configuration";
-import { activeConstraintEffects, formatConstraintCondition } from "../../model/constraintRules";
+import {
+  activeConstraintEffects,
+  reconcileConstrainedSelection,
+  formatConstraintCondition
+} from "../../model/constraintRules";
 import type {
   ConstraintExpression,
   ConstraintOperator,
@@ -258,24 +262,45 @@ export default class ConfigurationPreviewDialog {
 
     const updatePreview = (): void => {
       fields.forEach((field, code) => values.set(code, field.getValue()));
-      const effects = activeConstraintEffects(this.options.rules, features, values);
-      const effectsByFeature = new Map<string, ConstraintPreviewEffect[]>();
-      for (const effect of effects)
+
+      for (let pass = 0; pass <= fields.size; pass += 1) {
+        const effects = activeConstraintEffects(this.options.rules, features, values);
+        const effectsByFeature = new Map<string, ConstraintPreviewEffect[]>();
+        for (const effect of effects)
+          for (const predicate of collectPreviewPredicates(effect.target)) {
+            const current = effectsByFeature.get(predicate.feature) ?? [];
+            current.push(effect);
+            effectsByFeature.set(predicate.feature, current);
+          }
+
+        let selectionChanged = false;
+        fields.forEach((field, code) => {
+          const previousValue = field.getValue();
+          const fieldEffects = effectsByFeature.get(code) ?? [];
+          const allowedValues = intersectAllowedValues(
+            fieldEffects
+              .map((effect) => previewOptionValues(effect, field.definition))
+              .filter((set): set is Set<string> => set !== undefined)
+          );
+          field.setAvailableValues(allowedValues);
+          const value = field.getValue();
+          values.set(code, value);
+          if (JSON.stringify(value) !== JSON.stringify(previousValue)) selectionChanged = true;
+        });
+        if (!selectionChanged) break;
+      }
+
+      const currentEffects = activeConstraintEffects(this.options.rules, features, values);
+      const currentEffectsByFeature = new Map<string, ConstraintPreviewEffect[]>();
+      for (const effect of currentEffects)
         for (const predicate of collectPreviewPredicates(effect.target)) {
-          const current = effectsByFeature.get(predicate.feature) ?? [];
+          const current = currentEffectsByFeature.get(predicate.feature) ?? [];
           current.push(effect);
-          effectsByFeature.set(predicate.feature, current);
+          currentEffectsByFeature.set(predicate.feature, current);
         }
 
       fields.forEach((field, code) => {
-        const fieldEffects = effectsByFeature.get(code) ?? [];
-        const allowedValues = intersectAllowedValues(
-          fieldEffects
-            .map((effect) => previewOptionValues(effect, field.definition))
-            .filter((set): set is Set<string> => set !== undefined)
-        );
-        field.setAvailableValues(allowedValues);
-
+        const fieldEffects = currentEffectsByFeature.get(code) ?? [];
         const value = field.getValue();
         const domainErrors = hasPreviewSelection(value)
           ? validateValue(field.definition, value, false)
@@ -426,12 +451,10 @@ export default class ConfigurationPreviewDialog {
       setValue = (value) => input.setSelectedKeys(value ? value.split(",") : []);
       setAvailableValues = (codes) => {
         const current = getValue();
-        const selected = new Set(Array.isArray(current) ? current.map(String) : []);
-        input
-          .getItems()
-          .forEach((item) =>
-            item.setEnabled(!codes || codes.has(item.getKey()) || selected.has(item.getKey()))
-          );
+        const availableSelection = reconcileConstrainedSelection(current, codes);
+        const retained = Array.isArray(availableSelection) ? availableSelection : [];
+        if (JSON.stringify(current) !== JSON.stringify(retained)) input.setSelectedKeys(retained);
+        input.getItems().forEach((item) => item.setEnabled(!codes || codes.has(item.getKey())));
       };
       setValueState = (state, message) => {
         input.setValueState(state);
@@ -454,10 +477,15 @@ export default class ConfigurationPreviewDialog {
         setValueState = (state, message) =>
           input.setTooltip(state === "None" ? "" : (message ?? ""));
         setAvailableValues = (codes) => {
-          const selected = String(getValue() ?? "");
+          const current = String(getValue() ?? "");
+          const retained = reconcileConstrainedSelection(current, codes, true);
+          if (current !== String(retained ?? "")) {
+            const index = allowed.findIndex((entry) => entry.code === retained);
+            input.setSelectedIndex(index);
+          }
           input.getButtons().forEach((button, index) => {
             const code = allowed[index]?.code ?? "";
-            button.setEnabled(!codes || codes.has(code) || code === selected);
+            button.setEnabled(!codes || codes.has(code));
           });
         };
       } else {
@@ -475,12 +503,12 @@ export default class ConfigurationPreviewDialog {
         setValue = (value) => input.setSelectedKey(value);
         setAvailableValues = (codes) => {
           const selected = String(getValue() ?? "");
+          const retained = reconcileConstrainedSelection(selected, codes, true);
+          if (selected !== String(retained ?? "")) input.setSelectedKey(String(retained ?? ""));
           input
             .getItems()
             .forEach((item) =>
-              item.setEnabled(
-                !item.getKey() || !codes || codes.has(item.getKey()) || item.getKey() === selected
-              )
+              item.setEnabled(!item.getKey() || !codes || codes.has(item.getKey()))
             );
         };
         setValueState = (state, message) => {
@@ -516,12 +544,12 @@ export default class ConfigurationPreviewDialog {
         setValue = (value) => input.setSelectedKey(value);
         setAvailableValues = (codes) => {
           const selected = String(getValue() ?? "");
+          const retained = reconcileConstrainedSelection(selected, codes, true);
+          if (selected !== String(retained ?? "")) input.setSelectedKey(String(retained ?? ""));
           input
             .getItems()
             .forEach((item) =>
-              item.setEnabled(
-                !item.getKey() || !codes || codes.has(item.getKey()) || item.getKey() === selected
-              )
+              item.setEnabled(!item.getKey() || !codes || codes.has(item.getKey()))
             );
         };
         setValueState = (state, message) => {
