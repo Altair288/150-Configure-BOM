@@ -55,7 +55,7 @@ export interface ConfigurationPreviewOptions {
   store: ConfigurationStore;
   context: ConfigurationContext;
   profile: ConfigurationProfile;
-  rules: ConstraintRule[];
+  rules?: ConstraintRule[];
   getHost: () => DialogHost | undefined;
 }
 
@@ -258,7 +258,7 @@ export default class ConfigurationPreviewDialog {
       fields.forEach((field, code) => values.set(code, field.getValue()));
 
       for (let pass = 0; pass <= fields.size; pass += 1) {
-        const effects = activeConstraintEffects(this.options.rules, features, values);
+        const effects = activeConstraintEffects(this.options.rules ?? [], features, values);
         const effectsByFeature = new Map<string, ConstraintPreviewEffect[]>();
         for (const effect of effects)
           for (const predicate of collectPreviewPredicates(effect.target)) {
@@ -284,7 +284,7 @@ export default class ConfigurationPreviewDialog {
         if (!selectionChanged) break;
       }
 
-      const currentEffects = activeConstraintEffects(this.options.rules, features, values);
+      const currentEffects = activeConstraintEffects(this.options.rules ?? [], features, values);
       const currentEffectsByFeature = new Map<string, ConstraintPreviewEffect[]>();
       for (const effect of currentEffects)
         for (const predicate of collectPreviewPredicates(effect.target)) {

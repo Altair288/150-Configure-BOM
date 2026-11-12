@@ -24,8 +24,11 @@ type ScopeRow = {
   name: string;
   code: string;
   type: string;
+  typeLabel?: string;
   market: string;
+  marketLabel?: string;
   status: string;
+  statusLabel?: string;
   description?: string;
   editable?: boolean;
   id?: string;
@@ -91,14 +94,20 @@ export default class ConfigurationScopeView {
         name: groupName,
         code: groupDefinition?.code ?? "",
         type: "Product Model Group",
+        typeLabel: tr("Product Model Group"),
         market: "",
+        marketLabel: "",
         status: "",
+        statusLabel: "",
         editable: false,
         children: products
           .filter((product) => (product.group || "Ungrouped") === groupName)
           .map((product) => ({
             ...product,
             type: product.productType,
+            typeLabel: tr(product.productType),
+            marketLabel: tr(product.market),
+            statusLabel: tr(product.status),
             editable: true,
             children: []
           }))
@@ -113,11 +122,16 @@ export default class ConfigurationScopeView {
       ])
     ];
     const lifecycleOptions = ["In Development", "Released", "Retired"];
-    const scopeCell = (key: string, canEdit = true, options?: string[]): Control => {
+    const scopeCell = (
+      key: string,
+      canEdit = true,
+      options?: string[],
+      displayKey = key
+    ): Control => {
       const items: Control[] = [
         grow(
           new Text({
-            text: `{${key}}`,
+            text: `{${displayKey}}`,
             wrapping: false,
             visible: canEdit ? "{= !${/scopeEditMode} || !${editable}}" : "{= true}"
           })
@@ -131,7 +145,7 @@ export default class ConfigurationScopeView {
                   selectedKey: `{${key}}`,
                   visible: "{= ${/scopeEditMode} && ${editable}}",
                   width: "100%",
-                  items: options.map((option) => new Item({ key: option, text: option }))
+                  items: options.map((option) => new Item({ key: option, text: tr(option) }))
                 })
               )
             : grow(
@@ -194,11 +208,11 @@ export default class ConfigurationScopeView {
               label: new Label({ text: label }),
               template:
                 key === "type"
-                  ? scopeCell(key, false)
+                  ? scopeCell(key, false, undefined, "typeLabel")
                   : key === "market"
-                    ? scopeCell(key, true, marketOptions)
+                    ? scopeCell(key, true, marketOptions, "marketLabel")
                     : key === "status"
-                      ? scopeCell(key, true, lifecycleOptions)
+                      ? scopeCell(key, true, lifecycleOptions, "statusLabel")
                       : scopeCell(key),
               width,
               showSortMenuEntry: true,
@@ -226,8 +240,11 @@ export default class ConfigurationScopeView {
           name: productFamily.name,
           code: productFamily.code,
           type: "Product Family",
+          typeLabel: tr("Product Family"),
           market: "",
+          marketLabel: "",
           status: "",
+          statusLabel: "",
           editable: false,
           children: rows
         }

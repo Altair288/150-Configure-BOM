@@ -44,7 +44,6 @@
           <tnt:NavigationListItem key="products" text="{i18n>navProducts}" icon="sap-icon://product" />
           <tnt:NavigationListItem key="bom" text="{i18n>navBom}" icon="sap-icon://tree" />
           <tnt:NavigationListItem key="configurator" text="{i18n>navConfigurator}" icon="sap-icon://action-settings" />
-          <tnt:NavigationListItem key="rules" text="{i18n>navRules}" icon="sap-icon://decision" />
           <tnt:NavigationListItem key="viewer" text="{i18n>navViewer}" icon="sap-icon://dimension" />
         </tnt:NavigationList>
       </tnt:SideNavigation>

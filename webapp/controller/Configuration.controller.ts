@@ -57,7 +57,8 @@ import {
   copyContext,
   publishDefinition,
   normalizeFeatureModelStore,
-  ensureConstraintSampleFeatures
+  ensureConstraintSampleFeatures,
+  ensureChineseSUVMockData
 } from "../model/configuration";
 import type {
   ConfigurationStore,
@@ -144,13 +145,15 @@ export default class ConfigurationController extends BaseController {
       setI18nBundle(
         bundle as { getText?: (resourceKey: string) => string | undefined } | undefined
       );
-    this.store = ensureConstraintSampleFeatures(createSeed());
+    this.store = ensureChineseSUVMockData(ensureConstraintSampleFeatures(createSeed()));
     const saved = localStorage.getItem(storageKey);
     if (saved) {
       try {
         const parsed = normalizeFeatureModelStore(JSON.parse(saved));
         if (validateStore(parsed).length) throw new Error();
-        const featureCompleteStore = ensureConstraintSampleFeatures(parsed);
+        const featureCompleteStore = ensureChineseSUVMockData(
+          ensureConstraintSampleFeatures(parsed)
+        );
         const beforeLoadTestData = featureCompleteStore.contexts.length;
         this.store = ensureLoadTestContexts(featureCompleteStore);
         localStorage.setItem(storageKey, JSON.stringify(this.store));
@@ -1882,18 +1885,11 @@ export default class ConfigurationController extends BaseController {
   }
   private preview(rules?: ConstraintRule[]): void {
     const context = this.currentContext();
-    const features = contextReferences(this.store, context.id).map((reference) =>
-      resolveDefinition(this.store, reference)
-    );
-    const workingRules =
-      this.ruleWorkspaceContextId === context.id
-        ? this.ruleWorkspaceView?.rulesForPreview()
-        : undefined;
     new ConfigurationPreviewDialog({
       store: this.store,
       context,
       profile: this.currentProfile(),
-      rules: rules ?? workingRules ?? this.constraintRuleRepository.list(context.id, features),
+      rules,
       getHost: () => this.getView()
     }).open();
   }

@@ -15,7 +15,6 @@ export default class AppController extends BaseController {
     bom: "bom",
     configurator: "configurator",
     products: "product",
-    rules: "rules",
     viewer: "viewer"
   };
 
@@ -75,6 +74,10 @@ export default class AppController extends BaseController {
 
     if (routeName === "product") {
       selectedNavigationKey = "products";
+    }
+
+    if (routeName === "rules") {
+      selectedNavigationKey = "configuration";
     }
 
     if (routeName === "bom" || routeName === "bomDetail") {

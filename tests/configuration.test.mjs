@@ -11,7 +11,8 @@ import {
   copyContext,
   contextReferences,
   definitionUsage,
-  ensureConstraintSampleFeatures
+  ensureConstraintSampleFeatures,
+  ensureChineseSUVMockData
 } from "../webapp/model/configuration.ts";
 import {
   appendConstraintPredicate,
@@ -34,6 +35,134 @@ test("seed vocabulary has valid links and all ten data types", () => {
   assert.equal(definitionUsage(store, "def-VEHICLE_REGION").length, 7);
 });
 
+test("SUV seed uses detailed Chinese feature-model data", () => {
+  const store = createSeed();
+  const context = store.contexts.find((item) => item.id === "ctx-SUV");
+  const features = contextReferences(store, "ctx-SUV").map((reference) =>
+    resolveDefinition(store, reference)
+  );
+  const products = store.products.filter((product) => product.familyId === context.productFamilyId);
+
+  assert.equal(context.name, "SUV 系列配置");
+  assert.ok(features.length >= 50);
+  assert.ok(features.every((feature) => /[\u4e00-\u9fff]/.test(feature.name)));
+  assert.ok(products.every((product) => product.productType === "Product Model"));
+  assert.ok(products.every((product) => product.status === "In Development"));
+  assert.deepEqual(
+    products.map((product) => product.market),
+    ["CN", "CN", "JP", "JP", "Global", "Global"]
+  );
+  assert.ok(
+    store.groups.some((group) => group.contextId === context.id && group.name === "安全与驾驶辅助")
+  );
+  assert.ok(
+    store.groups.some((group) => group.contextId === context.id && group.name === "底盘与操控")
+  );
+  assert.equal(features.find((feature) => feature.code === "SUV_BODY_COLOR").name, "车身颜色");
+  assert.deepEqual(
+    features
+      .find((feature) => feature.code === "SUV_BODY_COLOR")
+      .domain.values.map((value) => value.value),
+    ["雪山白", "曜石黑", "星河灰", "远峰蓝", "赤霞橙"]
+  );
+  assert.equal(features.find((feature) => feature.code === "SUNROOF_TYPE").name, "天窗类型");
+  assert.equal(
+    features.find((feature) => feature.code === "SUNROOF_TYPE").domain.values[1].value,
+    "全景天窗"
+  );
+  assert.equal(
+    features.find((feature) => feature.code === "PLATFORM").domain.referenceTarget,
+    "整车平台目录"
+  );
+});
+
+test("SUV mock migration is idempotent and preserves custom edits and other contexts", () => {
+  const legacy = createSeed();
+  const addedFeatureCodes = new Set(
+    legacy.definitions
+      .filter((definition) => definition.code.startsWith("SUV_"))
+      .map((definition) => definition.code)
+  );
+  const addedFeatureIds = new Set(
+    legacy.definitions
+      .filter((definition) => addedFeatureCodes.has(definition.code))
+      .map((definition) => definition.id)
+  );
+  const addedFamilyIds = new Set(
+    legacy.references
+      .filter((reference) => addedFeatureIds.has(reference.featureDefinitionId))
+      .map((reference) => reference.familyId)
+  );
+  legacy.references = legacy.references.filter(
+    (reference) => !addedFamilyIds.has(reference.familyId)
+  );
+  legacy.families = legacy.families.filter((family) => !addedFamilyIds.has(family.id));
+  legacy.definitions = legacy.definitions.filter(
+    (definition) => !addedFeatureCodes.has(definition.code)
+  );
+  legacy.groups = legacy.groups.filter(
+    (group) => !["CHASSIS", "SAFETY", "COMFORT"].includes(group.code)
+  );
+
+  const suvReferences = contextReferences(legacy, "ctx-SUV");
+  const suvDefinitionIds = new Set(suvReferences.map((reference) => reference.featureDefinitionId));
+  for (const reference of suvReferences) {
+    if (
+      legacy.definitions.some(
+        (definition) => definition.id === reference.featureDefinitionId && definition.version === 1
+      )
+    )
+      reference.definitionVersion = 1;
+  }
+  legacy.definitions = legacy.definitions.filter(
+    (definition) => !suvDefinitionIds.has(definition.id) || definition.version === 1
+  );
+  legacy.contexts.find((context) => context.id === "ctx-SUV").name = "SUV Series Configuration";
+  legacy.groups.find((group) => group.id === "SUV-INTERIOR").name = "Interior";
+  const seatFamily = legacy.families.find((family) => family.id === "SUV-INTERIOR-FAM_SEAT");
+  seatFamily.name = "Seat Material";
+  seatFamily.displayName = "Seat Material";
+  seatFamily.description = "What material should the seats use?";
+  seatFamily.businessQuestion = "What material should the seats use?";
+  const sunroofReference = suvReferences.find(
+    (reference) => resolveDefinition(legacy, reference).code === "SUNROOF_TYPE"
+  );
+  resolveDefinition(legacy, sunroofReference).name = "自定义天窗名称";
+
+  const migrated = ensureChineseSUVMockData(legacy);
+  const migratedAgain = ensureChineseSUVMockData(migrated);
+  const driveReference = contextReferences(migrated, "ctx-SUV").find(
+    (reference) => resolveDefinition(migrated, reference).code === "DRIVE_TYPE"
+  );
+  const sedanDrive = contextReferences(migrated, "ctx-SEDAN").find(
+    (reference) => resolveDefinition(migrated, reference).code === "DRIVE_TYPE"
+  );
+
+  assert.equal(migrated.contexts.find((context) => context.id === "ctx-SUV").name, "SUV 系列配置");
+  assert.equal(resolveDefinition(migrated, driveReference).name, "驱动形式");
+  assert.equal(resolveDefinition(migrated, sedanDrive).name, "Drive Type");
+  assert.equal(
+    resolveDefinition(
+      migrated,
+      contextReferences(migrated, "ctx-SUV").find(
+        (reference) => resolveDefinition(migrated, reference).code === "SUV_BODY_COLOR"
+      )
+    ).name,
+    "车身颜色"
+  );
+  assert.equal(
+    resolveDefinition(
+      migrated,
+      contextReferences(migrated, "ctx-SUV").find(
+        (reference) => resolveDefinition(migrated, reference).code === "SUNROOF_TYPE"
+      )
+    ).name,
+    "自定义天窗名称"
+  );
+  assert.deepEqual(migratedAgain, migrated);
+  assert.deepEqual(validateStore(migrated), []);
+});
+
 test("publishing a reusable definition never changes existing references", () => {
   const store = createSeed();
   const ref = store.references.find((r) => r.featureDefinitionId === "def-DRIVE_TYPE");
@@ -42,9 +171,9 @@ test("publishing a reusable definition never changes existing references", () =>
   edited.name = "Drive Type revised";
   edited.domain.values.pop();
   const next = publishDefinition(store, edited);
-  assert.equal(next.version, 2);
+  assert.equal(next.version, original.version + 1);
   assert.deepEqual(resolveDefinition(store, ref), original);
-  ref.definitionVersion = 2;
+  ref.definitionVersion = next.version;
   assert.equal(resolveDefinition(store, ref).name, "Drive Type revised");
   assert.deepEqual(validateStore(store), []);
 });
