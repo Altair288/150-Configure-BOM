@@ -11,17 +11,19 @@ import MessageStrip from "sap/m/MessageStrip";
 import MessageToast from "sap/m/MessageToast";
 import MultiComboBox from "sap/m/MultiComboBox";
 import ObjectStatus from "sap/m/ObjectStatus";
-import OverflowToolbar from "sap/m/OverflowToolbar";
+import OverflowToolbarLayoutData from "sap/m/OverflowToolbarLayoutData";
 import RadioButton from "sap/m/RadioButton";
 import RadioButtonGroup from "sap/m/RadioButtonGroup";
 import SegmentedButton from "sap/m/SegmentedButton";
 import SegmentedButtonItem from "sap/m/SegmentedButtonItem";
 import Select from "sap/m/Select";
 import Text from "sap/m/Text";
-import ToolbarSpacer from "sap/m/ToolbarSpacer";
 import VBox from "sap/m/VBox";
 import Control from "sap/ui/core/Control";
 import FlexItemData from "sap/m/FlexItemData";
+import ObjectPageLayout from "sap/uxap/ObjectPageLayout";
+import ObjectPageSection from "sap/uxap/ObjectPageSection";
+import ObjectPageSubSection from "sap/uxap/ObjectPageSubSection";
 import type { Input$LiveChangeEvent } from "sap/m/Input";
 import type { MultiComboBox$SelectionFinishEvent } from "sap/m/MultiComboBox";
 import type { SegmentedButton$SelectionChangeEvent } from "sap/m/SegmentedButton";
@@ -187,17 +189,15 @@ function intersectAllowedValues(sets: Set<string>[]): Set<string> | undefined {
 export default class ConfigurationRuleDesignerView {
   private readonly options: ConfigurationRuleDesignerOptions;
   private readonly featuresByCode: Map<string, FeatureDefinition>;
-  private readonly featureForm = new Form({
-    editable: true,
-    layout: new ColumnLayout({
-      columnsM: 1,
-      columnsL: 1,
-      columnsXL: 1
-    })
-  }).addStyleClass("cmConstraintDesignerForm");
+  private readonly objectPage = new ObjectPageLayout({
+    showAnchorBar: true,
+    showAnchorBarPopover: false,
+    upperCaseAnchorBar: false,
+    showHeaderContent: false,
+    useIconTabBar: false,
+    enableLazyLoading: false
+  }).addStyleClass("cmConstraintObjectPage");
   private readonly fields = new Map<string, DesignerField>();
-  private readonly actionButtons = new Map<ConstraintActionType, Button>();
-  private readonly conditionButtons: Button[] = [];
   private readonly values = new Map<string, unknown>();
   private readonly conditionDraftHost = new VBox({ width: "100%" });
   private readonly actionDraftHost = new VBox({ width: "100%" });
@@ -212,7 +212,10 @@ export default class ConfigurationRuleDesignerView {
     visible: false
   });
   private readonly modeSelector: SegmentedButton;
-  private cancelSelectionButton?: Button;
+  private readonly conditionSelect: Select;
+  private readonly actionSelect: Select;
+  private readonly cancelSelectionButton: Button;
+  private toolbarVisible = true;
   private currentRule: ConstraintRule;
   private isNewDraft: boolean;
   private mode: DesignerMode = "design";
@@ -233,6 +236,7 @@ export default class ConfigurationRuleDesignerView {
     this.modelReadiness = validateContext(options.store, options.context.id);
     this.mode = options.context.status === "Draft" ? "design" : "configure";
     this.modeSelector = new SegmentedButton({
+      width: "10rem",
       selectedKey: this.mode,
       items: [
         new SegmentedButtonItem({ key: "design", text: tr("cmConstraintDesignMode") }),
@@ -241,39 +245,62 @@ export default class ConfigurationRuleDesignerView {
       selectionChange: (event: SegmentedButton$SelectionChangeEvent) =>
         this.setMode(event.getParameter("selectedKey") as DesignerMode)
     }).addStyleClass("cmConstraintDesignerModeSelector");
+    this.conditionSelect = new Select({
+      width: "7.5rem",
+      selectedKey: "",
+      items: [
+        new Item({ key: "", text: tr("cmConstraintConditionMenu") }),
+        new Item({ key: "AND", text: tr("cmConstraintAddConditionAnd") }),
+        new Item({ key: "OR", text: tr("cmConstraintAddConditionOr") })
+      ],
+      change: (event: Select$ChangeEvent) => {
+        const connector = event.getSource().getSelectedKey() as ConditionConnector;
+        event.getSource().setSelectedKey("");
+        if (connector === "AND" || connector === "OR") this.startCondition(connector);
+      }
+    }).addStyleClass("cmConstraintDesignerConditionMenu");
+    this.conditionSelect.setLayoutData(
+      new OverflowToolbarLayoutData({ priority: "NeverOverflow" })
+    );
+    this.actionSelect = new Select({
+      width: "7rem",
+      selectedKey: "",
+      items: [
+        new Item({ key: "", text: tr("cmConstraintActionMenu") }),
+        ...(["REQUIRE", "EXCLUDE", "RESTRICT", "SET", "DERIVE"] as const).map(
+          (type) => new Item({ key: type, text: tr(actionLabels[type]) })
+        )
+      ],
+      change: (event: Select$ChangeEvent) => {
+        const action = event.getSource().getSelectedKey() as ConstraintActionType | "";
+        event.getSource().setSelectedKey("");
+        if (action) this.startAction(action);
+      }
+    }).addStyleClass("cmConstraintDesignerActionMenu");
+    this.actionSelect.setLayoutData(new OverflowToolbarLayoutData({ priority: "NeverOverflow" }));
+    this.cancelSelectionButton = new Button({
+      text: tr("cmConstraintCancelSelection"),
+      icon: "sap-icon://decline",
+      type: "Transparent",
+      visible: false,
+      press: () => this.cancelSelection()
+    }).addStyleClass("cmConstraintDesignerCancel");
     this.buildForm();
     this.renderRelations();
     this.updatePreview();
   }
 
-  public build(): VBox {
-    const toolbar = new OverflowToolbar({
-      content: [
-        this.modeSelector,
-        new ToolbarSpacer(),
-        this.createConditionButton("cmConstraintAddConditionAnd", "AND"),
-        this.createConditionButton("cmConstraintAddConditionOr", "OR"),
-        ...(["REQUIRE", "EXCLUDE", "RESTRICT", "SET", "DERIVE"] as const).map((type) => {
-          const actionButton = new Button({
-            text: tr(actionLabels[type]),
-            type: type === "REQUIRE" ? "Emphasized" : "Transparent",
-            enabled: false,
-            press: () => this.startAction(type)
-          });
-          this.actionButtons.set(type, actionButton);
-          return actionButton;
-        }),
-        (this.cancelSelectionButton = new Button({
-          text: tr("cmConstraintCancelSelection"),
-          icon: "sap-icon://decline",
-          type: "Transparent",
-          visible: this.stage !== "idle",
-          press: () => this.cancelSelection()
-        })).addStyleClass("cmConstraintDesignerCancel")
-      ]
-    }).addStyleClass("cmConstraintDesignerToolbar");
+  public buildToolbarItems(): Control[] {
     this.updateToolbarState();
+    return [this.modeSelector, this.conditionSelect, this.actionSelect, this.cancelSelectionButton];
+  }
 
+  public setToolbarVisible(visible: boolean): void {
+    this.toolbarVisible = visible;
+    this.updateToolbarState();
+  }
+
+  public build(): VBox {
     const scrollContent = new VBox({
       width: "100%",
       fitContainer: true,
@@ -283,18 +310,13 @@ export default class ConfigurationRuleDesignerView {
         this.actionDraftHost,
         this.validationHost,
         this.previewFeedbackHost,
-        this.featureForm
+        this.objectPage
       ]
     }).addStyleClass("cmConstraintDesignerContent");
-    scrollContent.setLayoutData(
-      new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%" })
+    this.objectPage.setLayoutData(
+      new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
     );
-    return new VBox({
-      width: "100%",
-      height: "100%",
-      fitContainer: true,
-      items: [toolbar, scrollContent]
-    }).addStyleClass("cmConstraintDesigner");
+    return scrollContent.addStyleClass("cmConstraintDesigner");
   }
 
   public setRule(rule: ConstraintRule, isNewDraft: boolean): void {
@@ -323,10 +345,14 @@ export default class ConfigurationRuleDesignerView {
     this.setMode("configure");
   }
 
+  public refreshLayout(): void {
+    this.objectPage.invalidate();
+  }
+
   private buildForm(): void {
     this.fields.clear();
     this.values.clear();
-    this.featureForm.destroyFormContainers();
+    this.objectPage.destroySections();
     const groups = this.options.store.groups
       .filter((group) => group.contextId === this.options.context.id)
       .sort((left, right) => left.sort - right.sort);
@@ -377,10 +403,34 @@ export default class ConfigurationRuleDesignerView {
         }
       }
       if (elements.length)
-        this.featureForm.addFormContainer(
-          new FormContainer({
+        this.objectPage.addSection(
+          new ObjectPageSection({
             title: group.name,
-            formElements: elements
+            titleUppercase: false,
+            subSections: [
+              new ObjectPageSubSection({
+                title: group.name,
+                titleUppercase: false,
+                blocks: [
+                  new Form({
+                    editable: true,
+                    width: "auto",
+                    layout: new ColumnLayout({
+                      columnsM: 1,
+                      columnsL: 1,
+                      columnsXL: 1
+                    }),
+                    formContainers: [
+                      new FormContainer({
+                        formElements: elements
+                      })
+                    ]
+                  }).addStyleClass(
+                    "cmConstraintDesignerForm sapUxAPObjectPageSubSectionAlignContent"
+                  )
+                ]
+              })
+            ]
           })
         );
     }
@@ -568,7 +618,7 @@ export default class ConfigurationRuleDesignerView {
       )
     );
     this.stageStatus.setVisible(true);
-    this.cancelSelectionButton?.setVisible(true);
+    this.updateToolbarState();
   }
 
   private startAction(type: ConstraintActionType): void {
@@ -599,7 +649,7 @@ export default class ConfigurationRuleDesignerView {
       )
     );
     this.stageStatus.setVisible(true);
-    this.cancelSelectionButton?.setVisible(true);
+    this.updateToolbarState();
   }
 
   private cancelSelection(): void {
@@ -610,7 +660,7 @@ export default class ConfigurationRuleDesignerView {
     this.conditionDraftHost.destroyItems();
     this.actionDraftHost.destroyItems();
     this.stageStatus.setVisible(false);
-    this.cancelSelectionButton?.setVisible(false);
+    this.updateToolbarState();
   }
 
   private beginConditionDraft(featureCode: string, connector: ConditionConnector): void {
@@ -633,7 +683,7 @@ export default class ConfigurationRuleDesignerView {
     this.lastChangedFeatureCode = undefined;
     this.renderConditionDraft();
     this.stage = "idle";
-    this.cancelSelectionButton?.setVisible(false);
+    this.updateToolbarState();
     this.stageStatus.setType("Information");
     this.stageStatus.setText(tr("cmConstraintConditionDraftReady"));
     this.stageStatus.setVisible(true);
@@ -705,17 +755,6 @@ export default class ConfigurationRuleDesignerView {
     );
   }
 
-  private createConditionButton(textKey: string, connector: ConditionConnector): Button {
-    const control = new Button({
-      text: tr(textKey),
-      icon: "sap-icon://add",
-      type: "Transparent",
-      press: () => this.startCondition(connector)
-    });
-    this.conditionButtons.push(control);
-    return control;
-  }
-
   private addConditionDraft(value: unknown): void {
     const draft = this.conditionDraft;
     if (!draft || !this.options.canEdit()) return;
@@ -781,7 +820,7 @@ export default class ConfigurationRuleDesignerView {
     };
     this.lastChangedFeatureCode = undefined;
     this.stage = "idle";
-    this.cancelSelectionButton?.setVisible(false);
+    this.updateToolbarState();
     this.renderActionDraft();
     this.stageStatus.setType("Information");
     this.stageStatus.setText(tr("cmConstraintTargetDraftReady"));
@@ -975,14 +1014,18 @@ export default class ConfigurationRuleDesignerView {
   }
 
   private updateToolbarState(): void {
-    const canDesign = this.mode === "design" && this.options.context.status === "Draft";
+    const canDesign =
+      this.toolbarVisible && this.mode === "design" && this.options.context.status === "Draft";
     const hasConfiguredCondition =
       collectConstraintPredicates(this.currentRule.ast.condition).length > 0 &&
       (!this.isNewDraft || this.newDraftHasCondition);
-    this.conditionButtons.forEach((control) => control.setEnabled(canDesign));
-    this.actionButtons.forEach((control) =>
-      control.setEnabled(canDesign && hasConfiguredCondition)
-    );
+    const canSelect =
+      canDesign && this.stage === "idle" && !this.conditionDraft && !this.actionDraft;
+    this.modeSelector.setVisible(this.toolbarVisible);
+    this.conditionSelect.setVisible(this.toolbarVisible);
+    this.conditionSelect.setEnabled(canSelect);
+    this.actionSelect.setVisible(this.toolbarVisible);
+    this.actionSelect.setEnabled(canSelect && hasConfiguredCondition);
     this.cancelSelectionButton?.setVisible(canDesign && this.stage !== "idle");
   }
 

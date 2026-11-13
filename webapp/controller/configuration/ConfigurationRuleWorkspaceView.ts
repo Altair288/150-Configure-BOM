@@ -12,6 +12,9 @@ import MessageToast from "sap/m/MessageToast";
 import MultiComboBox from "sap/m/MultiComboBox";
 import ObjectStatus from "sap/m/ObjectStatus";
 import OverflowToolbar from "sap/m/OverflowToolbar";
+import OverflowToolbarLayoutData from "sap/m/OverflowToolbarLayoutData";
+import SegmentedButton from "sap/m/SegmentedButton";
+import SegmentedButtonItem from "sap/m/SegmentedButtonItem";
 import Select from "sap/m/Select";
 import StandardListItem from "sap/m/StandardListItem";
 import type { Select$ChangeEvent } from "sap/m/Select";
@@ -19,6 +22,7 @@ import type { IconTabBar$SelectEvent } from "sap/m/IconTabBar";
 import type { ListBase$ItemPressEvent } from "sap/m/ListBase";
 import type { InputBase$ChangeEvent } from "sap/m/InputBase";
 import type { MultiComboBox$SelectionFinishEvent } from "sap/m/MultiComboBox";
+import type { SegmentedButton$SelectionChangeEvent } from "sap/m/SegmentedButton";
 import TextArea from "sap/m/TextArea";
 import Text from "sap/m/Text";
 import Title from "sap/m/Title";
@@ -26,6 +30,7 @@ import ToolbarSpacer from "sap/m/ToolbarSpacer";
 import Item from "sap/ui/core/Item";
 import VBox from "sap/m/VBox";
 import JSONModel from "sap/ui/model/json/JSONModel";
+import Control from "sap/ui/core/Control";
 import type {
   ConfigurationContext,
   ConfigurationProfile,
@@ -149,9 +154,10 @@ export default class ConfigurationRuleWorkspaceView {
   private assistantRunId = 0;
   private pendingAmbiguity?: ConstraintAIResponse["ambiguity"];
   private readonly ruleByListItemId = new Map<string, string>();
-  private modeSelector?: IconTabBar;
+  private modeSelector?: SegmentedButton;
   private advancedModeSelector?: IconTabBar;
   private designerView?: ConfigurationRuleDesignerView;
+  private designerToolbarItems: Control[] = [];
   private ruleNameInput?: Input;
   private blueprintNeedsLoad = true;
   private blueprintSelection?: BlueprintPredicateSelection;
@@ -183,9 +189,13 @@ export default class ConfigurationRuleWorkspaceView {
 
   public build(): VBox {
     const ruleNavigation = this.buildRuleNavigation();
-    ruleNavigation.setLayoutData(new FlexItemData({ growFactor: 0, shrinkFactor: 0 }));
+    ruleNavigation.setLayoutData(
+      new FlexItemData({ growFactor: 0, shrinkFactor: 0, minHeight: "0" })
+    );
     const detail = this.buildRuleDetail();
-    detail.setLayoutData(new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%" }));
+    detail.setLayoutData(
+      new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
+    );
     const workspace = new HBox({
       width: "100%",
       height: "100%",
@@ -229,8 +239,12 @@ export default class ConfigurationRuleWorkspaceView {
         if (ruleId) this.selectRule(ruleId);
       }
     }).addStyleClass("cmConstraintRuleList");
+    this.rulesList.setLayoutData(
+      new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
+    );
     const navigation = new VBox({
-      width: "14rem",
+      height: "100%",
+      fitContainer: true,
       items: [
         new OverflowToolbar({
           content: [
@@ -244,17 +258,7 @@ export default class ConfigurationRuleWorkspaceView {
             })
           ]
         }),
-        this.rulesList,
-        new MessageStrip({
-          text: trFormat(
-            "cmConstraintRuleCount",
-            [this.rules.length],
-            `${this.rules.length} 条规则 · AST 为当前上下文的唯一数据源`
-          ),
-          type: "Information",
-          showIcon: false,
-          showCloseButton: false
-        }).addStyleClass("cmConstraintRuleListFooter")
+        this.rulesList
       ]
     }).addStyleClass("cmConstraintRuleNavigation");
     return navigation;
@@ -315,7 +319,7 @@ export default class ConfigurationRuleWorkspaceView {
 
   private buildRuleDetail(): VBox {
     this.ruleNameInput = new Input({
-      width: "22rem",
+      width: "13rem",
       value: this.currentRule.name,
       change: (event: InputBase$ChangeEvent) => {
         this.updateWorkingRule(
@@ -329,6 +333,7 @@ export default class ConfigurationRuleWorkspaceView {
       text: this.ruleMetadata(this.currentRule),
       state: "None"
     });
+    this.ruleMetaStatus.setLayoutData(new OverflowToolbarLayoutData({ priority: "Low" }));
 
     this.expressionEditor = new ConfigurationExpressionEditor({
       rule: this.currentRule,
@@ -367,6 +372,10 @@ export default class ConfigurationRuleWorkspaceView {
       fitContainer: true,
       items: [this.designerView.build()]
     }).addStyleClass("cmConstraintModeHost cmConstraintDesignerHost");
+    this.designerHost.setLayoutData(
+      new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
+    );
+    this.designerToolbarItems = this.designerView.buildToolbarItems();
     this.advancedModeSelector = new IconTabBar({
       expandable: false,
       stretchContentHeight: true,
@@ -383,7 +392,7 @@ export default class ConfigurationRuleWorkspaceView {
         this.setAdvancedMode(event.getParameter("key") as AdvancedWorkspaceMode)
     }).addStyleClass("cmConstraintAdvancedTools");
     this.advancedModeSelector.setLayoutData(
-      new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%" })
+      new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
     );
     this.advancedHost = new VBox({
       width: "100%",
@@ -391,62 +400,52 @@ export default class ConfigurationRuleWorkspaceView {
       fitContainer: true,
       items: [this.advancedModeSelector]
     }).addStyleClass("cmConstraintAdvancedHost");
-    this.modeSelector = new IconTabBar({
-      expandable: false,
-      stretchContentHeight: true,
-      applyContentPadding: false,
-      headerMode: "Inline",
+    this.advancedHost.setLayoutData(
+      new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
+    );
+    this.modeSelector = new SegmentedButton({
+      width: "15rem",
       selectedKey: this.mode,
       items: [
-        new IconTabFilter({
+        new SegmentedButtonItem({
           key: "designer",
-          text: tr("cmConstraintWysiwygDesigner"),
-          icon: "sap-icon://edit"
+          text: tr("cmConstraintWysiwygDesigner")
         }),
-        new IconTabFilter({
+        new SegmentedButtonItem({
           key: "advanced",
-          text: tr("cmConstraintAdvancedTools"),
-          icon: "sap-icon://action-settings"
+          text: tr("cmConstraintAdvancedTools")
         })
       ],
-      content: [this.designerHost, this.advancedHost],
-      select: (event: IconTabBar$SelectEvent) =>
-        this.setMode(event.getParameter("key") as WorkspaceMode)
-    }).addStyleClass("cmConstraintWorkModes");
-    this.modeSelector.setLayoutData(
-      new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%" })
-    );
+      selectionChange: (event: SegmentedButton$SelectionChangeEvent) =>
+        this.setMode(event.getParameter("selectedKey") as WorkspaceMode)
+    }).addStyleClass("cmConstraintWorkspaceModeSelector");
     this.setMode(this.mode);
     this.setAdvancedMode(this.advancedMode);
 
+    const saveButton = new Button({
+      text: tr("保存规则"),
+      icon: "sap-icon://save",
+      type: "Emphasized",
+      press: () => this.saveCurrentRule()
+    });
+    saveButton.setLayoutData(new OverflowToolbarLayoutData({ priority: "NeverOverflow" }));
     const toolbar = new OverflowToolbar({
       content: [
         this.ruleNameInput,
-        new ToolbarSpacer(),
         new Text({ text: "{rules>/currentRule/code}" }).addStyleClass("cmConstraintRuleCode"),
         this.ruleMetaStatus,
         this.detailsStatus,
-        new Button({
-          text: tr("cmConstraintConfigureMode"),
-          icon: "sap-icon://display",
-          press: () => {
-            this.setMode("designer");
-            this.designerView?.setConfigureMode();
-          }
-        }),
-        new Button({
-          text: tr("保存规则"),
-          icon: "sap-icon://save",
-          type: "Emphasized",
-          press: () => this.saveCurrentRule()
-        })
+        this.modeSelector,
+        ...this.designerToolbarItems,
+        new ToolbarSpacer(),
+        saveButton
       ]
     }).addStyleClass("cmConstraintDetailToolbar");
     return new VBox({
       width: "100%",
       height: "100%",
       fitContainer: true,
-      items: [toolbar, this.modeSelector]
+      items: [toolbar, this.designerHost, this.advancedHost]
     }).addStyleClass("cmConstraintRuleDetail");
   }
 
@@ -460,10 +459,13 @@ export default class ConfigurationRuleWorkspaceView {
   }
 
   private setMode(mode: WorkspaceMode): void {
+    const shouldRefreshDesigner = mode === "designer" && this.mode !== "designer";
     this.mode = mode;
     this.modeSelector?.setSelectedKey(mode);
     this.designerHost?.setVisible(mode === "designer");
     this.advancedHost?.setVisible(mode === "advanced");
+    this.designerView?.setToolbarVisible(mode === "designer");
+    if (shouldRefreshDesigner) this.designerView?.refreshLayout();
     if (mode === "advanced" && this.advancedMode === "blueprint") void this.loadBlueprintRule();
   }
 
