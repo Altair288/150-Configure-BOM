@@ -273,6 +273,50 @@ export function formatConstraintCondition(expression: ConstraintExpression): str
   return formatCondition(expression);
 }
 
+export function normalizeConstraintConditionForDesigner(
+  expression: ConstraintExpression
+): ConstraintExpression {
+  const inverseOperators: Partial<Record<ConstraintOperator, ConstraintOperator>> = {
+    EQUALS: "NOT_EQUALS",
+    NOT_EQUALS: "EQUALS",
+    GREATER_THAN: "LESS_THAN_OR_EQUAL",
+    GREATER_THAN_OR_EQUAL: "LESS_THAN",
+    LESS_THAN: "GREATER_THAN_OR_EQUAL",
+    LESS_THAN_OR_EQUAL: "GREATER_THAN",
+    IN: "NOT_IN",
+    NOT_IN: "IN"
+  };
+
+  const normalize = (current: ConstraintExpression, negated = false): ConstraintExpression => {
+    if ("feature" in current) {
+      if (!negated) return structuredClone(current);
+      const inverse = inverseOperators[current.type];
+      return inverse ? { ...current, type: inverse } : { type: "NOT", expression: current };
+    }
+
+    if (current.type === "NOT") return normalize(current.expression, !negated);
+
+    const type =
+      negated && current.type === "AND"
+        ? "OR"
+        : negated && current.type === "OR"
+          ? "AND"
+          : current.type;
+    const expressions = current.expressions.flatMap((child) => {
+      const normalized = normalize(child, negated);
+      return "expressions" in normalized && normalized.type === type
+        ? normalized.expressions
+        : [normalized];
+    });
+    return {
+      type,
+      expressions
+    };
+  };
+
+  return normalize(expression);
+}
+
 export function formatConstraintExpression(ast: ConstraintRuleAst): string {
   const actions = ast.actions
     .map((action) => `${action.type} ${formatCondition(action.target)}`)
@@ -311,7 +355,7 @@ function legacyActionType(
   if (ruleType === "REQUIRES") return "REQUIRE";
   if (ruleType === "EXCLUDES") return "EXCLUDE";
   if (ruleType === "DERIVE") return "DERIVE";
-  const targetPredicates = collectPredicates(target);
+  const targetPredicates = collectConstraintPredicates(target);
   return targetPredicates.some((predicate) =>
     ["GREATER_THAN", "GREATER_THAN_OR_EQUAL", "LESS_THAN", "LESS_THAN_OR_EQUAL"].includes(
       predicate.type
@@ -538,9 +582,12 @@ export function createConstraintRule(input: {
   };
 }
 
-function collectPredicates(expression: ConstraintExpression): ConstraintPredicate[] {
-  if ("expressions" in expression) return expression.expressions.flatMap(collectPredicates);
-  if ("expression" in expression) return collectPredicates(expression.expression);
+export function collectConstraintPredicates(
+  expression: ConstraintExpression
+): ConstraintPredicate[] {
+  if ("expressions" in expression)
+    return expression.expressions.flatMap(collectConstraintPredicates);
+  if ("expression" in expression) return collectConstraintPredicates(expression.expression);
   return [expression];
 }
 
@@ -636,7 +683,7 @@ function validateExpression(
   issues: ConstraintValidationIssue[],
   actionType?: ConstraintActionType
 ): void {
-  for (const predicate of collectPredicates(expression)) {
+  for (const predicate of collectConstraintPredicates(expression)) {
     const feature = features.get(predicate.feature);
     if (!feature) {
       issues.push({
@@ -721,9 +768,11 @@ export function validateConstraintRule(
 
   const edges = new Map<string, Set<string>>();
   for (const existing of [...rules.filter((item) => item.id !== rule.id), rule]) {
-    const sources = collectPredicates(existing.ast.condition).map((predicate) => predicate.feature);
+    const sources = collectConstraintPredicates(existing.ast.condition).map(
+      (predicate) => predicate.feature
+    );
     const targets = existing.ast.actions.flatMap((action) =>
-      collectPredicates(action.target).map((predicate) => predicate.feature)
+      collectConstraintPredicates(action.target).map((predicate) => predicate.feature)
     );
     for (const source of sources) {
       const outgoing = edges.get(source) ?? new Set<string>();
@@ -932,6 +981,47 @@ export function activeConstraintEffects(
   return effects;
 }
 
+export function constraintEffectAllowedValues(
+  effect: ConstraintPreviewEffect,
+  feature: FeatureDefinition
+): Set<string> | undefined {
+  if (
+    effect.type === "SET" ||
+    effect.type === "DERIVE" ||
+    !("feature" in effect.target) ||
+    effect.target.feature !== feature.code ||
+    !["Boolean", "Enumeration", "Multi Enumeration", "Reference"].includes(feature.dataType)
+  )
+    return undefined;
+
+  const options =
+    feature.dataType === "Boolean"
+      ? ["true", "false"]
+      : feature.domain.values.filter((value) => value.active).map((value) => value.code);
+  const values = Array.isArray(effect.target.value)
+    ? effect.target.value.map(String)
+    : [String(effect.target.value)];
+  let matches: Set<string>;
+  switch (effect.target.type) {
+    case "EQUALS":
+      matches = new Set(options.filter((option) => option === values[0]));
+      break;
+    case "NOT_EQUALS":
+      matches = new Set(options.filter((option) => option !== values[0]));
+      break;
+    case "IN":
+      matches = new Set(options.filter((option) => values.includes(option)));
+      break;
+    case "NOT_IN":
+      matches = new Set(options.filter((option) => !values.includes(option)));
+      break;
+    default:
+      return undefined;
+  }
+  const mustMatch = effect.type !== "EXCLUDE";
+  return mustMatch ? matches : new Set(options.filter((option) => !matches.has(option)));
+}
+
 export function previewConstraintRules(
   rules: ConstraintRule[],
   featureDefinitions: FeatureDefinition[],
@@ -1055,8 +1145,8 @@ export function createConstraintRuleSamples(features: FeatureDefinition[]): Cons
   const rules = samples
     .filter((sample) => {
       const referenced = [
-        ...collectPredicates(sample.ast.condition),
-        ...sample.ast.actions.flatMap((action) => collectPredicates(action.target))
+        ...collectConstraintPredicates(sample.ast.condition),
+        ...sample.ast.actions.flatMap((action) => collectConstraintPredicates(action.target))
       ];
       return referenced.every((item) => codes.has(item.feature));
     })

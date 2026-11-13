@@ -664,16 +664,19 @@
 }
 .cmConstraintRuleNavigation {
   box-sizing: border-box;
-  width: 19rem;
-  min-width: 15rem;
-  flex: 0 0 19rem;
+  width: 14rem;
+  min-width: 12rem;
+  max-height: min(70vh, 36rem);
+  flex: 0 0 14rem;
+  align-self: flex-start;
   overflow: hidden;
   border-right: 1px solid var(--sapList_BorderColor);
   background: var(--sapGroup_ContentBackground);
 }
 .cmConstraintRuleList {
   min-height: 0;
-  flex: 1 1 0%;
+  max-height: min(58vh, 28rem);
+  flex: 0 1 auto;
   overflow-y: auto;
 }
 .cmConstraintRuleListFooter {
@@ -712,6 +715,19 @@
   height: 100%;
   min-height: 0;
 }
+.cmConstraintAdvancedHost,
+.cmConstraintAdvancedTools {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.cmConstraintAdvancedTools .sapMITBContainerContent,
+.cmConstraintAdvancedTools .sapMITBContent {
+  height: 100%;
+  min-height: 0;
+}
 .cmConstraintModeHost {
   box-sizing: border-box;
   width: 100%;
@@ -719,6 +735,85 @@
   min-height: 0;
   flex: 1 1 auto;
   overflow: auto;
+}
+.cmConstraintDesigner {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.cmConstraintDesigner > .sapMFlexItem {
+  min-width: 0;
+  min-height: 0;
+}
+.cmConstraintDesignerContent {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 0;
+  flex: 1 1 0%;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.cmConstraintDesignerContent > .sapMFlexItem {
+  min-width: 0;
+  flex: 0 0 auto;
+}
+.cmConstraintDesignerToolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--sapList_BorderColor);
+  background: var(--sapGroup_ContentBackground);
+}
+.cmConstraintDesignerModeSelector {
+  flex: 0 0 auto;
+}
+.cmConstraintDesignerForm {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+}
+.cmConstraintDesignerForm .sapUiFormContainer {
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--sapList_BorderColor);
+}
+.cmConstraintDesignerForm .sapUiFormContainerTitle {
+  border-bottom: 1px solid var(--sapList_BorderColor);
+}
+.cmConstraintDesignerQuestion {
+  color: var(--sapContent_LabelColor);
+  font-size: 0.75rem;
+}
+.cmConstraintDesignerFieldControl {
+  max-width: 100%;
+}
+.cmConstraintDesignerField--related {
+  border-inline-start: 2px solid var(--sapBrandColor);
+}
+.cmConstraintDesignerDraft {
+  gap: 0.35rem;
+  margin: 0.25rem 0;
+  padding: 0.5rem;
+  border: 1px solid var(--sapList_BorderColor);
+  background: var(--sapList_Background);
+}
+.cmConstraintDesignerDraftControls {
+  gap: 0.35rem;
+}
+.cmConstraintDesignerDraftControls > .sapMFlexItem {
+  min-width: 8rem;
+  flex: 1 1 auto;
+}
+.cmConstraintDesignerCancel {
+  margin-inline-start: auto;
 }
 .cmConstraintExpressionEditor {
   box-sizing: border-box;

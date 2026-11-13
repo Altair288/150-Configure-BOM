@@ -19,6 +19,7 @@ import {
 } from "../../model/configuration";
 import {
   activeConstraintEffects,
+  constraintEffectAllowedValues,
   reconcileConstrainedSelection,
   formatConstraintCondition
 } from "../../model/constraintRules";
@@ -156,47 +157,6 @@ function describePreviewEffect(
   );
 }
 
-function previewOptionValues(
-  effect: ConstraintPreviewEffect,
-  feature: FeatureDefinition
-): Set<string> | undefined {
-  if (
-    effect.type === "SET" ||
-    effect.type === "DERIVE" ||
-    !("feature" in effect.target) ||
-    effect.target.feature !== feature.code ||
-    !["Boolean", "Enumeration", "Multi Enumeration", "Reference"].includes(feature.dataType)
-  )
-    return undefined;
-
-  const options =
-    feature.dataType === "Boolean"
-      ? ["true", "false"]
-      : feature.domain.values.filter((value) => value.active).map((value) => value.code);
-  const values = Array.isArray(effect.target.value)
-    ? effect.target.value.map(String)
-    : [String(effect.target.value)];
-  let matches: Set<string>;
-  switch (effect.target.type) {
-    case "EQUALS":
-      matches = new Set(options.filter((option) => option === values[0]));
-      break;
-    case "NOT_EQUALS":
-      matches = new Set(options.filter((option) => option !== values[0]));
-      break;
-    case "IN":
-      matches = new Set(options.filter((option) => values.includes(option)));
-      break;
-    case "NOT_IN":
-      matches = new Set(options.filter((option) => !values.includes(option)));
-      break;
-    default:
-      return undefined;
-  }
-  const mustMatch = effect.type !== "EXCLUDE";
-  return mustMatch ? matches : new Set(options.filter((option) => !matches.has(option)));
-}
-
 function previewFeedback(
   effect: ConstraintPreviewEffect,
   features: Map<string, FeatureDefinition>
@@ -273,7 +233,7 @@ export default class ConfigurationPreviewDialog {
           const fieldEffects = effectsByFeature.get(code) ?? [];
           const allowedValues = intersectAllowedValues(
             fieldEffects
-              .map((effect) => previewOptionValues(effect, field.definition))
+              .map((effect) => constraintEffectAllowedValues(effect, field.definition))
               .filter((set): set is Set<string> => set !== undefined)
           );
           field.setAvailableValues(allowedValues);

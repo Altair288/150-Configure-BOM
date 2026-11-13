@@ -26,7 +26,12 @@ import ToolbarSpacer from "sap/m/ToolbarSpacer";
 import Item from "sap/ui/core/Item";
 import VBox from "sap/m/VBox";
 import JSONModel from "sap/ui/model/json/JSONModel";
-import type { ConfigurationContext, FeatureDefinition } from "../../model/configuration";
+import type {
+  ConfigurationContext,
+  ConfigurationProfile,
+  ConfigurationStore,
+  FeatureDefinition
+} from "../../model/configuration";
 import {
   constraintOperatorsFor,
   createConstraintRule,
@@ -50,9 +55,11 @@ import type {
 import type { BlueprintPredicateSelection } from "../../blueprint/constraint-blueprint";
 import { tr, trFormat } from "../../util/configurationUi";
 import ConfigurationExpressionEditor from "./ConfigurationExpressionEditor";
+import ConfigurationRuleDesignerView from "./ConfigurationRuleDesignerView";
 
 type NodeKind = "source" | "condition" | "logic" | "action";
-type WorkspaceMode = "expression" | "blueprint" | "assistant";
+type WorkspaceMode = "designer" | "advanced";
+type AdvancedWorkspaceMode = "expression" | "blueprint" | "assistant";
 
 let blueprintBundleLoading: Promise<void> | undefined;
 
@@ -97,26 +104,30 @@ interface BlueprintEditorHandle {
 }
 
 interface ConfigurationRuleWorkspaceOptions {
+  store: ConfigurationStore;
   context: ConfigurationContext;
+  profile: ConfigurationProfile;
   features: FeatureDefinition[];
   repository: ConstraintRuleRepository;
   canEdit: () => boolean;
-  onPreview: (rules: ConstraintRule[]) => void;
 }
 
 export default class ConfigurationRuleWorkspaceView {
   private readonly graphHost: VBox;
   private readonly rulesModel: JSONModel;
+  private readonly store: ConfigurationStore;
   private readonly context: ConfigurationContext;
+  private readonly profile: ConfigurationProfile;
   private features: FeatureDefinition[];
   private readonly repository: ConstraintRuleRepository;
   private readonly canEdit: () => boolean;
-  private readonly onPreview: (rules: ConstraintRule[]) => void;
   private readonly aiService = new MockConstraintAIService();
   private rules: ConstraintRule[];
   private currentRule: ConstraintRule;
   private currentRuleDirty = false;
-  private mode: WorkspaceMode = "expression";
+  private currentRuleIsNew = false;
+  private mode: WorkspaceMode = "designer";
+  private advancedMode: AdvancedWorkspaceMode = "expression";
   private rulesList?: List;
   private detailsStatus?: ObjectStatus;
   private ruleMetaStatus?: ObjectStatus;
@@ -124,6 +135,8 @@ export default class ConfigurationRuleWorkspaceView {
   private expressionHost?: VBox;
   private blueprintHost?: VBox;
   private assistantHost?: VBox;
+  private designerHost?: VBox;
+  private advancedHost?: VBox;
   private assistantPrompt?: TextArea;
   private assistantStatus?: ObjectStatus;
   private assistantGenerateButton?: Button;
@@ -137,6 +150,8 @@ export default class ConfigurationRuleWorkspaceView {
   private pendingAmbiguity?: ConstraintAIResponse["ambiguity"];
   private readonly ruleByListItemId = new Map<string, string>();
   private modeSelector?: IconTabBar;
+  private advancedModeSelector?: IconTabBar;
+  private designerView?: ConfigurationRuleDesignerView;
   private ruleNameInput?: Input;
   private blueprintNeedsLoad = true;
   private blueprintSelection?: BlueprintPredicateSelection;
@@ -145,12 +160,14 @@ export default class ConfigurationRuleWorkspaceView {
   private validationStatus?: ObjectStatus;
 
   public constructor(options: ConfigurationRuleWorkspaceOptions) {
+    this.store = options.store;
     this.context = options.context;
+    this.profile = options.profile;
     this.features = options.features;
     this.repository = options.repository;
     this.canEdit = options.canEdit;
-    this.onPreview = options.onPreview;
     this.rules = this.repository.list(this.context.id, this.features);
+    this.currentRuleIsNew = this.rules.length === 0;
     this.currentRule = this.rules[0] ?? this.createNewRule();
     this.rulesModel = new JSONModel({ currentRule: this.currentRule });
     this.graphHost = new VBox({
@@ -188,8 +205,10 @@ export default class ConfigurationRuleWorkspaceView {
     if (JSON.stringify(this.features) === JSON.stringify(features)) return;
     this.features = features;
     this.expressionEditor?.setFeatures(features);
+    this.designerView?.setFeatures(features);
     this.blueprintNeedsLoad = true;
-    if (this.mode === "blueprint") void this.loadBlueprintRule();
+    if (this.mode === "advanced" && this.advancedMode === "blueprint")
+      void this.loadBlueprintRule();
     this.renderAssistantSuggestions();
   }
 
@@ -211,9 +230,7 @@ export default class ConfigurationRuleWorkspaceView {
       }
     }).addStyleClass("cmConstraintRuleList");
     const navigation = new VBox({
-      width: "19rem",
-      height: "100%",
-      fitContainer: true,
+      width: "14rem",
       items: [
         new OverflowToolbar({
           content: [
@@ -333,14 +350,29 @@ export default class ConfigurationRuleWorkspaceView {
       items: [this.buildEditorColumn()]
     }).addStyleClass("cmConstraintModeHost cmConstraintBlueprintHost");
     this.assistantHost = this.buildAssistantWorkspace();
-    this.setMode(this.mode);
-
-    this.modeSelector = new IconTabBar({
+    this.designerView = new ConfigurationRuleDesignerView({
+      store: this.store,
+      context: this.context,
+      profile: this.profile,
+      features: this.features,
+      rule: this.currentRule,
+      rules: () => this.rulesForPreview(),
+      isNewDraft: () => this.currentRuleIsNew,
+      canEdit: this.canEdit,
+      onRuleChange: (rule) => this.updateWorkingRule(rule, "designer")
+    });
+    this.designerHost = new VBox({
+      width: "100%",
+      height: "100%",
+      fitContainer: true,
+      items: [this.designerView.build()]
+    }).addStyleClass("cmConstraintModeHost cmConstraintDesignerHost");
+    this.advancedModeSelector = new IconTabBar({
       expandable: false,
       stretchContentHeight: true,
       applyContentPadding: false,
       headerMode: "Inline",
-      selectedKey: this.mode,
+      selectedKey: this.advancedMode,
       items: [
         new IconTabFilter({ key: "expression", text: tr("表达式"), icon: "sap-icon://syntax" }),
         new IconTabFilter({ key: "blueprint", text: tr("蓝图"), icon: "sap-icon://process" }),
@@ -348,11 +380,44 @@ export default class ConfigurationRuleWorkspaceView {
       ],
       content: [this.expressionHost, this.blueprintHost, this.assistantHost],
       select: (event: IconTabBar$SelectEvent) =>
+        this.setAdvancedMode(event.getParameter("key") as AdvancedWorkspaceMode)
+    }).addStyleClass("cmConstraintAdvancedTools");
+    this.advancedModeSelector.setLayoutData(
+      new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%" })
+    );
+    this.advancedHost = new VBox({
+      width: "100%",
+      height: "100%",
+      fitContainer: true,
+      items: [this.advancedModeSelector]
+    }).addStyleClass("cmConstraintAdvancedHost");
+    this.modeSelector = new IconTabBar({
+      expandable: false,
+      stretchContentHeight: true,
+      applyContentPadding: false,
+      headerMode: "Inline",
+      selectedKey: this.mode,
+      items: [
+        new IconTabFilter({
+          key: "designer",
+          text: tr("cmConstraintWysiwygDesigner"),
+          icon: "sap-icon://edit"
+        }),
+        new IconTabFilter({
+          key: "advanced",
+          text: tr("cmConstraintAdvancedTools"),
+          icon: "sap-icon://action-settings"
+        })
+      ],
+      content: [this.designerHost, this.advancedHost],
+      select: (event: IconTabBar$SelectEvent) =>
         this.setMode(event.getParameter("key") as WorkspaceMode)
     }).addStyleClass("cmConstraintWorkModes");
     this.modeSelector.setLayoutData(
       new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%" })
     );
+    this.setMode(this.mode);
+    this.setAdvancedMode(this.advancedMode);
 
     const toolbar = new OverflowToolbar({
       content: [
@@ -362,9 +427,12 @@ export default class ConfigurationRuleWorkspaceView {
         this.ruleMetaStatus,
         this.detailsStatus,
         new Button({
-          text: tr("Preview Configuration"),
+          text: tr("cmConstraintConfigureMode"),
           icon: "sap-icon://display",
-          press: () => this.onPreview(this.rulesForPreview())
+          press: () => {
+            this.setMode("designer");
+            this.designerView?.setConfigureMode();
+          }
         }),
         new Button({
           text: tr("保存规则"),
@@ -394,6 +462,14 @@ export default class ConfigurationRuleWorkspaceView {
   private setMode(mode: WorkspaceMode): void {
     this.mode = mode;
     this.modeSelector?.setSelectedKey(mode);
+    this.designerHost?.setVisible(mode === "designer");
+    this.advancedHost?.setVisible(mode === "advanced");
+    if (mode === "advanced" && this.advancedMode === "blueprint") void this.loadBlueprintRule();
+  }
+
+  private setAdvancedMode(mode: AdvancedWorkspaceMode): void {
+    this.advancedMode = mode;
+    this.advancedModeSelector?.setSelectedKey(mode);
     this.expressionHost?.setVisible(mode === "expression");
     this.blueprintHost?.setVisible(mode === "blueprint");
     this.assistantHost?.setVisible(mode === "assistant");
@@ -405,6 +481,7 @@ export default class ConfigurationRuleWorkspaceView {
     if (!rule) return;
     this.currentRule = structuredClone(rule);
     this.currentRuleDirty = false;
+    this.currentRuleIsNew = false;
     this.blueprintNeedsLoad = true;
     this.rulesModel.setProperty("/currentRule", this.currentRule);
     this.ruleNameInput?.setValue(this.currentRule.name);
@@ -412,7 +489,9 @@ export default class ConfigurationRuleWorkspaceView {
     this.detailsStatus?.setText(this.currentRule.status);
     this.expressionEditor?.setRule(this.currentRule);
     this.expressionEditor?.setRules(this.rules);
-    if (this.mode === "blueprint") void this.loadBlueprintRule();
+    this.designerView?.setRule(this.currentRule, false);
+    if (this.mode === "advanced" && this.advancedMode === "blueprint")
+      void this.loadBlueprintRule();
     this.renderRuleList();
   }
 
@@ -421,11 +500,7 @@ export default class ConfigurationRuleWorkspaceView {
     const activeFeatures = this.features.filter((feature) => feature.active);
     const sourceFeature =
       activeFeatures.find((feature) => feature.code === "SUNROOF_TYPE") ?? activeFeatures[0];
-    const targetFeature =
-      activeFeatures.find((feature) => feature.code === "INTERIOR_PACKAGE") ??
-      activeFeatures[1] ??
-      sourceFeature;
-    if (!sourceFeature || !targetFeature) {
+    if (!sourceFeature) {
       MessageToast.show(tr("当前 Context 尚无可用于约束的 Feature。"));
       return;
     }
@@ -441,41 +516,36 @@ export default class ConfigurationRuleWorkspaceView {
           feature: sourceFeature.code,
           value: this.defaultFeatureValue(sourceFeature)
         },
-        actions: [
-          {
-            type: "REQUIRE",
-            target: {
-              type: "EQUALS",
-              feature: targetFeature.code,
-              value: this.defaultFeatureValue(targetFeature)
-            }
-          }
-        ]
+        actions: []
       }
     });
     this.rules.push(rule);
     this.currentRule = rule;
     this.currentRuleDirty = true;
+    this.currentRuleIsNew = true;
     this.blueprintNeedsLoad = true;
     this.rulesModel.setProperty("/currentRule", rule);
     this.ruleNameInput?.setValue(rule.name);
     this.ruleMetaStatus?.setText(this.ruleMetadata(rule));
     this.expressionEditor?.setRule(rule);
     this.expressionEditor?.setRules(this.rules);
+    this.designerView?.setRule(rule, true);
     this.renderRuleList();
-    if (this.mode === "blueprint") void this.loadBlueprintRule();
+    this.setMode("designer");
   }
 
   private updateWorkingRule(
     rule: ConstraintRule,
-    origin: "expression" | "blueprint" | "metadata"
+    origin: "designer" | "expression" | "blueprint" | "metadata"
   ): void {
     this.currentRule = {
       ...structuredClone(rule),
       source:
         origin === "blueprint"
           ? { ...rule.source, type: "BLUEPRINT" }
-          : structuredClone(rule.source)
+          : origin === "designer"
+            ? { ...rule.source, type: "MANUAL" }
+            : structuredClone(rule.source)
     };
     this.currentRuleDirty = true;
     const existingIndex = this.rules.findIndex((item) => item.id === rule.id);
@@ -491,10 +561,12 @@ export default class ConfigurationRuleWorkspaceView {
     this.detailsStatus?.setText(tr("未保存变更"));
     this.detailsStatus?.setState("Warning");
     if (origin !== "expression") this.expressionEditor?.setRule(this.currentRule);
+    if (origin !== "designer") this.designerView?.setRule(this.currentRule, this.currentRuleIsNew);
     if (origin !== "metadata") this.ruleNameInput?.setValue(this.currentRule.name);
     if (origin !== "blueprint") {
       this.blueprintNeedsLoad = true;
-      if (this.mode === "blueprint") void this.loadBlueprintRule();
+      if (this.mode === "advanced" && this.advancedMode === "blueprint")
+        void this.loadBlueprintRule();
     }
     this.renderRuleList();
   }
@@ -515,7 +587,9 @@ export default class ConfigurationRuleWorkspaceView {
       this.expressionEditor?.setRules(this.rules);
       this.currentRule = structuredClone(saved);
       this.currentRuleDirty = false;
+      this.currentRuleIsNew = false;
       this.ruleMetaStatus?.setText(this.ruleMetadata(saved));
+      this.designerView?.setRule(saved, false);
       this.assistantSuggestions = this.assistantSuggestions.filter(
         (suggestion) => suggestion.id !== saved.id
       );
@@ -919,9 +993,10 @@ export default class ConfigurationRuleWorkspaceView {
     }
   }
 
-  private editAISuggestion(suggestion: ConstraintAISuggestion, mode: WorkspaceMode): void {
+  private editAISuggestion(suggestion: ConstraintAISuggestion, mode: AdvancedWorkspaceMode): void {
     this.currentRule = structuredClone(suggestion.rule);
     this.currentRuleDirty = true;
+    this.currentRuleIsNew = false;
     this.rules = this.rules.some((rule) => rule.id === suggestion.rule.id)
       ? this.rules.map((rule) =>
           rule.id === suggestion.rule.id ? structuredClone(suggestion.rule) : rule
@@ -932,11 +1007,13 @@ export default class ConfigurationRuleWorkspaceView {
     this.ruleNameInput?.setValue(this.currentRule.name);
     this.ruleMetaStatus?.setText(this.ruleMetadata(this.currentRule));
     this.expressionEditor?.setRule(this.currentRule);
+    this.designerView?.setRule(this.currentRule, false);
     this.detailsStatus?.setText(tr("AI 草稿 · 尚未应用"));
     this.detailsStatus?.setState("Warning");
     this.blueprintNeedsLoad = true;
     this.renderRuleList();
-    this.setMode(mode);
+    this.setAdvancedMode(mode);
+    this.setMode("advanced");
   }
 
   private ignoreAISuggestion(id: string): void {
@@ -1297,11 +1374,7 @@ export default class ConfigurationRuleWorkspaceView {
     const activeFeatures = this.features.filter((feature) => feature.active);
     const sourceFeature =
       activeFeatures.find((feature) => feature.code === "SUNROOF_TYPE") ?? activeFeatures[0];
-    const targetFeature =
-      activeFeatures.find((feature) => feature.code === "INTERIOR_PACKAGE") ??
-      activeFeatures[1] ??
-      sourceFeature;
-    if (!sourceFeature || !targetFeature) {
+    if (!sourceFeature) {
       const predicate = { type: "EQUALS" as const, feature: "UNKNOWN", value: "" };
       return createConstraintRule({
         id: `rule-${globalThis.crypto.randomUUID()}`,
@@ -1309,7 +1382,7 @@ export default class ConfigurationRuleWorkspaceView {
         name: "新建约束",
         ast: {
           condition: predicate,
-          actions: [{ type: "REQUIRE", target: predicate }]
+          actions: []
         }
       });
     }
@@ -1323,16 +1396,7 @@ export default class ConfigurationRuleWorkspaceView {
           feature: sourceFeature.code,
           value: this.defaultFeatureValue(sourceFeature)
         },
-        actions: [
-          {
-            type: "REQUIRE",
-            target: {
-              type: "EQUALS",
-              feature: targetFeature.code,
-              value: this.defaultFeatureValue(targetFeature)
-            }
-          }
-        ]
+        actions: []
       }
     });
   }

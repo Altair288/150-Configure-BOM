@@ -17,11 +17,13 @@ import {
 import {
   appendConstraintPredicate,
   activeConstraintEffects,
+  constraintEffectAllowedValues,
   reconcileConstrainedSelection,
   createConstraintRule,
   createConstraintRuleSamples,
   constraintOperatorsFor,
   formatConstraintExpression,
+  normalizeConstraintConditionForDesigner,
   previewConstraintRules,
   migrateLegacyConstraintRuleAst,
   parseConstraintExpression,
@@ -328,6 +330,76 @@ test("constraint AST parses and formats nested AND OR NOT without string-based s
   });
 });
 
+test("WYSIWYG condition projection applies De Morgan without changing rule semantics", () => {
+  const store = createSeed();
+  const features = contextReferences(store, "ctx-SUV").map((reference) =>
+    resolveDefinition(store, reference)
+  );
+  const expression = {
+    type: "AND",
+    expressions: [
+      { type: "EQUALS", feature: "TRIM_LEVEL", value: "PREMIUM" },
+      {
+        type: "NOT",
+        expression: {
+          type: "OR",
+          expressions: [
+            { type: "EQUALS", feature: "VEHICLE_REGION", value: "JAPAN" },
+            { type: "EQUALS", feature: "ROOF_RACK", value: "TYPE_B" }
+          ]
+        }
+      }
+    ]
+  };
+  const projected = normalizeConstraintConditionForDesigner(expression);
+  assert.deepEqual(projected, {
+    type: "AND",
+    expressions: [
+      { type: "EQUALS", feature: "TRIM_LEVEL", value: "PREMIUM" },
+      { type: "NOT_EQUALS", feature: "VEHICLE_REGION", value: "JAPAN" },
+      { type: "NOT_EQUALS", feature: "ROOF_RACK", value: "TYPE_B" }
+    ]
+  });
+
+  for (const region of ["CHINA", "JAPAN", "EUROPE"]) {
+    for (const roofRack of ["TYPE_A", "TYPE_B"]) {
+      const values = new Map([
+        ["TRIM_LEVEL", "PREMIUM"],
+        ["VEHICLE_REGION", region],
+        ["ROOF_RACK", roofRack]
+      ]);
+      const toRule = (condition) => ({
+        id: "designer-condition",
+        code: "CR-DESIGNER",
+        name: "Designer condition",
+        description: "",
+        status: "Draft",
+        expression: "",
+        ast: {
+          condition,
+          actions: [
+            {
+              type: "REQUIRE",
+              target: { type: "IN", feature: "DRIVE_TYPE", value: ["AWD", "4WD"] }
+            }
+          ]
+        },
+        blueprint: { positions: {} },
+        source: { type: "MANUAL" },
+        createdBy: "test",
+        modifiedAt: "",
+        version: 1
+      });
+
+      assert.equal(
+        activeConstraintEffects([toRule(expression)], features, values).length,
+        activeConstraintEffects([toRule(projected)], features, values).length,
+        `condition projection must preserve truth for ${region} / ${roofRack}`
+      );
+    }
+  }
+});
+
 test("adding AND and OR clauses follows normal precedence without nesting every click", () => {
   const clause = (feature) => ({ type: "EQUALS", feature, value: true });
   let condition = clause("A");
@@ -461,6 +533,48 @@ test("constraint preview auto-selects unique forced values and clears ambiguous 
     "C"
   ]);
   assert.equal(reconcileConstrainedSelection("STANDARD", undefined, true), "STANDARD");
+});
+
+test("constraint effects expose the same allowed choices to preview and WYSIWYG forms", () => {
+  const store = createSeed();
+  const features = contextReferences(store, "ctx-SUV").map((reference) =>
+    resolveDefinition(store, reference)
+  );
+  const effect = (type, feature, operator, value, direction = "action") => ({
+    ruleId: "allowed-values",
+    code: "CR-ALLOWED",
+    name: "Allowed values",
+    description: "",
+    type,
+    target: { type: operator, feature, value },
+    status: "pending",
+    direction
+  });
+  const drive = features.find((feature) => feature.code === "DRIVE_TYPE");
+  const roofRack = features.find((feature) => feature.code === "ROOF_RACK");
+  const sunroof = features.find((feature) => feature.code === "SUNROOF_TYPE");
+
+  assert.deepEqual(
+    [
+      ...constraintEffectAllowedValues(effect("REQUIRE", "DRIVE_TYPE", "IN", ["AWD", "4WD"]), drive)
+    ],
+    ["AWD", "4WD"]
+  );
+  assert.deepEqual(
+    [
+      ...constraintEffectAllowedValues(effect("EXCLUDE", "ROOF_RACK", "EQUALS", "TYPE_B"), roofRack)
+    ],
+    ["TYPE_A"]
+  );
+  assert.deepEqual(
+    [
+      ...constraintEffectAllowedValues(
+        effect("EXCLUDE", "SUNROOF_TYPE", "EQUALS", "PANORAMIC", "condition"),
+        sunroof
+      )
+    ],
+    ["STANDARD"]
+  );
 });
 
 test("constraint preview keeps missing requirements pending and evaluates numeric restrictions", () => {

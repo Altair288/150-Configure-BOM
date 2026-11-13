@@ -356,11 +356,12 @@ export default class ConfigurationController extends BaseController {
       this.ruleHost?.destroyItems();
       try {
         this.ruleWorkspaceView = new ConfigurationRuleWorkspaceView({
+          store: this.store,
           context,
+          profile: this.currentProfile(),
           features,
           repository: this.constraintRuleRepository,
-          canEdit: () => this.canEdit(),
-          onPreview: (rules) => this.preview(rules)
+          canEdit: () => this.canEdit()
         });
         this.ruleWorkspaceContextId = context.id;
         this.ruleHost?.addItem(this.ruleWorkspaceView.build());

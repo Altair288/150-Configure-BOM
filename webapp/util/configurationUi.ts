@@ -305,8 +305,7 @@ export function setI18nModel(model: ResourceModel): void {
 }
 
 export function tr(text: string): string {
-  const key = rawI18nKeys[text];
-  if (!key) return text;
+  const key = rawI18nKeys[text] ?? text;
   try {
     return activeI18nBundle?.getText?.(key) ?? text;
   } catch {
