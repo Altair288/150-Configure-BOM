@@ -815,6 +815,41 @@
 .cmConstraintDesignerField--related {
   border-inline-start: 2px solid var(--sapBrandColor);
 }
+.cmConstraintDesignerInteractionPopover .sapMPopoverCont {
+  padding: 0.25rem;
+}
+.cmConstraintDesignerInteractionMenu {
+  box-sizing: border-box;
+  width: 100%;
+  gap: 0.25rem;
+  padding: 0.25rem;
+}
+.cmConstraintDesignerInteractionMenu > .sapMFlexItem {
+  width: 100%;
+}
+.cmConstraintDesignerInteractionMenuGroupTitle {
+  display: block;
+  margin-block-start: 0.25rem;
+  color: var(--sapContent_LabelColor);
+  font-weight: 600;
+}
+.cmConstraintDesignerInteractionMenuButton .sapMBtnInner {
+  justify-content: flex-start;
+  text-align: start;
+}
+.cmConstraintDesignerInteractionMenuButton .sapMBtnContent {
+  width: 100%;
+  text-align: start;
+}
+.cmConstraintDesignerInteractionValue {
+  font-weight: 600;
+}
+.cmConstraintDesignerInteractionPopover .cmConstraintDesignerDraft {
+  margin: 0;
+  padding: 0.25rem;
+  border: 0;
+  background: transparent;
+}
 .cmConstraintDesignerDraft {
   gap: 0.35rem;
   margin: 0.25rem 0;

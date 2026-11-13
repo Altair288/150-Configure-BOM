@@ -285,11 +285,15 @@ export default class ConfigurationRuleWorkspaceView {
   }
 
   private ruleSummary(rule: ConstraintRule): string {
-    const condition = this.describeExpression(rule.ast.condition);
+    const isPendingNewRuleCondition =
+      rule.id === this.currentRule.id &&
+      this.currentRuleIsNew &&
+      !this.designerView?.hasConfiguredCondition();
+    const condition = isPendingNewRuleCondition ? "" : this.describeExpression(rule.ast.condition);
     const actions = rule.ast.actions
       .map((action) => `${this.actionLabel(action.type)} ${this.describeExpression(action.target)}`)
       .join("; ");
-    return `${condition} → ${actions}`;
+    return [condition, actions].filter(Boolean).join(" → ");
   }
 
   private actionLabel(type: ConstraintActionType): string {

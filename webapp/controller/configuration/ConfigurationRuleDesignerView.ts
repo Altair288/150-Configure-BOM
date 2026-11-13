@@ -11,7 +11,7 @@ import MessageStrip from "sap/m/MessageStrip";
 import MessageToast from "sap/m/MessageToast";
 import MultiComboBox from "sap/m/MultiComboBox";
 import ObjectStatus from "sap/m/ObjectStatus";
-import OverflowToolbarLayoutData from "sap/m/OverflowToolbarLayoutData";
+import Popover from "sap/m/Popover";
 import RadioButton from "sap/m/RadioButton";
 import RadioButtonGroup from "sap/m/RadioButtonGroup";
 import SegmentedButton from "sap/m/SegmentedButton";
@@ -25,7 +25,9 @@ import ObjectPageLayout from "sap/uxap/ObjectPageLayout";
 import ObjectPageSection from "sap/uxap/ObjectPageSection";
 import ObjectPageSubSection from "sap/uxap/ObjectPageSubSection";
 import type { Input$LiveChangeEvent } from "sap/m/Input";
+import type { InputBase$ChangeEvent } from "sap/m/InputBase";
 import type { MultiComboBox$SelectionFinishEvent } from "sap/m/MultiComboBox";
+import type { RadioButtonGroup$SelectEvent } from "sap/m/RadioButtonGroup";
 import type { SegmentedButton$SelectionChangeEvent } from "sap/m/SegmentedButton";
 import type { Select$ChangeEvent } from "sap/m/Select";
 import { resolveDefinition, validateContext, validateValue } from "../../model/configuration";
@@ -59,7 +61,6 @@ import type {
 import { tr, trFormat } from "../../util/configurationUi";
 
 type DesignerMode = "design" | "configure";
-type SelectionStage = "idle" | "condition" | "target";
 type ConditionConnector = "AND" | "OR";
 type PreviewValueState = "None" | "Error" | "Warning" | "Success";
 
@@ -81,14 +82,20 @@ interface ConditionDraft {
   feature: FeatureDefinition;
   connector: ConditionConnector;
   operator: ConstraintOperator;
-  value: unknown;
+  value: ConstraintLiteral | ConstraintLiteral[];
 }
 
 interface ActionDraft {
   feature: FeatureDefinition;
   type: ConstraintActionType;
   operator: ConstraintOperator;
+  selectedValue?: ConstraintLiteral | ConstraintLiteral[];
   value: unknown;
+}
+
+interface PendingInteractionPopover {
+  anchor: Control;
+  render: () => void;
 }
 
 interface ConfigurationRuleDesignerOptions {
@@ -199,32 +206,22 @@ export default class ConfigurationRuleDesignerView {
   }).addStyleClass("cmConstraintObjectPage");
   private readonly fields = new Map<string, DesignerField>();
   private readonly values = new Map<string, unknown>();
-  private readonly conditionDraftHost = new VBox({ width: "100%" });
-  private readonly actionDraftHost = new VBox({ width: "100%" });
+  private readonly interactionMenuHost = new VBox({ width: "100%" }).addStyleClass(
+    "cmConstraintDesignerInteractionMenu"
+  );
+  private readonly interactionPopover: Popover;
+  private interactionPopoverOpen = false;
+  private pendingInteractionPopover?: PendingInteractionPopover;
   private readonly validationHost = new VBox({ width: "100%" });
   private readonly previewFeedbackHost = new VBox({ width: "100%" });
   private readonly modelReadiness: string[];
-  private readonly stageStatus = new MessageStrip({
-    text: "",
-    type: "Information",
-    showIcon: true,
-    showCloseButton: false,
-    visible: false
-  });
   private readonly modeSelector: SegmentedButton;
-  private readonly conditionSelect: Select;
-  private readonly actionSelect: Select;
-  private readonly cancelSelectionButton: Button;
   private toolbarVisible = true;
   private currentRule: ConstraintRule;
   private isNewDraft: boolean;
   private mode: DesignerMode = "design";
-  private stage: SelectionStage = "idle";
-  private pendingConnector: ConditionConnector = "AND";
-  private pendingAction: ConstraintActionType = "REQUIRE";
   private conditionDraft?: ConditionDraft;
   private actionDraft?: ActionDraft;
-  private lastChangedFeatureCode?: string;
   private newDraftHasCondition = false;
   private newDraftHasAction = false;
 
@@ -235,6 +232,21 @@ export default class ConfigurationRuleDesignerView {
     this.isNewDraft = options.isNewDraft();
     this.modelReadiness = validateContext(options.store, options.context.id);
     this.mode = options.context.status === "Draft" ? "design" : "configure";
+    this.interactionPopover = new Popover({
+      title: "",
+      placement: "VerticalPreferredBottom",
+      contentWidth: "18rem",
+      modal: false,
+      showHeader: true,
+      horizontalScrolling: false,
+      verticalScrolling: false,
+      content: [this.interactionMenuHost],
+      afterOpen: () => {
+        this.interactionPopoverOpen = true;
+      },
+      afterClose: () => this.handleInteractionPopoverAfterClose()
+    }).addStyleClass("cmConstraintDesignerInteractionPopover");
+    this.objectPage.addDependent(this.interactionPopover);
     this.modeSelector = new SegmentedButton({
       width: "10rem",
       selectedKey: this.mode,
@@ -245,46 +257,6 @@ export default class ConfigurationRuleDesignerView {
       selectionChange: (event: SegmentedButton$SelectionChangeEvent) =>
         this.setMode(event.getParameter("selectedKey") as DesignerMode)
     }).addStyleClass("cmConstraintDesignerModeSelector");
-    this.conditionSelect = new Select({
-      width: "7.5rem",
-      selectedKey: "",
-      items: [
-        new Item({ key: "", text: tr("cmConstraintConditionMenu") }),
-        new Item({ key: "AND", text: tr("cmConstraintAddConditionAnd") }),
-        new Item({ key: "OR", text: tr("cmConstraintAddConditionOr") })
-      ],
-      change: (event: Select$ChangeEvent) => {
-        const connector = event.getSource().getSelectedKey() as ConditionConnector;
-        event.getSource().setSelectedKey("");
-        if (connector === "AND" || connector === "OR") this.startCondition(connector);
-      }
-    }).addStyleClass("cmConstraintDesignerConditionMenu");
-    this.conditionSelect.setLayoutData(
-      new OverflowToolbarLayoutData({ priority: "NeverOverflow" })
-    );
-    this.actionSelect = new Select({
-      width: "7rem",
-      selectedKey: "",
-      items: [
-        new Item({ key: "", text: tr("cmConstraintActionMenu") }),
-        ...(["REQUIRE", "EXCLUDE", "RESTRICT", "SET", "DERIVE"] as const).map(
-          (type) => new Item({ key: type, text: tr(actionLabels[type]) })
-        )
-      ],
-      change: (event: Select$ChangeEvent) => {
-        const action = event.getSource().getSelectedKey() as ConstraintActionType | "";
-        event.getSource().setSelectedKey("");
-        if (action) this.startAction(action);
-      }
-    }).addStyleClass("cmConstraintDesignerActionMenu");
-    this.actionSelect.setLayoutData(new OverflowToolbarLayoutData({ priority: "NeverOverflow" }));
-    this.cancelSelectionButton = new Button({
-      text: tr("cmConstraintCancelSelection"),
-      icon: "sap-icon://decline",
-      type: "Transparent",
-      visible: false,
-      press: () => this.cancelSelection()
-    }).addStyleClass("cmConstraintDesignerCancel");
     this.buildForm();
     this.renderRelations();
     this.updatePreview();
@@ -292,11 +264,12 @@ export default class ConfigurationRuleDesignerView {
 
   public buildToolbarItems(): Control[] {
     this.updateToolbarState();
-    return [this.modeSelector, this.conditionSelect, this.actionSelect, this.cancelSelectionButton];
+    return [this.modeSelector];
   }
 
   public setToolbarVisible(visible: boolean): void {
     this.toolbarVisible = visible;
+    if (!visible) this.dismissInteractionPopover();
     this.updateToolbarState();
   }
 
@@ -304,14 +277,7 @@ export default class ConfigurationRuleDesignerView {
     const scrollContent = new VBox({
       width: "100%",
       fitContainer: true,
-      items: [
-        this.stageStatus,
-        this.conditionDraftHost,
-        this.actionDraftHost,
-        this.validationHost,
-        this.previewFeedbackHost,
-        this.objectPage
-      ]
+      items: [this.validationHost, this.previewFeedbackHost, this.objectPage]
     }).addStyleClass("cmConstraintDesignerContent");
     this.objectPage.setLayoutData(
       new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
@@ -327,13 +293,14 @@ export default class ConfigurationRuleDesignerView {
     if (changedRule || changedDraftState) {
       this.newDraftHasCondition = !isNewDraft;
       this.newDraftHasAction = !isNewDraft;
-      this.cancelSelection();
+      this.dismissInteractionPopover();
     }
     this.renderRelations();
     this.updatePreview();
   }
 
   public setFeatures(features: FeatureDefinition[]): void {
+    this.dismissInteractionPopover();
     this.featuresByCode.clear();
     features.forEach((feature) => this.featuresByCode.set(feature.code, feature));
     this.buildForm();
@@ -444,15 +411,10 @@ export default class ConfigurationRuleDesignerView {
     const allowed = definition.domain.values
       .filter((value) => value.active)
       .sort((left, right) => left.sort - right.sort);
-    const onChange = (value: unknown, captureSelection = true): void => {
+    const onChange = (value: unknown, anchor?: Control, captureSelection = true): void => {
       this.values.set(definition.code, value);
-      if (captureSelection) {
-        this.lastChangedFeatureCode = definition.code;
-        if (this.stage === "condition")
-          this.beginConditionDraft(definition.code, this.pendingConnector);
-        else if (this.stage === "target") this.beginActionDraft(definition.code);
-      }
       this.updatePreview();
+      if (captureSelection && anchor) this.showFieldInteractionMenu(definition.code, anchor);
     };
 
     if (definition.dataType === "Multi Enumeration") {
@@ -461,7 +423,7 @@ export default class ConfigurationRuleDesignerView {
         selectedKeys: valueToKeys(initial),
         items: allowed.map((value) => new Item({ key: value.code, text: value.value })),
         selectionFinish: (event: MultiComboBox$SelectionFinishEvent) =>
-          onChange(event.getSource().getSelectedKeys())
+          onChange(event.getSource().getSelectedKeys(), event.getSource())
       });
       readValue = () => input.getSelectedKeys();
       setAvailableValues = (codes) => {
@@ -485,9 +447,9 @@ export default class ConfigurationRuleDesignerView {
         columns: Math.min(3, Math.max(1, allowed.length)),
         selectedIndex: allowed.findIndex((value) => value.code === initial),
         buttons: allowed.map((value) => new RadioButton({ text: value.value })),
-        select: (event) => {
+        select: (event: RadioButtonGroup$SelectEvent) => {
           const index = event.getSource().getSelectedIndex();
-          onChange(allowed[index]?.code);
+          onChange(allowed[index]?.code, event.getSource());
         }
       });
       readValue = () => allowed[input.getSelectedIndex()]?.code;
@@ -526,7 +488,8 @@ export default class ConfigurationRuleDesignerView {
         width: "100%",
         selectedKey: initial === undefined || initial === null ? "" : String(initial),
         items,
-        change: (event: Select$ChangeEvent) => onChange(event.getSource().getSelectedKey())
+        change: (event: Select$ChangeEvent) =>
+          onChange(event.getSource().getSelectedKey(), event.getSource())
       });
       readValue = () => input.getSelectedKey();
       setAvailableValues = (codes) => {
@@ -564,8 +527,9 @@ export default class ConfigurationRuleDesignerView {
             ? `${tr("cmConstraintMaxLength")} ${definition.domain.maxLength ?? "∞"}`
             : tr("cmConstraintEnterValue"),
       liveChange: (event: Input$LiveChangeEvent) =>
-        onChange(event.getParameter("value") ?? "", false),
-      change: () => onChange(input.getValue())
+        onChange(event.getParameter("value") ?? "", event.getSource(), false),
+      change: (event: InputBase$ChangeEvent) =>
+        onChange(event.getSource().getValue(), event.getSource())
     });
     readValue = () => input.getValue();
     setValueState = (state, message) => {
@@ -599,78 +563,138 @@ export default class ConfigurationRuleDesignerView {
     return field;
   }
 
-  private startCondition(connector: ConditionConnector): void {
-    if (this.mode !== "design" || !this.options.canEdit()) return;
-    const selectedFeatureCode = this.lastChangedFeatureCode;
-    this.cancelSelection();
-    this.pendingConnector = connector;
-    if (selectedFeatureCode) {
-      this.beginConditionDraft(selectedFeatureCode, connector);
-      return;
-    }
-    this.stage = "condition";
-    this.stageStatus.setType("Information");
-    this.stageStatus.setText(
-      trFormat(
-        "cmConstraintSelectConditionHint",
-        [tr(connector === "AND" ? "且" : "或")],
-        `请在表单中选取条件值，将以“${connector === "AND" ? "且" : "或"}”连接。`
-      )
-    );
-    this.stageStatus.setVisible(true);
-    this.updateToolbarState();
-  }
-
-  private startAction(type: ConstraintActionType): void {
-    if (this.mode !== "design" || !this.options.canEdit()) return;
-    if (
-      !collectConstraintPredicates(this.currentRule.ast.condition).length ||
-      (this.isNewDraft && !this.newDraftHasCondition)
-    ) {
-      this.stageStatus.setType("Warning");
-      this.stageStatus.setText(tr("cmConstraintAddConditionFirst"));
-      this.stageStatus.setVisible(true);
-      return;
-    }
-    const selectedFeatureCode = this.lastChangedFeatureCode;
-    this.cancelSelection();
-    this.pendingAction = type;
-    if (selectedFeatureCode) {
-      this.beginActionDraft(selectedFeatureCode);
-      return;
-    }
-    this.stage = "target";
-    this.stageStatus.setType("Information");
-    this.stageStatus.setText(
-      trFormat(
-        "cmConstraintSelectTargetHint",
-        [tr(actionLabels[type])],
-        `请选择“${tr(actionLabels[type])}”动作的目标配置项。`
-      )
-    );
-    this.stageStatus.setVisible(true);
-    this.updateToolbarState();
-  }
-
-  private cancelSelection(): void {
-    this.stage = "idle";
+  private dismissInteractionPopover(): void {
+    this.pendingInteractionPopover = undefined;
     this.conditionDraft = undefined;
     this.actionDraft = undefined;
-    this.lastChangedFeatureCode = undefined;
-    this.conditionDraftHost.destroyItems();
-    this.actionDraftHost.destroyItems();
-    this.stageStatus.setVisible(false);
-    this.updateToolbarState();
+    this.interactionMenuHost.destroyItems();
+    this.interactionPopover.close();
   }
 
-  private beginConditionDraft(featureCode: string, connector: ConditionConnector): void {
+  private updateInteractionPopover(anchor: Control, render: () => void): void {
+    if (this.interactionPopoverOpen) {
+      this.pendingInteractionPopover = { anchor, render };
+      this.interactionPopover.close();
+      return;
+    }
+    render();
+    this.openInteractionPopover(anchor);
+  }
+
+  private openInteractionPopover(anchor: Control): void {
+    this.interactionPopover.openBy(anchor);
+    this.interactionPopoverOpen = true;
+  }
+
+  private handleInteractionPopoverAfterClose(): void {
+    this.interactionPopoverOpen = false;
+    const pending = this.pendingInteractionPopover;
+    this.pendingInteractionPopover = undefined;
+    if (!pending || !this.toolbarVisible || this.mode !== "design" || !this.options.canEdit()) {
+      this.conditionDraft = undefined;
+      this.actionDraft = undefined;
+      this.interactionMenuHost.destroyItems();
+      return;
+    }
+    pending.render();
+    this.openInteractionPopover(pending.anchor);
+  }
+
+  private showFieldInteractionMenu(
+    featureCode: string,
+    anchor: Control,
+    feedbackText?: string
+  ): boolean {
+    if (this.mode !== "design" || !this.options.canEdit()) {
+      this.dismissInteractionPopover();
+      return false;
+    }
+    const field = this.fields.get(featureCode);
+    if (!field) return false;
+    const value = asConstraintValue(field.definition, field.getValue());
+    if (value === undefined) {
+      this.dismissInteractionPopover();
+      return false;
+    }
+
+    this.conditionDraft = undefined;
+    this.actionDraft = undefined;
+    this.updateInteractionPopover(anchor, () => {
+      this.interactionMenuHost.destroyItems();
+      if (feedbackText)
+        this.interactionMenuHost.addItem(
+          new ObjectStatus({ text: feedbackText, state: "Success" })
+        );
+      this.interactionMenuHost.addItem(
+        new ObjectStatus({
+          text: this.describeSelectedValue(value, field.definition),
+          state: "Information"
+        }).addStyleClass("cmConstraintDesignerInteractionValue")
+      );
+
+      const addGroupTitle = (text: string): void => {
+        this.interactionMenuHost.addItem(
+          new Text({ text }).addStyleClass("cmConstraintDesignerInteractionGroupTitle")
+        );
+      };
+      const addMenuButton = (text: string, press: () => void): void => {
+        this.interactionMenuHost.addItem(
+          new Button({ text, width: "100%", type: "Transparent", press }).addStyleClass(
+            "cmConstraintDesignerInteractionMenuButton"
+          )
+        );
+      };
+      const hasConfiguredCondition = this.hasConfiguredCondition();
+      if (hasConfiguredCondition) {
+        addGroupTitle(tr("cmConstraintConditionMenu"));
+        for (const connector of ["AND", "OR"] as const)
+          addMenuButton(
+            tr(connector === "AND" ? "cmConstraintAddConditionAnd" : "cmConstraintAddConditionOr"),
+            () => this.beginConditionDraft(featureCode, connector, anchor)
+          );
+      } else {
+        addMenuButton(tr("cmConstraintAddCondition"), () =>
+          this.beginConditionDraft(featureCode, "AND", anchor)
+        );
+      }
+
+      if (hasConfiguredCondition) {
+        addGroupTitle(tr("cmConstraintActionMenu"));
+        for (const type of ["REQUIRE", "EXCLUDE", "RESTRICT", "SET", "DERIVE"] as const)
+          addMenuButton(this.actionLabel(type), () =>
+            this.beginActionDraft(featureCode, type, anchor)
+          );
+      } else {
+        this.interactionMenuHost.addItem(
+          new ObjectStatus({
+            text: tr("cmConstraintAddConditionFirst"),
+            state: "Information"
+          })
+        );
+      }
+
+      this.interactionPopover.setTitle(field.definition.name);
+    });
+    return true;
+  }
+
+  public hasConfiguredCondition(): boolean {
+    return (
+      collectConstraintPredicates(this.currentRule.ast.condition).length > 0 &&
+      (!this.isNewDraft || this.newDraftHasCondition)
+    );
+  }
+
+  private beginConditionDraft(
+    featureCode: string,
+    connector: ConditionConnector,
+    anchor: Control
+  ): void {
     const field = this.fields.get(featureCode);
     if (!field) return;
     const value = asConstraintValue(field.definition, field.getValue());
     if (value === undefined) {
-      this.stageStatus.setType("Warning");
-      this.stageStatus.setText(tr("cmConstraintChooseValueFirst"));
-      this.stageStatus.setVisible(true);
+      MessageToast.show(tr("cmConstraintChooseValueFirst"));
       return;
     }
     const operators = constraintOperatorsFor(field.definition.dataType);
@@ -680,79 +704,71 @@ export default class ConfigurationRuleDesignerView {
       operator: Array.isArray(value) && operators.includes("IN") ? "IN" : "EQUALS",
       value
     };
-    this.lastChangedFeatureCode = undefined;
-    this.renderConditionDraft();
-    this.stage = "idle";
-    this.updateToolbarState();
-    this.stageStatus.setType("Information");
-    this.stageStatus.setText(tr("cmConstraintConditionDraftReady"));
-    this.stageStatus.setVisible(true);
+    this.renderConditionDraft(anchor);
   }
 
-  private renderConditionDraft(): void {
-    this.conditionDraftHost.destroyItems();
+  private renderConditionDraft(anchor: Control): void {
     const draft = this.conditionDraft;
     if (!draft) return;
-    const operatorSelect = new Select({
-      width: "9rem",
-      selectedKey: draft.operator,
-      items: constraintOperatorsFor(draft.feature.dataType).map(
-        (operator) => new Item({ key: operator, text: tr(operatorLabels[operator]) })
-      ),
-      change: (event: Select$ChangeEvent) => {
-        draft.operator = event.getSource().getSelectedKey() as ConstraintOperator;
-        this.renderConditionDraft();
-      }
+    this.updateInteractionPopover(anchor, () => {
+      this.interactionMenuHost.destroyItems();
+      const operatorSelect = new Select({
+        width: "9rem",
+        selectedKey: draft.operator,
+        items: constraintOperatorsFor(draft.feature.dataType).map(
+          (operator) => new Item({ key: operator, text: tr(operatorLabels[operator]) })
+        ),
+        change: (event: Select$ChangeEvent) => {
+          draft.operator = event.getSource().getSelectedKey() as ConstraintOperator;
+          this.renderConditionDraft(anchor);
+        }
+      });
+      this.interactionMenuHost.addItem(
+        new VBox({
+          width: "100%",
+          items: [
+            new ObjectStatus({
+              text: trFormat(
+                "cmConstraintConditionDraft",
+                [draft.feature.name, tr(draft.connector === "AND" ? "且" : "或")],
+                `${draft.feature.name} · ${tr(draft.connector === "AND" ? "且" : "或")}`
+              ),
+              state: "Information"
+            }),
+            new HBox({
+              width: "100%",
+              alignItems: "Center",
+              wrap: "Wrap",
+              items: [
+                operatorSelect,
+                new ObjectStatus({
+                  text: this.describeSelectedValue(draft.value, draft.feature),
+                  state: "Information"
+                }).addStyleClass("cmConstraintDesignerInteractionValue")
+              ]
+            }).addStyleClass("cmConstraintDesignerDraftControls"),
+            new HBox({
+              width: "100%",
+              justifyContent: "End",
+              items: [
+                new Button({
+                  text: tr("cmConstraintAddCondition"),
+                  icon: "sap-icon://add",
+                  type: "Emphasized",
+                  press: () => this.addConditionDraft(draft.value)
+                }),
+                new Button({
+                  text: tr("cmCancel"),
+                  type: "Transparent",
+                  press: () => this.dismissInteractionPopover()
+                })
+              ]
+            })
+          ]
+        }).addStyleClass("cmConstraintDesignerDraft")
+      );
+      this.interactionPopover.setTitle(draft.feature.name);
     });
-    const valueInput = this.buildPredicateValueControl(
-      draft.feature,
-      draft.operator,
-      draft.value,
-      (value) => {
-        draft.value = value;
-      }
-    );
-    this.conditionDraftHost.addItem(
-      new VBox({
-        width: "100%",
-        items: [
-          new ObjectStatus({
-            text: trFormat(
-              "cmConstraintConditionDraft",
-              [draft.feature.name, tr(draft.connector === "AND" ? "且" : "或")],
-              `${draft.feature.name} · ${tr(draft.connector === "AND" ? "且" : "或")}`
-            ),
-            state: "Information"
-          }),
-          new HBox({
-            width: "100%",
-            alignItems: "Center",
-            wrap: "Wrap",
-            items: [operatorSelect, valueInput.control]
-          }).addStyleClass("cmConstraintDesignerDraftControls"),
-          new HBox({
-            width: "100%",
-            justifyContent: "End",
-            items: [
-              new Button({
-                text: tr("cmConstraintAddCondition"),
-                icon: "sap-icon://add",
-                type: "Emphasized",
-                press: () => this.addConditionDraft(valueInput.getValue())
-              }),
-              new Button({
-                text: tr("cmCancel"),
-                type: "Transparent",
-                press: () => {
-                  this.conditionDraft = undefined;
-                  this.conditionDraftHost.destroyItems();
-                }
-              })
-            ]
-          })
-        ]
-      }).addStyleClass("cmConstraintDesignerDraft")
-    );
   }
 
   private addConditionDraft(value: unknown): void {
@@ -784,22 +800,22 @@ export default class ConfigurationRuleDesignerView {
           );
     this.newDraftHasCondition = true;
     this.commitAst({ ...this.currentRule.ast, condition });
-    this.lastChangedFeatureCode = undefined;
-    this.conditionDraft = undefined;
-    this.conditionDraftHost.destroyItems();
-    this.stageStatus.setType("Success");
-    this.stageStatus.setText(tr("cmConstraintConditionAdded"));
-    this.stageStatus.setVisible(true);
+    this.dismissInteractionPopover();
+    MessageToast.show(tr("cmConstraintConditionAdded"));
   }
 
-  private beginActionDraft(featureCode: string): void {
+  private beginActionDraft(featureCode: string, type: ConstraintActionType, anchor: Control): void {
+    if (!this.hasConfiguredCondition()) {
+      MessageToast.show(tr("cmConstraintAddConditionFirst"));
+      return;
+    }
     const field = this.fields.get(featureCode);
     if (!field) return;
-    const operators = constraintOperatorsFor(field.definition.dataType, this.pendingAction);
+    const operators = constraintOperatorsFor(field.definition.dataType, type);
     const preferredOperator =
-      this.pendingAction === "RESTRICT" && operators.includes("GREATER_THAN_OR_EQUAL")
+      type === "RESTRICT" && operators.includes("GREATER_THAN_OR_EQUAL")
         ? "GREATER_THAN_OR_EQUAL"
-        : this.pendingAction === "REQUIRE" &&
+        : type === "REQUIRE" &&
             ["Enumeration", "Reference", "Multi Enumeration"].includes(field.definition.dataType) &&
             operators.includes("IN")
           ? "IN"
@@ -810,90 +826,106 @@ export default class ConfigurationRuleDesignerView {
     if (preferredOperator === "IN" && value !== undefined && !Array.isArray(value)) value = [value];
     this.actionDraft = {
       feature: field.definition,
-      type: this.pendingAction,
+      type,
       operator: preferredOperator,
+      selectedValue: selected,
       value:
         value ??
         (["Integer", "Decimal", "Range"].includes(field.definition.dataType)
           ? field.definition.domain.minimum
           : undefined)
     };
-    this.lastChangedFeatureCode = undefined;
-    this.stage = "idle";
-    this.updateToolbarState();
-    this.renderActionDraft();
-    this.stageStatus.setType("Information");
-    this.stageStatus.setText(tr("cmConstraintTargetDraftReady"));
-    this.stageStatus.setVisible(true);
+    this.renderActionDraft(anchor);
   }
 
-  private renderActionDraft(): void {
-    this.actionDraftHost.destroyItems();
+  private renderActionDraft(anchor: Control): void {
     const draft = this.actionDraft;
     if (!draft) return;
-    const operators = constraintOperatorsFor(draft.feature.dataType, draft.type);
-    if (!operators.includes(draft.operator))
-      draft.operator = operators.includes("EQUALS") ? "EQUALS" : (operators[0] ?? "EQUALS");
-    const operatorSelect = new Select({
-      width: "9rem",
-      selectedKey: draft.operator,
-      items: operators.map(
-        (operator) => new Item({ key: operator, text: tr(operatorLabels[operator]) })
-      ),
-      change: (event: Select$ChangeEvent) => {
-        draft.operator = event.getSource().getSelectedKey() as ConstraintOperator;
-        this.renderActionDraft();
-      }
-    });
-    const valueEditor = this.buildPredicateValueControl(
-      draft.feature,
-      draft.operator,
-      draft.value,
-      (value) => {
-        draft.value = value;
-      }
-    );
-    this.actionDraftHost.addItem(
-      new VBox({
-        width: "100%",
-        items: [
-          new ObjectStatus({
-            text: trFormat(
-              "cmConstraintActionDraft",
-              [tr(actionLabels[draft.type]), draft.feature.name],
-              `${tr(actionLabels[draft.type])} · ${draft.feature.name}`
-            ),
+    this.updateInteractionPopover(anchor, () => {
+      this.interactionMenuHost.destroyItems();
+      const operators = constraintOperatorsFor(draft.feature.dataType, draft.type);
+      if (!operators.includes(draft.operator))
+        draft.operator = operators.includes("EQUALS") ? "EQUALS" : (operators[0] ?? "EQUALS");
+      const operatorSelect = new Select({
+        width: "9rem",
+        selectedKey: draft.operator,
+        items: operators.map(
+          (operator) => new Item({ key: operator, text: tr(operatorLabels[operator]) })
+        ),
+        change: (event: Select$ChangeEvent) => {
+          const operator = event.getSource().getSelectedKey() as ConstraintOperator;
+          draft.operator = operator;
+          if (
+            (operator === "EQUALS" || operator === "NOT_EQUALS") &&
+            draft.selectedValue !== undefined
+          )
+            draft.value = draft.selectedValue;
+          this.renderActionDraft(anchor);
+        }
+      });
+      let valueEditor: ValueControl;
+      if (
+        (draft.operator === "EQUALS" || draft.operator === "NOT_EQUALS") &&
+        draft.selectedValue !== undefined
+      ) {
+        const selectedValue = draft.selectedValue;
+        valueEditor = {
+          control: new ObjectStatus({
+            text: this.describeSelectedValue(selectedValue, draft.feature),
             state: "Information"
-          }),
-          new HBox({
-            width: "100%",
-            alignItems: "Center",
-            wrap: "Wrap",
-            items: [operatorSelect, valueEditor.control]
-          }).addStyleClass("cmConstraintDesignerDraftControls"),
-          new HBox({
-            width: "100%",
-            justifyContent: "End",
-            items: [
-              new Button({
-                text: tr("cmConstraintAddRelation"),
-                icon: "sap-icon://accept",
-                type: "Emphasized",
-                press: () => this.addActionDraft(valueEditor.getValue())
-              }),
-              new Button({
-                text: tr("cmCancel"),
-                type: "Transparent",
-                press: () => {
-                  this.actionDraft = undefined;
-                  this.actionDraftHost.destroyItems();
-                }
-              })
-            ]
-          })
-        ]
-      }).addStyleClass("cmConstraintDesignerDraft")
-    );
+          }).addStyleClass("cmConstraintDesignerInteractionValue"),
+          getValue: () => selectedValue
+        };
+      } else {
+        valueEditor = this.buildPredicateValueControl(
+          draft.feature,
+          draft.operator,
+          draft.value,
+          (value) => {
+            draft.value = value;
+          }
+        );
+      }
+      this.interactionMenuHost.addItem(
+        new VBox({
+          width: "100%",
+          items: [
+            new ObjectStatus({
+              text: trFormat(
+                "cmConstraintActionDraft",
+                [tr(actionLabels[draft.type]), draft.feature.name],
+                `${tr(actionLabels[draft.type])} · ${draft.feature.name}`
+              ),
+              state: "Information"
+            }),
+            new HBox({
+              width: "100%",
+              alignItems: "Center",
+              wrap: "Wrap",
+              items: [operatorSelect, valueEditor.control]
+            }).addStyleClass("cmConstraintDesignerDraftControls"),
+            new HBox({
+              width: "100%",
+              justifyContent: "End",
+              items: [
+                new Button({
+                  text: tr("cmConstraintAddRelation"),
+                  icon: "sap-icon://accept",
+                  type: "Emphasized",
+                  press: () => this.addActionDraft(valueEditor.getValue())
+                }),
+                new Button({
+                  text: tr("cmCancel"),
+                  type: "Transparent",
+                  press: () => this.dismissInteractionPopover()
+                })
+              ]
+            })
+          ]
+        }).addStyleClass("cmConstraintDesignerDraft")
+      );
+      this.interactionPopover.setTitle(draft.feature.name);
+    });
   }
 
   private addActionDraft(value: unknown): void {
@@ -922,12 +954,8 @@ export default class ConfigurationRuleDesignerView {
       isNew && !this.newDraftHasAction ? [action] : [...this.currentRule.ast.actions, action];
     this.newDraftHasAction = true;
     this.commitAst({ ...this.currentRule.ast, actions });
-    this.lastChangedFeatureCode = undefined;
-    this.actionDraft = undefined;
-    this.actionDraftHost.destroyItems();
-    this.stageStatus.setType("Success");
-    this.stageStatus.setText(tr("cmConstraintRelationAdded"));
-    this.stageStatus.setVisible(true);
+    this.dismissInteractionPopover();
+    MessageToast.show(tr("cmConstraintRelationAdded"));
   }
 
   private buildPredicateValueControl(
@@ -1014,19 +1042,7 @@ export default class ConfigurationRuleDesignerView {
   }
 
   private updateToolbarState(): void {
-    const canDesign =
-      this.toolbarVisible && this.mode === "design" && this.options.context.status === "Draft";
-    const hasConfiguredCondition =
-      collectConstraintPredicates(this.currentRule.ast.condition).length > 0 &&
-      (!this.isNewDraft || this.newDraftHasCondition);
-    const canSelect =
-      canDesign && this.stage === "idle" && !this.conditionDraft && !this.actionDraft;
     this.modeSelector.setVisible(this.toolbarVisible);
-    this.conditionSelect.setVisible(this.toolbarVisible);
-    this.conditionSelect.setEnabled(canSelect);
-    this.actionSelect.setVisible(this.toolbarVisible);
-    this.actionSelect.setEnabled(canSelect && hasConfiguredCondition);
-    this.cancelSelectionButton?.setVisible(canDesign && this.stage !== "idle");
   }
 
   private updateFieldRelations(condition: ConstraintExpression): void {
@@ -1234,6 +1250,15 @@ export default class ConfigurationRuleDesignerView {
     return feature?.domain.values.find((item) => item.code === value)?.value ?? value;
   }
 
+  private describeSelectedValue(
+    value: ConstraintLiteral | ConstraintLiteral[],
+    feature: FeatureDefinition
+  ): string {
+    return (Array.isArray(value) ? value : [value])
+      .map((item) => this.describeLiteral(item, feature))
+      .join(", ");
+  }
+
   private actionLabel(type: ConstraintActionType): string {
     return tr(actionLabels[type]);
   }
@@ -1244,7 +1269,7 @@ export default class ConfigurationRuleDesignerView {
       return;
     }
     this.mode = mode;
-    this.cancelSelection();
+    if (mode !== "design") this.dismissInteractionPopover();
     this.modeSelector.setSelectedKey(mode);
     this.updateToolbarState();
     this.updatePreview();
