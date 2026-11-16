@@ -42,6 +42,12 @@ export interface ConstraintAction {
   target: ConstraintExpression;
 }
 
+export interface ConstraintRelationship {
+  source: string;
+  target: string;
+  type: ConstraintActionType;
+}
+
 export interface ConstraintRuleAst {
   condition: ConstraintExpression;
   actions: ConstraintAction[];
@@ -619,6 +625,32 @@ export function collectConstraintPredicates(
     return expression.expressions.flatMap(collectConstraintPredicates);
   if ("expression" in expression) return collectConstraintPredicates(expression.expression);
   return [expression];
+}
+
+export function constraintRelationshipsForRule(
+  rule: Pick<ConstraintRule, "ast">
+): ConstraintRelationship[] {
+  const sources = [
+    ...new Set(
+      collectConstraintPredicates(rule.ast.condition).map((predicate) => predicate.feature)
+    )
+  ];
+  const relationships = new Map<string, ConstraintRelationship>();
+
+  for (const action of rule.ast.actions) {
+    const targets = new Set(
+      collectConstraintPredicates(action.target).map((predicate) => predicate.feature)
+    );
+    for (const source of sources) {
+      for (const target of targets) {
+        if (source === target) continue;
+        const relation = { source, target, type: action.type };
+        relationships.set(JSON.stringify([source, target, action.type]), relation);
+      }
+    }
+  }
+
+  return [...relationships.values()];
 }
 
 export function constraintOperatorsFor(

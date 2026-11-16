@@ -18,6 +18,7 @@ import {
   appendConstraintPredicate,
   activeConstraintEffects,
   constraintEffectAllowedValues,
+  constraintRelationshipsForRule,
   reconcileConstrainedSelection,
   createConstraintRule,
   createConstraintRuleSamples,
@@ -30,6 +31,7 @@ import {
   parseConstraintExpression,
   validateConstraintRule
 } from "../webapp/model/constraintRules.ts";
+import { assignConstraintRelationshipLanes } from "../webapp/controller/configuration/ConstraintRelationshipOverlay.ts";
 
 test("seed vocabulary has valid links and all ten data types", () => {
   const store = createSeed();
@@ -462,6 +464,44 @@ test("constraint seeds use current context features and respect value domains", 
   assert.equal(rules[0].ast.actions[0].type, "REQUIRE");
   assert.match(rules[0].expression, /SUNROOF_TYPE == "PANORAMIC"/);
   assert.match(rules[0].expression, /INTERIOR_PACKAGE == "PREMIUM"/);
+});
+
+test("constraint relationships project condition features to action features without self-links", () => {
+  const relationships = constraintRelationshipsForRule({
+    ast: {
+      condition: {
+        type: "AND",
+        expressions: [
+          { type: "EQUALS", feature: "ENGINE", value: "ELECTRIC" },
+          { type: "EQUALS", feature: "TRIM", value: "PREMIUM" }
+        ]
+      },
+      actions: [
+        { type: "REQUIRE", target: { type: "EQUALS", feature: "BATTERY", value: 80 } },
+        { type: "EXCLUDE", target: { type: "EQUALS", feature: "ENGINE", value: "DIESEL" } }
+      ]
+    }
+  });
+
+  assert.deepEqual(relationships, [
+    { source: "ENGINE", target: "BATTERY", type: "REQUIRE" },
+    { source: "TRIM", target: "BATTERY", type: "REQUIRE" },
+    { source: "TRIM", target: "ENGINE", type: "EXCLUDE" }
+  ]);
+});
+
+test("constraint relationship lanes separate overlapping spans and reuse free tracks", () => {
+  const spans = [
+    { key: "first", top: 10, bottom: 40, lane: 0 },
+    { key: "overlap", top: 20, bottom: 50, lane: 0 },
+    { key: "after", top: 60, bottom: 80, lane: 0 }
+  ];
+
+  assert.equal(assignConstraintRelationshipLanes(spans), 2);
+  assert.deepEqual(
+    spans.map(({ lane }) => lane),
+    [0, 1, 0]
+  );
 });
 
 test("constraint preview reports triggered REQUIRE and EXCLUDE conflicts without changing selections", () => {

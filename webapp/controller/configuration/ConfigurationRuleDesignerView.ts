@@ -16,6 +16,7 @@ import Select from "sap/m/Select";
 import Text from "sap/m/Text";
 import VBox from "sap/m/VBox";
 import Control from "sap/ui/core/Control";
+import CustomData from "sap/ui/core/CustomData";
 import FlexItemData from "sap/m/FlexItemData";
 import ObjectPageLayout from "sap/uxap/ObjectPageLayout";
 import ObjectPageSection from "sap/uxap/ObjectPageSection";
@@ -47,8 +48,10 @@ import {
   normalizeConstraintConditionForDesigner,
   reconcileConstrainedSelection,
   removeConstraintExpressionAtPath,
+  constraintRelationshipsForRule,
   validateConstraintRule
 } from "../../model/constraintRules";
+import ConstraintRelationshipOverlay from "./ConstraintRelationshipOverlay";
 import type {
   ConstraintAction,
   ConstraintActionType,
@@ -109,8 +112,10 @@ interface LazyFormSection {
   contentHost: VBox;
   form: VBox;
   placeholder: VBox;
+  featureCodes: Set<string>;
   estimatedHeight: number;
   materialized: boolean;
+  pinned: boolean;
 }
 
 interface PendingInteractionPopover {
@@ -268,7 +273,9 @@ export default class ConfigurationRuleDesignerView {
       if (section) this.materializeObjectPageSection(section);
     }
   }).addStyleClass("cmConstraintObjectPage");
+  private readonly relationshipOverlay: ConstraintRelationshipOverlay;
   private readonly lazyFormSections: LazyFormSection[] = [];
+  private readonly pendingLazySectionFrames = new Map<LazyFormSection, number>();
   private lazySectionObserver?: IntersectionObserver;
   private lazyObserverRoot?: Element;
   private readonly observedLazySections = new Map<ObjectPageSection, Element>();
@@ -304,8 +311,13 @@ export default class ConfigurationRuleDesignerView {
     this.isNewDraft = options.isNewDraft();
     this.modelReadiness = validateContext(options.store, options.context.id);
     this.mode = options.context.status === "Draft" ? "design" : "configure";
+    this.relationshipOverlay = new ConstraintRelationshipOverlay(this.objectPage);
     this.objectPage.addEventDelegate({
-      onAfterRendering: () => this.observeLazyFormSections()
+      onBeforeRendering: () => this.relationshipOverlay.beforeRendering(),
+      onAfterRendering: () => {
+        this.observeLazyFormSections();
+        this.relationshipOverlay.afterRendering();
+      }
     });
     this.interactionPopover = new Popover({
       title: "",
@@ -348,6 +360,25 @@ export default class ConfigurationRuleDesignerView {
     this.updateToolbarState();
   }
 
+  private updateRelationshipSections(
+    relationships: ReturnType<typeof constraintRelationshipsForRule>
+  ): void {
+    const relatedFeatures = new Set(
+      relationships.flatMap(({ source, target }) => [source, target])
+    );
+    for (const entry of this.lazyFormSections) {
+      const pinned = [...entry.featureCodes].some((code) => relatedFeatures.has(code));
+      if (pinned === entry.pinned) continue;
+      entry.pinned = pinned;
+      const sectionDom = this.observedLazySections.get(entry.section);
+      if (pinned) this.materializeLazyFormSection(entry);
+      else if (sectionDom && this.lazySectionObserver) {
+        this.lazySectionObserver.unobserve(sectionDom);
+        this.lazySectionObserver.observe(sectionDom);
+      }
+    }
+  }
+
   public build(): VBox {
     const scrollContent = new VBox({
       width: "100%",
@@ -385,6 +416,7 @@ export default class ConfigurationRuleDesignerView {
 
   public dispose(): void {
     this.dismissInteractionPopover();
+    this.relationshipOverlay.dispose();
     this.clearLazyFormSections();
   }
 
@@ -410,6 +442,7 @@ export default class ConfigurationRuleDesignerView {
         .filter((family) => family.groupId === group.id && family.active)
         .sort((left, right) => left.sort - right.sort);
       const items: Control[] = [];
+      const featureCodes = new Set<string>();
       let estimatedHeight = 48;
       for (const family of familyContainers) {
         const definitions = this.options.store.references
@@ -429,6 +462,7 @@ export default class ConfigurationRuleDesignerView {
         const featureItems: Control[] = [];
         let familyEstimatedHeight = 50;
         for (const definition of definitions) {
+          featureCodes.add(definition.code);
           const field = this.buildField(definition, family.businessQuestion);
           const optionCount = definition.domain.values.filter((value) => value.active).length;
           const showFeatureLabel = definitions.length > 1 || definition.name !== family.name;
@@ -449,7 +483,15 @@ export default class ConfigurationRuleDesignerView {
               alignItems: "Center",
               justifyContent: "SpaceBetween",
               items: [field.control, field.relationStatus]
-            }).addStyleClass("cmConstraintDesignerFieldRow cmConstraintDesignerFeatureControl")
+            })
+              .addCustomData(
+                new CustomData({
+                  key: "constraint-feature",
+                  value: definition.code,
+                  writeToDom: true
+                })
+              )
+              .addStyleClass("cmConstraintDesignerFieldRow cmConstraintDesignerFeatureControl")
           );
           const usesRadioGroup =
             ["Enumeration", "Reference"].includes(definition.dataType) && optionCount <= 6;
@@ -510,8 +552,10 @@ export default class ConfigurationRuleDesignerView {
         contentHost,
         form,
         placeholder,
+        featureCodes,
         estimatedHeight,
-        materialized: false
+        materialized: false,
+        pinned: false
       };
       this.lazyFormSections.push(lazySection);
       this.objectPage.addSection(section);
@@ -571,17 +615,24 @@ export default class ConfigurationRuleDesignerView {
     entry.contentHost.removeItem(entry.placeholder);
     entry.contentHost.insertItem(entry.form, placeholderIndex);
     entry.materialized = true;
-    window.requestAnimationFrame(() => {
+    const frame = window.requestAnimationFrame(() => {
+      this.pendingLazySectionFrames.delete(entry);
       if (!entry.materialized) return;
       const height = entry.form.getDomRef()?.getBoundingClientRect().height;
       if (!height || !Number.isFinite(height)) return;
       entry.estimatedHeight = Math.ceil(height);
       entry.placeholder.setHeight(`${entry.estimatedHeight}px`);
     });
+    this.pendingLazySectionFrames.set(entry, frame);
   }
 
   private dematerializeLazyFormSection(entry: LazyFormSection): void {
-    if (!entry.materialized) return;
+    if (!entry.materialized || entry.pinned) return;
+    const pendingFrame = this.pendingLazySectionFrames.get(entry);
+    if (pendingFrame !== undefined) {
+      window.cancelAnimationFrame(pendingFrame);
+      this.pendingLazySectionFrames.delete(entry);
+    }
     const formDom = entry.form.getDomRef();
     const activeElement = document.activeElement;
     if (formDom && activeElement && formDom.contains(activeElement)) {
@@ -605,6 +656,8 @@ export default class ConfigurationRuleDesignerView {
     this.lazySectionObserver = undefined;
     this.lazyObserverRoot = undefined;
     this.observedLazySections.clear();
+    this.pendingLazySectionFrames.forEach((frame) => window.cancelAnimationFrame(frame));
+    this.pendingLazySectionFrames.clear();
     this.lazyFormSections.forEach((entry) => {
       if (entry.materialized) entry.placeholder.destroy();
       else entry.form.destroy();
@@ -1472,6 +1525,9 @@ export default class ConfigurationRuleDesignerView {
   }
 
   private renderRelations(): void {
+    const relationships = constraintRelationshipsForRule(this.currentRule);
+    this.relationshipOverlay.setRelationships(relationships);
+    this.updateRelationshipSections(relationships);
     const projectedCondition = normalizeConstraintConditionForDesigner(
       this.currentRule.ast.condition
     );
