@@ -220,8 +220,9 @@ export default class ConstraintRelationshipOverlay {
 
   private updateStickyHeaders(scrollRoot: HTMLElement): void {
     const rootRect = scrollRoot.getBoundingClientRect();
-    const stickyTitle =
-      this.objectPage.getDomRef()?.querySelector<HTMLElement>(".sapUxAPObjectPageHeaderTitle");
+    const stickyTitle = this.objectPage
+      .getDomRef()
+      ?.querySelector<HTMLElement>(".sapUxAPObjectPageHeaderTitle");
     const stickyBoundary = Math.max(
       rootRect.top,
       stickyTitle?.getBoundingClientRect().bottom ?? rootRect.top
