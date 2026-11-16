@@ -1,8 +1,4 @@
 import Button from "sap/m/Button";
-import Form from "sap/ui/layout/form/Form";
-import FormContainer from "sap/ui/layout/form/FormContainer";
-import FormElement from "sap/ui/layout/form/FormElement";
-import ColumnLayout from "sap/ui/layout/form/ColumnLayout";
 import HBox from "sap/m/HBox";
 import Input from "sap/m/Input";
 import Item from "sap/ui/core/Item";
@@ -30,6 +26,10 @@ import type { MultiComboBox$SelectionFinishEvent } from "sap/m/MultiComboBox";
 import type { RadioButtonGroup$SelectEvent } from "sap/m/RadioButtonGroup";
 import type { SegmentedButton$SelectionChangeEvent } from "sap/m/SegmentedButton";
 import type { Select$ChangeEvent } from "sap/m/Select";
+import type {
+  ObjectPageLayout$NavigateEvent,
+  ObjectPageLayout$SectionChangeEvent
+} from "sap/uxap/ObjectPageLayout";
 import { resolveDefinition, validateContext, validateValue } from "../../model/configuration";
 import type {
   ConfigurationContext,
@@ -46,6 +46,7 @@ import {
   formatConstraintExpression,
   normalizeConstraintConditionForDesigner,
   reconcileConstrainedSelection,
+  removeConstraintExpressionAtPath,
   validateConstraintRule
 } from "../../model/constraintRules";
 import type {
@@ -83,6 +84,7 @@ interface ConditionDraft {
   connector: ConditionConnector;
   operator: ConstraintOperator;
   value: ConstraintLiteral | ConstraintLiteral[];
+  editPath?: ExpressionPathPart[];
 }
 
 interface ActionDraft {
@@ -91,6 +93,24 @@ interface ActionDraft {
   operator: ConstraintOperator;
   selectedValue?: ConstraintLiteral | ConstraintLiteral[];
   value: unknown;
+  actionIndex?: number;
+  targetPath?: ExpressionPathPart[];
+}
+
+type ExpressionPathPart = number | "expression";
+
+interface PredicatePathEntry {
+  predicate: ConstraintPredicate;
+  path: ExpressionPathPart[];
+}
+
+interface LazyFormSection {
+  section: ObjectPageSection;
+  contentHost: VBox;
+  form: VBox;
+  placeholder: VBox;
+  estimatedHeight: number;
+  materialized: boolean;
 }
 
 interface PendingInteractionPopover {
@@ -108,6 +128,42 @@ interface ConfigurationRuleDesignerOptions {
   isNewDraft: () => boolean;
   canEdit: () => boolean;
   onRuleChange: (rule: ConstraintRule) => void;
+}
+
+function predicatePathsForFeature(
+  expression: ConstraintExpression,
+  featureCode: string,
+  path: ExpressionPathPart[] = []
+): PredicatePathEntry[] {
+  if ("feature" in expression)
+    return expression.feature === featureCode ? [{ predicate: expression, path }] : [];
+  if (expression.type === "NOT")
+    return predicatePathsForFeature(expression.expression, featureCode, [...path, "expression"]);
+  return expression.expressions.flatMap((child, index) =>
+    predicatePathsForFeature(child, featureCode, [...path, index])
+  );
+}
+
+function replaceExpressionAtPath(
+  expression: ConstraintExpression,
+  path: ExpressionPathPart[],
+  replacement: ConstraintExpression
+): ConstraintExpression {
+  const [part, ...remaining] = path;
+  if (part === undefined) return replacement;
+  if (typeof part === "number" && "expressions" in expression)
+    return {
+      ...expression,
+      expressions: expression.expressions.map((child, index) =>
+        index === part ? replaceExpressionAtPath(child, remaining, replacement) : child
+      )
+    };
+  if (part === "expression" && expression.type === "NOT")
+    return {
+      ...expression,
+      expression: replaceExpressionAtPath(expression.expression, remaining, replacement)
+    };
+  return expression;
 }
 
 const operatorLabels: Record<ConstraintOperator, string> = {
@@ -202,8 +258,20 @@ export default class ConfigurationRuleDesignerView {
     upperCaseAnchorBar: false,
     showHeaderContent: false,
     useIconTabBar: false,
-    enableLazyLoading: false
+    enableLazyLoading: false,
+    navigate: (event: ObjectPageLayout$NavigateEvent) => {
+      const section = event.getParameter("section");
+      if (section) this.materializeObjectPageSection(section);
+    },
+    sectionChange: (event: ObjectPageLayout$SectionChangeEvent) => {
+      const section = event.getParameter("section");
+      if (section) this.materializeObjectPageSection(section);
+    }
   }).addStyleClass("cmConstraintObjectPage");
+  private readonly lazyFormSections: LazyFormSection[] = [];
+  private lazySectionObserver?: IntersectionObserver;
+  private lazyObserverRoot?: Element;
+  private readonly observedLazySections = new Map<ObjectPageSection, Element>();
   private readonly fields = new Map<string, DesignerField>();
   private readonly values = new Map<string, unknown>();
   private readonly interactionMenuHost = new VBox({ width: "100%" }).addStyleClass(
@@ -211,9 +279,13 @@ export default class ConfigurationRuleDesignerView {
   );
   private readonly interactionPopover: Popover;
   private interactionPopoverOpen = false;
+  private interactionPopoverAnchor?: Control;
   private pendingInteractionPopover?: PendingInteractionPopover;
   private readonly validationHost = new VBox({ width: "100%" });
   private readonly previewFeedbackHost = new VBox({ width: "100%" });
+  private readonly messageOverlay = new VBox({
+    items: [this.validationHost, this.previewFeedbackHost]
+  }).addStyleClass("cmConstraintDesignerMessageOverlay");
   private readonly modelReadiness: string[];
   private readonly modeSelector: SegmentedButton;
   private toolbarVisible = true;
@@ -232,9 +304,12 @@ export default class ConfigurationRuleDesignerView {
     this.isNewDraft = options.isNewDraft();
     this.modelReadiness = validateContext(options.store, options.context.id);
     this.mode = options.context.status === "Draft" ? "design" : "configure";
+    this.objectPage.addEventDelegate({
+      onAfterRendering: () => this.observeLazyFormSections()
+    });
     this.interactionPopover = new Popover({
       title: "",
-      placement: "VerticalPreferredBottom",
+      placement: "HorizontalPreferredRight",
       contentWidth: "18rem",
       modal: false,
       showHeader: true,
@@ -277,7 +352,7 @@ export default class ConfigurationRuleDesignerView {
     const scrollContent = new VBox({
       width: "100%",
       fitContainer: true,
-      items: [this.validationHost, this.previewFeedbackHost, this.objectPage]
+      items: [this.objectPage, this.messageOverlay]
     }).addStyleClass("cmConstraintDesignerContent");
     this.objectPage.setLayoutData(
       new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
@@ -308,6 +383,11 @@ export default class ConfigurationRuleDesignerView {
     this.updatePreview();
   }
 
+  public dispose(): void {
+    this.dismissInteractionPopover();
+    this.clearLazyFormSections();
+  }
+
   public setConfigureMode(): void {
     this.setMode("configure");
   }
@@ -317,6 +397,7 @@ export default class ConfigurationRuleDesignerView {
   }
 
   private buildForm(): void {
+    this.clearLazyFormSections();
     this.fields.clear();
     this.values.clear();
     this.objectPage.destroySections();
@@ -328,79 +409,207 @@ export default class ConfigurationRuleDesignerView {
       const familyContainers = this.options.store.families
         .filter((family) => family.groupId === group.id && family.active)
         .sort((left, right) => left.sort - right.sort);
-      const elements: FormElement[] = [];
+      const items: Control[] = [];
+      let estimatedHeight = 48;
       for (const family of familyContainers) {
         const definitions = this.options.store.references
           .filter((reference) => reference.familyId === family.id)
           .map((reference) => resolveDefinition(this.options.store, reference))
           .filter((definition) => definition.active);
-        elements.push(
-          new FormElement({
-            label: new Label({
-              text: family.displayName || family.name,
-              design: "Bold",
-              required: definitions.some((definition) => definition.mandatory)
-            }),
-            fields: [
-              new Text({
-                text: family.businessQuestion,
-                wrapping: true
-              }).addStyleClass("cmConstraintDesignerQuestion")
-            ]
-          })
-        );
+        const familyItems: Control[] = [
+          new Label({
+            text: family.displayName || family.name,
+            design: "Bold"
+          }).addStyleClass("cmConstraintDesignerFamilyTitle"),
+          new Text({
+            text: family.businessQuestion,
+            wrapping: true
+          }).addStyleClass("cmPreviewQuestion cmConstraintDesignerFamilyDescription")
+        ];
+        const featureItems: Control[] = [];
+        let familyEstimatedHeight = 50;
         for (const definition of definitions) {
           const field = this.buildField(definition, family.businessQuestion);
-          const showFeatureLabel =
-            definitions.length > 1 &&
-            definition.name !== family.displayName &&
-            definition.name !== family.name;
-          elements.push(
-            new FormElement({
-              label: new Label({
-                text: showFeatureLabel
-                  ? `${definition.name}${definition.unit ? ` (${definition.unit})` : ""}`
-                  : "",
-                required: showFeatureLabel && definition.mandatory,
-                tooltip: family.businessQuestion || definition.description
-              }),
-              fields: [field.control, field.relationStatus]
-            })
+          const optionCount = definition.domain.values.filter((value) => value.active).length;
+          const showFeatureLabel = definitions.length > 1 || definition.name !== family.name;
+          if (showFeatureLabel)
+            featureItems.push(
+              new Label({
+                text: `${definition.name}${definition.unit ? ` (${definition.unit})` : ""}`,
+                required: definition.mandatory
+              }).addStyleClass("cmConstraintDesignerFeatureLabel")
+            );
+          field.control.setLayoutData(
+            new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minWidth: "0" })
           );
+          field.relationStatus.setLayoutData(new FlexItemData({ shrinkFactor: 0 }));
+          featureItems.push(
+            new HBox({
+              width: "100%",
+              alignItems: "Center",
+              justifyContent: "SpaceBetween",
+              items: [field.control, field.relationStatus]
+            }).addStyleClass("cmConstraintDesignerFieldRow cmConstraintDesignerFeatureControl")
+          );
+          const usesRadioGroup =
+            ["Enumeration", "Reference"].includes(definition.dataType) && optionCount <= 6;
+          const radioRows = usesRadioGroup ? Math.ceil(Math.max(1, optionCount) / 3) : 1;
+          familyEstimatedHeight +=
+            (showFeatureLabel ? 26 : 0) + (usesRadioGroup ? radioRows * 32 : 32) + 6;
+          if (["Decimal", "Integer", "Range"].includes(definition.dataType)) {
+            featureItems.push(
+              new Text({
+                text: `${definition.domain.minimum ?? "不限"} – ${definition.domain.maximum ?? "不限"} ${definition.unit}  ·  Step ${definition.domain.step ?? "Any"}`
+              }).addStyleClass("cmDomainHint")
+            );
+            familyEstimatedHeight += 24;
+          }
         }
-      }
-      if (elements.length)
-        this.objectPage.addSection(
-          new ObjectPageSection({
-            title: group.name,
-            titleUppercase: false,
-            subSections: [
-              new ObjectPageSubSection({
-                title: group.name,
-                titleUppercase: false,
-                blocks: [
-                  new Form({
-                    editable: true,
-                    width: "auto",
-                    layout: new ColumnLayout({
-                      columnsM: 1,
-                      columnsL: 1,
-                      columnsXL: 1
-                    }),
-                    formContainers: [
-                      new FormContainer({
-                        formElements: elements
-                      })
-                    ]
-                  }).addStyleClass(
-                    "cmConstraintDesignerForm sapUxAPObjectPageSubSectionAlignContent"
-                  )
-                ]
-              })
-            ]
-          })
+        familyItems.push(
+          new VBox({
+            width: "100%",
+            items: featureItems
+          }).addStyleClass("cmConstraintDesignerFamilyFields")
         );
+        items.push(
+          new VBox({
+            width: "100%",
+            items: familyItems
+          }).addStyleClass("cmConstraintDesignerFamily")
+        );
+        estimatedHeight += familyEstimatedHeight;
+      }
+      if (!items.length) continue;
+
+      const form = new VBox({
+        items
+      }).addStyleClass("cmConstraintDesignerForm cmPreviewForm");
+      const placeholder = new VBox({
+        width: "100%",
+        height: `${estimatedHeight}px`,
+        justifyContent: "Center",
+        alignItems: "Center",
+        items: [new Text({ text: tr("cmConstraintSectionLoading") })]
+      }).addStyleClass("cmConstraintDesignerLazySectionPlaceholder");
+      const contentHost = new VBox({
+        width: "100%",
+        items: [placeholder]
+      }).addStyleClass("cmConstraintDesignerLazySectionContent");
+      const subSection = new ObjectPageSubSection({
+        title: group.name,
+        titleUppercase: false,
+        blocks: [contentHost]
+      });
+      const section = new ObjectPageSection({
+        title: group.name,
+        titleUppercase: false,
+        subSections: [subSection]
+      });
+      const lazySection: LazyFormSection = {
+        section,
+        contentHost,
+        form,
+        placeholder,
+        estimatedHeight,
+        materialized: false
+      };
+      this.lazyFormSections.push(lazySection);
+      this.objectPage.addSection(section);
     }
+
+    if (this.lazyFormSections[0]) this.materializeLazyFormSection(this.lazyFormSections[0]);
+  }
+
+  private materializeObjectPageSection(section: ObjectPageSection): void {
+    const entry = this.lazyFormSections.find((candidate) => candidate.section === section);
+    if (entry) this.materializeLazyFormSection(entry);
+  }
+
+  private observeLazyFormSections(): void {
+    const root = this.objectPage.getDomRef()?.querySelector(".sapUxAPObjectPageWrapper");
+    if (!root || typeof IntersectionObserver === "undefined") {
+      this.lazyFormSections.slice(0, 2).forEach((entry) => this.materializeLazyFormSection(entry));
+      return;
+    }
+
+    if (!this.lazySectionObserver || this.lazyObserverRoot !== root) {
+      this.lazySectionObserver?.disconnect();
+      this.lazyObserverRoot = root;
+      this.observedLazySections.clear();
+      this.lazySectionObserver = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((intersection) => {
+            const entry = this.lazyFormSections.find(
+              (candidate) =>
+                this.observedLazySections.get(candidate.section) === intersection.target
+            );
+            if (!entry) return;
+            if (intersection.isIntersecting) this.materializeLazyFormSection(entry);
+            else this.dematerializeLazyFormSection(entry);
+          });
+        },
+        { root, rootMargin: "200px 0px" }
+      );
+    }
+
+    this.lazyFormSections.forEach((entry) => {
+      const section = entry.section.getDomRef();
+      const observed = this.observedLazySections.get(entry.section);
+      if (section === observed) return;
+      if (observed) this.lazySectionObserver?.unobserve(observed);
+      if (section) {
+        this.observedLazySections.set(entry.section, section);
+        this.lazySectionObserver?.observe(section);
+      } else this.observedLazySections.delete(entry.section);
+    });
+  }
+
+  private materializeLazyFormSection(entry: LazyFormSection): void {
+    if (entry.materialized) return;
+    const placeholderIndex = entry.contentHost.indexOfItem(entry.placeholder);
+    if (placeholderIndex < 0) return;
+    entry.contentHost.removeItem(entry.placeholder);
+    entry.contentHost.insertItem(entry.form, placeholderIndex);
+    entry.materialized = true;
+    window.requestAnimationFrame(() => {
+      if (!entry.materialized) return;
+      const height = entry.form.getDomRef()?.getBoundingClientRect().height;
+      if (!height || !Number.isFinite(height)) return;
+      entry.estimatedHeight = Math.ceil(height);
+      entry.placeholder.setHeight(`${entry.estimatedHeight}px`);
+    });
+  }
+
+  private dematerializeLazyFormSection(entry: LazyFormSection): void {
+    if (!entry.materialized) return;
+    const formDom = entry.form.getDomRef();
+    const activeElement = document.activeElement;
+    if (formDom && activeElement && formDom.contains(activeElement)) {
+      if (activeElement instanceof HTMLElement) activeElement.blur();
+      this.dismissInteractionPopover();
+    }
+    const height = formDom?.getBoundingClientRect().height;
+    if (height && Number.isFinite(height)) {
+      entry.estimatedHeight = Math.ceil(height);
+      entry.placeholder.setHeight(`${entry.estimatedHeight}px`);
+    }
+    const formIndex = entry.contentHost.indexOfItem(entry.form);
+    if (formIndex < 0) return;
+    entry.contentHost.removeItem(entry.form);
+    entry.contentHost.insertItem(entry.placeholder, formIndex);
+    entry.materialized = false;
+  }
+
+  private clearLazyFormSections(): void {
+    this.lazySectionObserver?.disconnect();
+    this.lazySectionObserver = undefined;
+    this.lazyObserverRoot = undefined;
+    this.observedLazySections.clear();
+    this.lazyFormSections.forEach((entry) => {
+      if (entry.materialized) entry.placeholder.destroy();
+      else entry.form.destroy();
+    });
+    this.lazyFormSections.length = 0;
   }
 
   private buildField(definition: FeatureDefinition, question: string): DesignerField {
@@ -443,13 +652,30 @@ export default class ConfigurationRuleDesignerView {
     }
 
     if (["Enumeration", "Reference"].includes(definition.dataType) && allowed.length <= 6) {
+      const buttons = allowed.map((value) => {
+        const radio = new RadioButton({ text: value.value });
+        radio.attachBrowserEvent("click", () => {
+          window.setTimeout(() => {
+            if (!radio.getDomRef() || !this.toolbarVisible || this.mode !== "design") return;
+            if (
+              this.interactionPopoverAnchor === radio ||
+              this.pendingInteractionPopover?.anchor === radio
+            )
+              return;
+            this.showFieldInteractionMenu(definition.code, radio);
+          }, 0);
+        });
+        return radio;
+      });
       const input = new RadioButtonGroup({
-        columns: Math.min(3, Math.max(1, allowed.length)),
+        width: "100%",
+        columns: Math.max(1, allowed.length),
         selectedIndex: allowed.findIndex((value) => value.code === initial),
-        buttons: allowed.map((value) => new RadioButton({ text: value.value })),
+        buttons,
         select: (event: RadioButtonGroup$SelectEvent) => {
-          const index = event.getSource().getSelectedIndex();
-          onChange(allowed[index]?.code, event.getSource());
+          const group = event.getSource();
+          const index = group.getSelectedIndex();
+          onChange(allowed[index]?.code, group.getButtons()[index] ?? group);
         }
       });
       readValue = () => allowed[input.getSelectedIndex()]?.code;
@@ -565,6 +791,7 @@ export default class ConfigurationRuleDesignerView {
 
   private dismissInteractionPopover(): void {
     this.pendingInteractionPopover = undefined;
+    this.interactionPopoverAnchor = undefined;
     this.conditionDraft = undefined;
     this.actionDraft = undefined;
     this.interactionMenuHost.destroyItems();
@@ -582,12 +809,14 @@ export default class ConfigurationRuleDesignerView {
   }
 
   private openInteractionPopover(anchor: Control): void {
+    this.interactionPopoverAnchor = anchor;
     this.interactionPopover.openBy(anchor);
     this.interactionPopoverOpen = true;
   }
 
   private handleInteractionPopoverAfterClose(): void {
     this.interactionPopoverOpen = false;
+    this.interactionPopoverAnchor = undefined;
     const pending = this.pendingInteractionPopover;
     this.pendingInteractionPopover = undefined;
     if (!pending || !this.toolbarVisible || this.mode !== "design" || !this.options.canEdit()) {
@@ -637,13 +866,53 @@ export default class ConfigurationRuleDesignerView {
           new Text({ text }).addStyleClass("cmConstraintDesignerInteractionGroupTitle")
         );
       };
-      const addMenuButton = (text: string, press: () => void): void => {
+      const addMenuButton = (text: string, press: () => void, icon?: string): void => {
         this.interactionMenuHost.addItem(
-          new Button({ text, width: "100%", type: "Transparent", press }).addStyleClass(
-            "cmConstraintDesignerInteractionMenuButton"
-          )
+          new Button({
+            text,
+            width: "100%",
+            type: "Transparent",
+            ...(icon ? { icon } : {}),
+            press
+          }).addStyleClass("cmConstraintDesignerInteractionMenuButton")
         );
       };
+      const existingConditions = predicatePathsForFeature(
+        this.currentRule.ast.condition,
+        featureCode
+      );
+      if (existingConditions.length) {
+        addGroupTitle(tr("cmConstraintCondition"));
+        existingConditions.forEach((entry) =>
+          addMenuButton(
+            this.describePredicate(entry.predicate),
+            () => this.beginConditionDraft(featureCode, "AND", anchor, entry),
+            "sap-icon://edit"
+          )
+        );
+      }
+      const existingActions = this.currentRule.ast.actions.flatMap((action, actionIndex) =>
+        predicatePathsForFeature(action.target, featureCode).map((entry) => ({
+          actionIndex,
+          actionType: action.type,
+          ...entry
+        }))
+      );
+      if (existingActions.length) {
+        addGroupTitle(tr("cmConstraintAction"));
+        existingActions.forEach((entry) =>
+          addMenuButton(
+            `${this.actionLabel(entry.actionType)} · ${this.describePredicate(entry.predicate)}`,
+            () =>
+              this.beginActionDraft(featureCode, entry.actionType, anchor, {
+                actionIndex: entry.actionIndex,
+                predicate: entry.predicate,
+                path: entry.path
+              }),
+            "sap-icon://edit"
+          )
+        );
+      }
       const hasConfiguredCondition = this.hasConfiguredCondition();
       if (hasConfiguredCondition) {
         addGroupTitle(tr("cmConstraintConditionMenu"));
@@ -688,7 +957,8 @@ export default class ConfigurationRuleDesignerView {
   private beginConditionDraft(
     featureCode: string,
     connector: ConditionConnector,
-    anchor: Control
+    anchor: Control,
+    existing?: PredicatePathEntry
   ): void {
     const field = this.fields.get(featureCode);
     if (!field) return;
@@ -698,11 +968,26 @@ export default class ConfigurationRuleDesignerView {
       return;
     }
     const operators = constraintOperatorsFor(field.definition.dataType);
+    const operator =
+      existing && operators.includes(existing.predicate.type)
+        ? existing.predicate.type
+        : Array.isArray(value) && operators.includes("IN")
+          ? "IN"
+          : "EQUALS";
+    const usesValueGroup = operator === "IN" || operator === "NOT_IN";
+    const draftValue = usesValueGroup
+      ? existing
+        ? Array.isArray(existing.predicate.value)
+          ? existing.predicate.value
+          : [existing.predicate.value]
+        : []
+      : value;
     this.conditionDraft = {
       feature: field.definition,
       connector,
-      operator: Array.isArray(value) && operators.includes("IN") ? "IN" : "EQUALS",
-      value
+      operator,
+      value: draftValue,
+      editPath: existing?.path
     };
     this.renderConditionDraft(anchor);
   }
@@ -710,6 +995,11 @@ export default class ConfigurationRuleDesignerView {
   private renderConditionDraft(anchor: Control): void {
     const draft = this.conditionDraft;
     if (!draft) return;
+    const conditionAfterEdit =
+      draft.editPath === undefined
+        ? undefined
+        : removeConstraintExpressionAtPath(this.currentRule.ast.condition, draft.editPath);
+    const canRemoveExistingCondition = conditionAfterEdit !== undefined;
     this.updateInteractionPopover(anchor, () => {
       this.interactionMenuHost.destroyItems();
       const operatorSelect = new Select({
@@ -719,20 +1009,39 @@ export default class ConfigurationRuleDesignerView {
           (operator) => new Item({ key: operator, text: tr(operatorLabels[operator]) })
         ),
         change: (event: Select$ChangeEvent) => {
-          draft.operator = event.getSource().getSelectedKey() as ConstraintOperator;
+          const previousUsesValueGroup = draft.operator === "IN" || draft.operator === "NOT_IN";
+          const operator = event.getSource().getSelectedKey() as ConstraintOperator;
+          const usesValueGroup = operator === "IN" || operator === "NOT_IN";
+          draft.operator = operator;
+          if (usesValueGroup && !previousUsesValueGroup) draft.value = [];
+          else if (!usesValueGroup && previousUsesValueGroup) {
+            const field = this.fields.get(draft.feature.code);
+            draft.value = field ? (asConstraintValue(draft.feature, field.getValue()) ?? "") : "";
+          }
           this.renderConditionDraft(anchor);
         }
       });
+      const valueEditor =
+        draft.operator === "IN" || draft.operator === "NOT_IN"
+          ? this.buildPredicateValueControl(draft.feature, draft.operator, draft.value, (value) => {
+              const literal = asConstraintValue(draft.feature, value);
+              draft.value =
+                Array.isArray(value) && value.length === 0 ? [] : (literal ?? draft.value);
+            })
+          : undefined;
       this.interactionMenuHost.addItem(
         new VBox({
           width: "100%",
           items: [
             new ObjectStatus({
-              text: trFormat(
-                "cmConstraintConditionDraft",
-                [draft.feature.name, tr(draft.connector === "AND" ? "且" : "或")],
-                `${draft.feature.name} · ${tr(draft.connector === "AND" ? "且" : "或")}`
-              ),
+              text:
+                draft.editPath !== undefined
+                  ? tr("cmConstraintCondition")
+                  : trFormat(
+                      "cmConstraintConditionDraft",
+                      [draft.feature.name, tr(draft.connector === "AND" ? "且" : "或")],
+                      `${draft.feature.name} · ${tr(draft.connector === "AND" ? "且" : "或")}`
+                    ),
               state: "Information"
             }),
             new HBox({
@@ -741,21 +1050,43 @@ export default class ConfigurationRuleDesignerView {
               wrap: "Wrap",
               items: [
                 operatorSelect,
-                new ObjectStatus({
-                  text: this.describeSelectedValue(draft.value, draft.feature),
-                  state: "Information"
-                }).addStyleClass("cmConstraintDesignerInteractionValue")
+                valueEditor?.control ??
+                  new ObjectStatus({
+                    text: this.describeSelectedValue(draft.value, draft.feature),
+                    state: "Information"
+                  }).addStyleClass("cmConstraintDesignerInteractionValue")
               ]
             }).addStyleClass("cmConstraintDesignerDraftControls"),
+            ...(draft.editPath === undefined
+              ? []
+              : [
+                  new HBox({
+                    width: "100%",
+                    justifyContent: "Start",
+                    items: [
+                      new Button({
+                        text: tr("cmConstraintRemoveCondition"),
+                        icon: "sap-icon://delete",
+                        type: "Transparent",
+                        enabled: canRemoveExistingCondition,
+                        tooltip: canRemoveExistingCondition
+                          ? tr("cmConstraintRemoveCondition")
+                          : tr("cmConstraintAtLeastOneCondition"),
+                        press: () => this.removeConditionDraft()
+                      })
+                    ]
+                  }).addStyleClass("cmConstraintDesignerDraftActions")
+                ]),
             new HBox({
               width: "100%",
               justifyContent: "End",
               items: [
                 new Button({
-                  text: tr("cmConstraintAddCondition"),
-                  icon: "sap-icon://add",
+                  text:
+                    draft.editPath !== undefined ? tr("cmSave") : tr("cmConstraintAddCondition"),
+                  icon: draft.editPath !== undefined ? "sap-icon://accept" : "sap-icon://add",
                   type: "Emphasized",
-                  press: () => this.addConditionDraft(draft.value)
+                  press: () => this.addConditionDraft(valueEditor?.getValue() ?? draft.value)
                 }),
                 new Button({
                   text: tr("cmCancel"),
@@ -790,21 +1121,49 @@ export default class ConfigurationRuleDesignerView {
       value: literal
     };
     const isNew = this.isNewDraft;
+    const isEditing = draft.editPath !== undefined;
     const condition =
-      isNew && !this.newDraftHasCondition
-        ? predicate
-        : appendConstraintPredicate(
-            normalizeConstraintConditionForDesigner(this.currentRule.ast.condition),
-            draft.connector,
-            predicate
-          );
+      draft.editPath !== undefined
+        ? replaceExpressionAtPath(this.currentRule.ast.condition, draft.editPath, predicate)
+        : isNew && !this.newDraftHasCondition
+          ? predicate
+          : appendConstraintPredicate(
+              normalizeConstraintConditionForDesigner(this.currentRule.ast.condition),
+              draft.connector,
+              predicate
+            );
     this.newDraftHasCondition = true;
     this.commitAst({ ...this.currentRule.ast, condition });
     this.dismissInteractionPopover();
-    MessageToast.show(tr("cmConstraintConditionAdded"));
+    MessageToast.show(tr(isEditing ? "cmConstraintUnsavedChanges" : "cmConstraintConditionAdded"));
   }
 
-  private beginActionDraft(featureCode: string, type: ConstraintActionType, anchor: Control): void {
+  private removeConditionDraft(): void {
+    const draft = this.conditionDraft;
+    if (!draft || draft.editPath === undefined || !this.options.canEdit()) return;
+    const condition = removeConstraintExpressionAtPath(
+      this.currentRule.ast.condition,
+      draft.editPath
+    );
+    if (!condition) {
+      MessageToast.show(tr("cmConstraintAtLeastOneCondition"));
+      return;
+    }
+    this.commitAst({ ...this.currentRule.ast, condition });
+    this.dismissInteractionPopover();
+    MessageToast.show(tr("cmConstraintUnsavedChanges"));
+  }
+
+  private beginActionDraft(
+    featureCode: string,
+    type: ConstraintActionType,
+    anchor: Control,
+    existing?: {
+      actionIndex: number;
+      predicate: ConstraintPredicate;
+      path: ExpressionPathPart[];
+    }
+  ): void {
     if (!this.hasConfiguredCondition()) {
       MessageToast.show(tr("cmConstraintAddConditionFirst"));
       return;
@@ -812,23 +1171,26 @@ export default class ConfigurationRuleDesignerView {
     const field = this.fields.get(featureCode);
     if (!field) return;
     const operators = constraintOperatorsFor(field.definition.dataType, type);
-    const preferredOperator =
-      type === "RESTRICT" && operators.includes("GREATER_THAN_OR_EQUAL")
-        ? "GREATER_THAN_OR_EQUAL"
-        : type === "REQUIRE" &&
-            ["Enumeration", "Reference", "Multi Enumeration"].includes(field.definition.dataType) &&
-            operators.includes("IN")
-          ? "IN"
-          : "EQUALS";
     const selected = asConstraintValue(field.definition, field.getValue());
+    const preferredOperator =
+      existing && operators.includes(existing.predicate.type)
+        ? existing.predicate.type
+        : type === "RESTRICT" && operators.includes("GREATER_THAN_OR_EQUAL")
+          ? "GREATER_THAN_OR_EQUAL"
+          : type === "REQUIRE" && Array.isArray(selected) && operators.includes("IN")
+            ? "IN"
+            : "EQUALS";
     const defaultValue = initialFeatureValue(field.definition, this.options.profile);
-    let value = selected ?? asConstraintValue(field.definition, defaultValue);
+    let value =
+      selected ?? existing?.predicate.value ?? asConstraintValue(field.definition, defaultValue);
     if (preferredOperator === "IN" && value !== undefined && !Array.isArray(value)) value = [value];
     this.actionDraft = {
       feature: field.definition,
       type,
       operator: preferredOperator,
       selectedValue: selected,
+      actionIndex: existing?.actionIndex,
+      targetPath: existing?.path,
       value:
         value ??
         (["Integer", "Decimal", "Range"].includes(field.definition.dataType)
@@ -863,6 +1225,26 @@ export default class ConfigurationRuleDesignerView {
           this.renderActionDraft(anchor);
         }
       });
+      const actionTypeSelect =
+        draft.actionIndex === undefined
+          ? undefined
+          : new Select({
+              width: "9rem",
+              selectedKey: draft.type,
+              tooltip: tr("cmConstraintAction"),
+              items: (["REQUIRE", "EXCLUDE", "RESTRICT", "SET", "DERIVE"] as const).map(
+                (type) => new Item({ key: type, text: this.actionLabel(type) })
+              ),
+              change: (event: Select$ChangeEvent) => {
+                draft.type = event.getSource().getSelectedKey() as ConstraintActionType;
+                const nextOperators = constraintOperatorsFor(draft.feature.dataType, draft.type);
+                if (!nextOperators.includes(draft.operator))
+                  draft.operator = nextOperators.includes("EQUALS")
+                    ? "EQUALS"
+                    : (nextOperators[0] ?? "EQUALS");
+                this.renderActionDraft(anchor);
+              }
+            });
       let valueEditor: ValueControl;
       if (
         (draft.operator === "EQUALS" || draft.operator === "NOT_EQUALS") &&
@@ -902,14 +1284,35 @@ export default class ConfigurationRuleDesignerView {
               width: "100%",
               alignItems: "Center",
               wrap: "Wrap",
-              items: [operatorSelect, valueEditor.control]
+              items: [
+                ...(actionTypeSelect ? [actionTypeSelect] : []),
+                operatorSelect,
+                valueEditor.control
+              ]
             }).addStyleClass("cmConstraintDesignerDraftControls"),
+            ...(draft.actionIndex === undefined
+              ? []
+              : [
+                  new HBox({
+                    width: "100%",
+                    justifyContent: "Start",
+                    items: [
+                      new Button({
+                        text: tr("cmConstraintRemoveResult"),
+                        icon: "sap-icon://delete",
+                        type: "Transparent",
+                        press: () => this.removeActionDraft()
+                      })
+                    ]
+                  }).addStyleClass("cmConstraintDesignerDraftActions")
+                ]),
             new HBox({
               width: "100%",
               justifyContent: "End",
               items: [
                 new Button({
-                  text: tr("cmConstraintAddRelation"),
+                  text:
+                    draft.actionIndex !== undefined ? tr("cmSave") : tr("cmConstraintAddRelation"),
                   icon: "sap-icon://accept",
                   type: "Emphasized",
                   press: () => this.addActionDraft(valueEditor.getValue())
@@ -926,6 +1329,26 @@ export default class ConfigurationRuleDesignerView {
       );
       this.interactionPopover.setTitle(draft.feature.name);
     });
+  }
+
+  private removeActionDraft(): void {
+    const draft = this.actionDraft;
+    if (draft?.actionIndex === undefined || !this.options.canEdit()) return;
+    const currentAction = this.currentRule.ast.actions[draft.actionIndex];
+    if (!currentAction) return;
+    const target =
+      draft.targetPath === undefined
+        ? undefined
+        : removeConstraintExpressionAtPath(currentAction.target, draft.targetPath);
+    const actions =
+      target === undefined
+        ? this.currentRule.ast.actions.filter((_, index) => index !== draft.actionIndex)
+        : this.currentRule.ast.actions.map((action, index) =>
+            index === draft.actionIndex ? { ...action, target } : action
+          );
+    this.commitAst({ ...this.currentRule.ast, actions });
+    this.dismissInteractionPopover();
+    MessageToast.show(tr("cmConstraintUnsavedChanges"));
   }
 
   private addActionDraft(value: unknown): void {
@@ -949,6 +1372,21 @@ export default class ConfigurationRuleDesignerView {
         value: literal
       }
     };
+    if (draft.actionIndex !== undefined) {
+      const currentAction = this.currentRule.ast.actions[draft.actionIndex];
+      if (!currentAction) return;
+      const target =
+        draft.targetPath === undefined
+          ? action.target
+          : replaceExpressionAtPath(currentAction.target, draft.targetPath, action.target);
+      const actions = this.currentRule.ast.actions.map((existing, index) =>
+        index === draft.actionIndex ? { ...existing, type: draft.type, target } : existing
+      );
+      this.commitAst({ ...this.currentRule.ast, actions });
+      this.dismissInteractionPopover();
+      MessageToast.show(tr("cmConstraintUnsavedChanges"));
+      return;
+    }
     const isNew = this.isNewDraft;
     const actions =
       isNew && !this.newDraftHasAction ? [action] : [...this.currentRule.ast.actions, action];
@@ -978,6 +1416,7 @@ export default class ConfigurationRuleDesignerView {
     ) {
       const control = new MultiComboBox({
         width: "100%",
+        placeholder: tr("cmConstraintChooseValues"),
         selectedKeys: valueToKeys(initial),
         items: allowed.map((item) => new Item({ key: item.code, text: item.value })),
         selectionFinish: (event: MultiComboBox$SelectionFinishEvent) =>

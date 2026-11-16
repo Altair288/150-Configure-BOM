@@ -338,6 +338,7 @@ export default class ConfigurationController extends BaseController {
     this.scopeHost?.destroyItems();
     this.featureHost?.destroyItems();
     this.featureWorkspaceView = undefined;
+    this.mainFullscreenButton = undefined;
     const context = this.currentContext();
     const features = contextReferences(this.store, context.id).map((reference) =>
       resolveDefinition(this.store, reference)
@@ -361,7 +362,8 @@ export default class ConfigurationController extends BaseController {
           profile: this.currentProfile(),
           features,
           repository: this.constraintRuleRepository,
-          canEdit: () => this.canEdit()
+          canEdit: () => this.canEdit(),
+          onToggleFullscreen: () => this.toggleMainFullscreen()
         });
         this.ruleWorkspaceContextId = context.id;
         this.ruleHost?.addItem(this.ruleWorkspaceView.build());
@@ -382,6 +384,7 @@ export default class ConfigurationController extends BaseController {
         MessageBox.error(`约束工作区加载失败：${message}`);
       }
     }
+    if (this.mode === "rules") this.ruleWorkspaceView?.setMainFullscreenState(this.mainFullscreen);
   }
   public onContextSearchChange(event: Event): void {
     const parameters = event.getParameters() as { newValue?: string };
@@ -608,6 +611,7 @@ export default class ConfigurationController extends BaseController {
     this.mainFullscreenButton?.setTooltip(
       this.mainFullscreen ? "退出主体内容全屏" : "全屏主体内容"
     );
+    this.ruleWorkspaceView?.setMainFullscreenState(this.mainFullscreen);
     this.mainLayout.setLayout(
       this.mainFullscreen ? "MidColumnFullScreen" : "TwoColumnsMidExpanded"
     );

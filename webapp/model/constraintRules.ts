@@ -159,6 +159,36 @@ export function appendConstraintPredicate(
   return { type: "AND", expressions: [current, addition] };
 }
 
+export function removeConstraintExpressionAtPath(
+  expression: ConstraintExpression,
+  path: readonly (number | "expression")[]
+): ConstraintExpression | undefined {
+  const [part, ...remaining] = path;
+  if (part === undefined) return undefined;
+
+  if (typeof part === "number" && "expressions" in expression) {
+    const child = expression.expressions[part];
+    if (!child) return expression;
+    const replacement = remaining.length
+      ? removeConstraintExpressionAtPath(child, remaining)
+      : undefined;
+    const expressions = expression.expressions.flatMap((item, index) =>
+      index === part ? (replacement ? [replacement] : []) : [item]
+    );
+    if (expressions.length === 0) return undefined;
+    return expressions.length === 1 ? expressions[0] : { ...expression, expressions };
+  }
+
+  if (part === "expression" && "expression" in expression) {
+    const child = remaining.length
+      ? removeConstraintExpressionAtPath(expression.expression, remaining)
+      : undefined;
+    return child ? { ...expression, expression: child } : undefined;
+  }
+
+  return expression;
+}
+
 const operatorSymbols: Record<ConstraintOperator, string> = {
   EQUALS: "==",
   NOT_EQUALS: "!=",

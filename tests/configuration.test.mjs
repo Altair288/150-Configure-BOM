@@ -24,6 +24,7 @@ import {
   constraintOperatorsFor,
   formatConstraintExpression,
   normalizeConstraintConditionForDesigner,
+  removeConstraintExpressionAtPath,
   previewConstraintRules,
   migrateLegacyConstraintRuleAst,
   parseConstraintExpression,
@@ -328,6 +329,29 @@ test("constraint AST parses and formats nested AND OR NOT without string-based s
     feature: "ROOF_RACK",
     value: "TYPE_B"
   });
+});
+
+test("removing a predicate collapses its parent logical groups", () => {
+  const salesRegion = { type: "EQUALS", feature: "SALES_REGION", value: "EUROPE" };
+  const emissionStandard = { type: "EQUALS", feature: "EMISSION_STANDARD", value: "EURO6E" };
+  const trimLevel = { type: "EQUALS", feature: "TRIM_LEVEL", value: "LUXURY" };
+  const condition = {
+    type: "AND",
+    expressions: [
+      salesRegion,
+      {
+        type: "OR",
+        expressions: [emissionStandard, trimLevel]
+      }
+    ]
+  };
+
+  assert.deepEqual(removeConstraintExpressionAtPath(condition, [1, 0]), {
+    type: "AND",
+    expressions: [salesRegion, trimLevel]
+  });
+  assert.equal(removeConstraintExpressionAtPath(emissionStandard, []), undefined);
+  assert.deepEqual(removeConstraintExpressionAtPath(condition, [4]), condition);
 });
 
 test("WYSIWYG condition projection applies De Morgan without changing rule semantics", () => {

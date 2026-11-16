@@ -6,7 +6,7 @@
     id="contextWorkspace"
     fitContent="false"
     height="100%"
-    headerExpanded="true"
+    headerExpanded="false"
     toggleHeaderOnTitleClick="true"
     class="cmWorkspace cmContextDynamicPage sapUiNoContentPadding">
     <f:title>

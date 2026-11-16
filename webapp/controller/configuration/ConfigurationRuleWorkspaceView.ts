@@ -7,6 +7,7 @@ import IconTabFilter from "sap/m/IconTabFilter";
 import Input from "sap/m/Input";
 import Label from "sap/m/Label";
 import List from "sap/m/List";
+import MessageBox from "sap/m/MessageBox";
 import MessageStrip from "sap/m/MessageStrip";
 import MessageToast from "sap/m/MessageToast";
 import MultiComboBox from "sap/m/MultiComboBox";
@@ -28,9 +29,13 @@ import Text from "sap/m/Text";
 import Title from "sap/m/Title";
 import ToolbarSpacer from "sap/m/ToolbarSpacer";
 import Item from "sap/ui/core/Item";
+import Event from "sap/ui/base/Event";
+import Popup from "sap/ui/core/Popup";
 import VBox from "sap/m/VBox";
 import JSONModel from "sap/ui/model/json/JSONModel";
 import Control from "sap/ui/core/Control";
+import UnifiedMenu from "sap/ui/unified/Menu";
+import UnifiedMenuItem from "sap/ui/unified/MenuItem";
 import type {
   ConfigurationContext,
   ConfigurationProfile,
@@ -115,6 +120,7 @@ interface ConfigurationRuleWorkspaceOptions {
   features: FeatureDefinition[];
   repository: ConstraintRuleRepository;
   canEdit: () => boolean;
+  onToggleFullscreen: () => void;
 }
 
 export default class ConfigurationRuleWorkspaceView {
@@ -126,11 +132,13 @@ export default class ConfigurationRuleWorkspaceView {
   private features: FeatureDefinition[];
   private readonly repository: ConstraintRuleRepository;
   private readonly canEdit: () => boolean;
+  private readonly onToggleFullscreen: () => void;
   private readonly aiService = new MockConstraintAIService();
   private rules: ConstraintRule[];
   private currentRule: ConstraintRule;
   private currentRuleDirty = false;
   private currentRuleIsNew = false;
+  private readonly unsavedRuleIds = new Set<string>();
   private mode: WorkspaceMode = "designer";
   private advancedMode: AdvancedWorkspaceMode = "expression";
   private rulesList?: List;
@@ -156,6 +164,11 @@ export default class ConfigurationRuleWorkspaceView {
   private readonly ruleByListItemId = new Map<string, string>();
   private modeSelector?: SegmentedButton;
   private advancedModeSelector?: IconTabBar;
+  private mainFullscreenButton?: Button;
+  private deleteRuleButton?: Button;
+  private ruleContextMenu?: UnifiedMenu;
+  private ruleContextMenuRoot?: Element;
+  private ruleContextMenuHandler?: EventListener;
   private designerView?: ConfigurationRuleDesignerView;
   private designerToolbarItems: Control[] = [];
   private ruleNameInput?: Input;
@@ -172,6 +185,7 @@ export default class ConfigurationRuleWorkspaceView {
     this.features = options.features;
     this.repository = options.repository;
     this.canEdit = options.canEdit;
+    this.onToggleFullscreen = options.onToggleFullscreen;
     this.rules = this.repository.list(this.context.id, this.features);
     this.currentRuleIsNew = this.rules.length === 0;
     this.currentRule = this.rules[0] ?? this.createNewRule();
@@ -208,7 +222,16 @@ export default class ConfigurationRuleWorkspaceView {
   }
 
   public disposeWorkspace(): void {
+    this.detachRuleContextMenu();
+    this.designerView?.dispose();
     this.disposeEditor();
+  }
+
+  public setMainFullscreenState(isFullscreen: boolean): void {
+    this.mainFullscreenButton?.setIcon(
+      isFullscreen ? "sap-icon://exit-full-screen" : "sap-icon://full-screen"
+    );
+    this.mainFullscreenButton?.setTooltip(isFullscreen ? "退出主体内容全屏" : "全屏主体内容");
   }
 
   public setFeatures(features: FeatureDefinition[]): void {
@@ -239,6 +262,9 @@ export default class ConfigurationRuleWorkspaceView {
         if (ruleId) this.selectRule(ruleId);
       }
     }).addStyleClass("cmConstraintRuleList");
+    this.rulesList.addEventDelegate({
+      onAfterRendering: () => this.attachRuleContextMenu()
+    });
     this.rulesList.setLayoutData(
       new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
     );
@@ -282,6 +308,66 @@ export default class ConfigurationRuleWorkspaceView {
       this.rulesList?.addItem(item);
       if (rule.id === this.currentRule.id) this.rulesList?.setSelectedItem(item, true);
     });
+    this.updateDeleteRuleButtonState();
+  }
+
+  private updateDeleteRuleButtonState(): void {
+    this.deleteRuleButton?.setEnabled(
+      this.canEdit() && this.rules.some((rule) => rule.id === this.currentRule.id)
+    );
+  }
+
+  private attachRuleContextMenu(): void {
+    const root = this.rulesList?.getDomRef();
+    if (!root || root === this.ruleContextMenuRoot) return;
+    this.detachRuleContextMenu();
+    this.ruleContextMenuRoot = root;
+    this.ruleContextMenuHandler = (event) => this.openRuleContextMenu(event as MouseEvent);
+    root.addEventListener("contextmenu", this.ruleContextMenuHandler);
+  }
+
+  private detachRuleContextMenu(): void {
+    if (this.ruleContextMenuRoot && this.ruleContextMenuHandler)
+      this.ruleContextMenuRoot.removeEventListener("contextmenu", this.ruleContextMenuHandler);
+    this.ruleContextMenu?.destroy();
+    this.ruleContextMenu = undefined;
+    this.ruleContextMenuRoot = undefined;
+    this.ruleContextMenuHandler = undefined;
+  }
+
+  private openRuleContextMenu(event: MouseEvent): void {
+    const list = this.rulesList;
+    const root = this.ruleContextMenuRoot;
+    const target = event.target instanceof Element ? event.target : undefined;
+    if (!list || !root || !target || !this.canEdit()) return;
+    const item = list.getItems().find((candidate) => candidate.getDomRef()?.contains(target));
+    const ruleId = item && this.ruleByListItemId.get(item.getId());
+    if (!ruleId) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.ruleContextMenu?.destroy();
+    const menuItem = new UnifiedMenuItem({
+      text: tr("cmConstraintDeleteRule"),
+      icon: "sap-icon://delete"
+    });
+    const menu = new UnifiedMenu({
+      items: [menuItem],
+      itemSelect: (menuEvent: Event) => {
+        const selectedItem = (
+          menuEvent as Event & {
+            getParameter: (name: "item") => UnifiedMenuItem | undefined;
+          }
+        ).getParameter("item");
+        if (selectedItem?.getId() === menuItem.getId())
+          window.setTimeout(() => this.confirmDeleteRule(ruleId), 0);
+      }
+    });
+    this.ruleContextMenu = menu;
+    list.addDependent(menu);
+    const rootBounds = root.getBoundingClientRect();
+    const offset = `${Math.round(event.clientX - rootBounds.left)} ${Math.round(event.clientY - rootBounds.top)}`;
+    menu.open(false, target, Popup.Dock.LeftTop, Popup.Dock.LeftTop, root, offset);
   }
 
   private ruleSummary(rule: ConstraintRule): string {
@@ -426,6 +512,24 @@ export default class ConfigurationRuleWorkspaceView {
     this.setMode(this.mode);
     this.setAdvancedMode(this.advancedMode);
 
+    const mainFullscreenButton = new Button({
+      icon: "sap-icon://full-screen",
+      tooltip: "全屏主体内容",
+      type: "Transparent",
+      press: () => this.onToggleFullscreen()
+    });
+    this.mainFullscreenButton = mainFullscreenButton;
+    mainFullscreenButton.setLayoutData(
+      new OverflowToolbarLayoutData({ priority: "NeverOverflow" })
+    );
+    const deleteRuleButton = new Button({
+      icon: "sap-icon://delete",
+      tooltip: tr("cmConstraintDeleteRule"),
+      type: "Transparent",
+      press: () => this.confirmDeleteRule(this.currentRule.id)
+    });
+    this.deleteRuleButton = deleteRuleButton;
+    deleteRuleButton.setLayoutData(new OverflowToolbarLayoutData({ priority: "NeverOverflow" }));
     const saveButton = new Button({
       text: tr("保存规则"),
       icon: "sap-icon://save",
@@ -442,6 +546,8 @@ export default class ConfigurationRuleWorkspaceView {
         this.modeSelector,
         ...this.designerToolbarItems,
         new ToolbarSpacer(),
+        mainFullscreenButton,
+        deleteRuleButton,
         saveButton
       ]
     }).addStyleClass("cmConstraintDetailToolbar");
@@ -486,8 +592,8 @@ export default class ConfigurationRuleWorkspaceView {
     const rule = this.rules.find((item) => item.id === ruleId);
     if (!rule) return;
     this.currentRule = structuredClone(rule);
-    this.currentRuleDirty = false;
-    this.currentRuleIsNew = false;
+    this.currentRuleIsNew = this.unsavedRuleIds.has(ruleId);
+    this.currentRuleDirty = this.currentRuleIsNew;
     this.blueprintNeedsLoad = true;
     this.rulesModel.setProperty("/currentRule", this.currentRule);
     this.ruleNameInput?.setValue(this.currentRule.name);
@@ -495,7 +601,7 @@ export default class ConfigurationRuleWorkspaceView {
     this.detailsStatus?.setText(this.currentRule.status);
     this.expressionEditor?.setRule(this.currentRule);
     this.expressionEditor?.setRules(this.rules);
-    this.designerView?.setRule(this.currentRule, false);
+    this.designerView?.setRule(this.currentRule, this.currentRuleIsNew);
     if (this.mode === "advanced" && this.advancedMode === "blueprint")
       void this.loadBlueprintRule();
     this.renderRuleList();
@@ -526,6 +632,7 @@ export default class ConfigurationRuleWorkspaceView {
       }
     });
     this.rules.push(rule);
+    this.unsavedRuleIds.add(rule.id);
     this.currentRule = rule;
     this.currentRuleDirty = true;
     this.currentRuleIsNew = true;
@@ -555,6 +662,7 @@ export default class ConfigurationRuleWorkspaceView {
     };
     this.currentRuleDirty = true;
     const existingIndex = this.rules.findIndex((item) => item.id === rule.id);
+    if (existingIndex < 0) this.unsavedRuleIds.add(rule.id);
     this.rules =
       existingIndex < 0
         ? [...this.rules, structuredClone(this.currentRule)]
@@ -587,6 +695,7 @@ export default class ConfigurationRuleWorkspaceView {
     }
     try {
       const saved = this.repository.save(this.context.id, this.currentRule, this.features);
+      this.unsavedRuleIds.delete(saved.id);
       this.rules = this.rules.some((rule) => rule.id === saved.id)
         ? this.rules.map((rule) => (rule.id === saved.id ? saved : rule))
         : [...this.rules, saved];
@@ -611,6 +720,71 @@ export default class ConfigurationRuleWorkspaceView {
       this.detailsStatus?.setState("Error");
       MessageToast.show(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  private confirmDeleteRule(ruleId: string): void {
+    if (!this.canEdit()) return;
+    const rule = this.rules.find((item) => item.id === ruleId);
+    if (!rule) return;
+    MessageBox.confirm(
+      trFormat(
+        "cmConstraintDeleteRuleConfirm",
+        [rule.name],
+        `确定删除约束规则“${rule.name}”？此操作无法撤销。`
+      ),
+      {
+        title: tr("cmConstraintDeleteRule"),
+        onClose: (action) => {
+          if (action === MessageBox.Action.OK) this.deleteRule(ruleId);
+        }
+      }
+    );
+  }
+
+  private deleteRule(ruleId: string): void {
+    if (!this.canEdit()) return;
+    if (!this.rules.some((rule) => rule.id === ruleId)) return;
+    if (!this.unsavedRuleIds.has(ruleId)) {
+      try {
+        this.repository.remove(this.context.id, ruleId, this.features);
+      } catch (error) {
+        MessageBox.error(error instanceof Error ? error.message : String(error));
+        return;
+      }
+    }
+
+    this.unsavedRuleIds.delete(ruleId);
+    this.rules = this.rules.filter((rule) => rule.id !== ruleId);
+    if (this.currentRule.id === ruleId) {
+      const nextRule = this.rules[0];
+      if (nextRule) this.selectRule(nextRule.id);
+      else this.startEmptyDraft();
+    } else {
+      this.expressionEditor?.setRules(this.rules);
+      this.blueprintNeedsLoad = true;
+      if (this.mode === "advanced" && this.advancedMode === "blueprint")
+        void this.loadBlueprintRule();
+      this.renderRuleList();
+    }
+    MessageToast.show(tr("cmConstraintRuleDeleted"));
+  }
+
+  private startEmptyDraft(): void {
+    const rule = this.createNewRule();
+    this.currentRule = rule;
+    this.currentRuleDirty = false;
+    this.currentRuleIsNew = true;
+    this.blueprintNeedsLoad = true;
+    this.rulesModel.setProperty("/currentRule", rule);
+    this.ruleNameInput?.setValue(rule.name);
+    this.ruleMetaStatus?.setText(this.ruleMetadata(rule));
+    this.detailsStatus?.setText(rule.status);
+    this.detailsStatus?.setState("Information");
+    this.expressionEditor?.setRules(this.rules);
+    this.expressionEditor?.setRule(rule);
+    this.designerView?.setRule(rule, true);
+    this.renderRuleList();
+    this.setMode("designer");
   }
 
   private buildAssistantWorkspace(): VBox {
@@ -960,6 +1134,7 @@ export default class ConfigurationRuleWorkspaceView {
     try {
       const saved = this.repository.saveMany(this.context.id, rulesToSave, this.features);
       const savedIds = new Set(saved.map((rule) => rule.id));
+      savedIds.forEach((id) => this.unsavedRuleIds.delete(id));
       this.rules = [...this.rules.filter((rule) => !savedIds.has(rule.id)), ...saved];
       this.expressionEditor?.setRules(this.rules);
       this.assistantSuggestions = this.assistantSuggestions.filter(
@@ -1000,6 +1175,8 @@ export default class ConfigurationRuleWorkspaceView {
   }
 
   private editAISuggestion(suggestion: ConstraintAISuggestion, mode: AdvancedWorkspaceMode): void {
+    if (!this.rules.some((rule) => rule.id === suggestion.rule.id))
+      this.unsavedRuleIds.add(suggestion.rule.id);
     this.currentRule = structuredClone(suggestion.rule);
     this.currentRuleDirty = true;
     this.currentRuleIsNew = false;

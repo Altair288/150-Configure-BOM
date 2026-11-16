@@ -25,6 +25,7 @@ import {
   constraintOperatorsFor,
   formatConstraintCondition,
   formatConstraintExpression,
+  removeConstraintExpressionAtPath,
   parseConstraintExpression,
   validateConstraintRule
 } from "../../model/constraintRules";
@@ -239,34 +240,6 @@ function countPredicates(expression: ConstraintExpression): number {
   if (isPredicate(expression)) return 1;
   if (expression.type === "NOT") return countPredicates(expression.expression);
   return expression.expressions.reduce((count, child) => count + countPredicates(child), 0);
-}
-
-function removeExpressionAtPath(
-  expression: ConstraintExpression,
-  path: ExpressionPathPart[]
-): ConstraintExpression | undefined {
-  const [part, ...remaining] = path;
-  if (part === undefined) return undefined;
-
-  if (typeof part === "number" && "expressions" in expression) {
-    const child = expression.expressions[part];
-    if (!child) return expression;
-    const replacement = remaining.length ? removeExpressionAtPath(child, remaining) : undefined;
-    const expressions = expression.expressions.flatMap((item, index) =>
-      index === part ? (replacement ? [replacement] : []) : [item]
-    );
-    if (expressions.length === 0) return undefined;
-    return expressions.length === 1 ? expressions[0] : { ...expression, expressions };
-  }
-
-  if (part === "expression" && "expression" in expression) {
-    const child = remaining.length
-      ? removeExpressionAtPath(expression.expression, remaining)
-      : undefined;
-    return child ? { ...expression, expression: child } : undefined;
-  }
-
-  return expression;
 }
 
 function defaultValue(feature: FeatureDefinition): ConstraintLiteral {
@@ -541,7 +514,7 @@ export default class ConfigurationExpressionEditor {
   }
 
   private removeCondition(path: ExpressionPathPart[]): void {
-    const condition = removeExpressionAtPath(this.rule.ast.condition, path);
+    const condition = removeConstraintExpressionAtPath(this.rule.ast.condition, path);
     if (condition) this.commitAst({ ...this.rule.ast, condition });
   }
 
