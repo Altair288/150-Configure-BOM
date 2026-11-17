@@ -1,5 +1,7 @@
+import Button from "sap/m/Button";
 import CheckBox from "sap/m/CheckBox";
 import Dialog from "sap/m/Dialog";
+import HBox from "sap/m/HBox";
 import Input from "sap/m/Input";
 import Item from "sap/ui/core/Item";
 import Label from "sap/m/Label";
@@ -8,6 +10,7 @@ import MultiComboBox from "sap/m/MultiComboBox";
 import RadioButton from "sap/m/RadioButton";
 import RadioButtonGroup from "sap/m/RadioButtonGroup";
 import Select from "sap/m/Select";
+import Text from "sap/m/Text";
 import VBox from "sap/m/VBox";
 import type { Input$LiveChangeEvent } from "sap/m/Input";
 import Control from "sap/ui/core/Control";
@@ -20,15 +23,18 @@ import {
 import {
   activeConstraintEffects,
   constraintEffectAllowedValues,
+  constraintMaximumSelections,
+  detectConstraintConflicts,
   reconcileConstrainedSelection,
-  formatConstraintCondition
+  simulateConstraintActions
 } from "../../model/constraintRules";
 import type {
   ConstraintExpression,
-  ConstraintOperator,
   ConstraintPredicate,
   ConstraintPreviewEffect,
-  ConstraintRule
+  ConstraintRule,
+  ConstraintSimulation,
+  ConstraintSimulationChange
 } from "../../model/constraintRules";
 import type {
   ConfigurationContext,
@@ -36,7 +42,17 @@ import type {
   ConfigurationStore,
   FeatureDefinition
 } from "../../model/configuration";
-import { button, title, tr, trFormat, txt } from "../../util/configurationUi";
+import {
+  button,
+  constraintActionLabels,
+  constraintIssueText,
+  constraintOperatorLabels as previewOperatorLabels,
+  describeConstraintDerivation,
+  title,
+  tr,
+  trFormat,
+  txt
+} from "../../util/configurationUi";
 
 type DialogHost = {
   addDependent(dependent: Dialog): void;
@@ -48,7 +64,8 @@ type PreviewValueState = "None" | "Error" | "Warning";
 interface PreviewFeatureField {
   definition: FeatureDefinition;
   getValue: () => unknown;
-  setAvailableValues: (codes: Set<string> | undefined) => void;
+  setValue: (value: unknown) => void;
+  setAvailableValues: (codes: Set<string> | undefined, maximum?: number) => void;
   setValueState: (state: PreviewValueState, message?: string) => void;
 }
 
@@ -59,20 +76,6 @@ export interface ConfigurationPreviewOptions {
   rules?: ConstraintRule[];
   getHost: () => DialogHost | undefined;
 }
-
-const previewOperatorLabels: Record<ConstraintOperator, string> = {
-  EQUALS: "等于",
-  NOT_EQUALS: "不等于",
-  GREATER_THAN: "大于",
-  GREATER_THAN_OR_EQUAL: "大于等于",
-  LESS_THAN: "小于",
-  LESS_THAN_OR_EQUAL: "小于等于",
-  IN: "属于",
-  NOT_IN: "不属于",
-  CONTAINS: "包含",
-  STARTS_WITH: "开头为",
-  ENDS_WITH: "结尾为"
-};
 
 function hasPreviewSelection(value: unknown): boolean {
   return (
@@ -109,6 +112,8 @@ function previewPredicateText(
 ): string {
   const name = feature?.name ?? predicate.feature;
   const operator = tr(previewOperatorLabels[predicate.type]);
+  if (predicate.type === "STEP" && Array.isArray(predicate.value))
+    return `${name} ${operator} ${String(predicate.value[1] ?? "")}${feature?.unit ? ` ${feature.unit}` : ""}`;
   const value = feature
     ? formatPreviewValue(predicate.value, feature)
     : Array.isArray(predicate.value)
@@ -124,7 +129,7 @@ function describePreviewEffect(
   const target =
     "feature" in effect.target
       ? previewPredicateText(effect.target, features.get(effect.target.feature))
-      : formatConstraintCondition(effect.target);
+      : describePreviewCondition(effect.target, features);
   const detail = target || effect.description || effect.name;
   if (effect.direction === "condition")
     return trFormat(
@@ -144,12 +149,8 @@ function describePreviewEffect(
       [effect.name, detail],
       `${effect.name}: 需要满足 ${detail}`
     );
-  if (effect.type === "SET" || effect.type === "DERIVE")
-    return trFormat(
-      "cmPreviewManualEffect",
-      [effect.name, detail],
-      `${effect.name}: 预览不会自动执行 ${detail}`
-    );
+  if (["SET", "DERIVE", "DEFAULT", "RECOMMEND", "ADD", "REMOVE"].includes(effect.type))
+    return `${effect.name}: ${tr(constraintActionLabels[effect.type])} ${detail}`;
   return trFormat(
     "cmPreviewRequireEffect",
     [effect.name, detail],
@@ -172,12 +173,29 @@ function previewFeedback(
       text: trFormat("cmPreviewConstraintPending", [description], `待选择：${description}`),
       type: "Warning"
     };
-  if (effect.status === "not-applied")
-    return {
-      text: description,
-      type: "Warning"
-    };
   return undefined;
+}
+
+function describePreviewCondition(
+  expression: ConstraintExpression,
+  features: Map<string, FeatureDefinition>
+): string {
+  if ("feature" in expression) {
+    const feature = features.get(expression.feature);
+    if (expression.type === "ALWAYS") return tr("cmConstraintAlways");
+    if (expression.type === "IS_UNSET")
+      return `${feature?.name ?? expression.feature} ${tr("cmConstraintIsUnset")}`;
+    return previewPredicateText(expression, feature);
+  }
+  if (expression.type === "NOT")
+    return trFormat(
+      "cmConstraintNegatedCondition",
+      [describePreviewCondition(expression.expression, features)],
+      `NOT (${describePreviewCondition(expression.expression, features)})`
+    );
+  return expression.expressions
+    .map((child) => describePreviewCondition(child, features))
+    .join(` ${tr(expression.type === "AND" ? "且" : "或")} `);
 }
 
 function intersectAllowedValues(sets: Set<string>[]): Set<string> | undefined {
@@ -202,8 +220,12 @@ export default class ConfigurationPreviewDialog {
     );
     const featureByCode = new Map(features.map((feature) => [feature.code, feature]));
     const values = new Map<string, unknown>();
+    const inputValues = new Map<string, unknown>();
     const fields = new Map<string, PreviewFeatureField>();
+    const dismissedRecommendations = new Set<string>();
     const content = new VBox().addStyleClass("cmPreviewForm");
+    const simulationFeedback = new VBox({ width: "100%" });
+    content.addItem(simulationFeedback);
     const readiness = validateContext(this.options.store, this.options.context.id);
     if (readiness.length)
       content.addItem(
@@ -215,10 +237,32 @@ export default class ConfigurationPreviewDialog {
       );
 
     const updatePreview = (): void => {
-      fields.forEach((field, code) => values.set(code, field.getValue()));
-
+      values.clear();
+      fields.forEach((field, code) => {
+        field.setValue(inputValues.get(code));
+        values.set(code, field.getValue());
+      });
+      const automaticChanges = new Map<string, ConstraintSimulationChange>();
+      let simulation: ConstraintSimulation | undefined;
       for (let pass = 0; pass <= fields.size; pass += 1) {
+        const previous = JSON.stringify([...values]);
+        simulation = simulateConstraintActions(
+          this.options.rules ?? [],
+          features,
+          values,
+          touchedFeatureCodes
+        );
+        simulation.changes.forEach((change) =>
+          automaticChanges.set(JSON.stringify([change.ruleId, change.feature, change.type]), change)
+        );
+        for (const [code, value] of simulation.values) {
+          const field = fields.get(code);
+          if (!field) continue;
+          field.setValue(value);
+          values.set(code, field.getValue());
+        }
         const effects = activeConstraintEffects(this.options.rules ?? [], features, values);
+        const conflicts = detectConstraintConflicts(this.options.rules ?? [], features, values);
         const effectsByFeature = new Map<string, ConstraintPreviewEffect[]>();
         for (const effect of effects)
           for (const predicate of collectPreviewPredicates(effect.target)) {
@@ -227,7 +271,6 @@ export default class ConfigurationPreviewDialog {
             effectsByFeature.set(predicate.feature, current);
           }
 
-        let selectionChanged = false;
         fields.forEach((field, code) => {
           const previousValue = field.getValue();
           const fieldEffects = effectsByFeature.get(code) ?? [];
@@ -236,12 +279,35 @@ export default class ConfigurationPreviewDialog {
               .map((effect) => constraintEffectAllowedValues(effect, field.definition))
               .filter((set): set is Set<string> => set !== undefined)
           );
-          field.setAvailableValues(allowedValues);
+          const applyRestrictions =
+            !conflicts.some((conflict) => conflict.feature === code) &&
+            !simulation?.conflicts.some((conflict) => conflict.feature === code);
+          field.setAvailableValues(
+            applyRestrictions ? allowedValues : undefined,
+            applyRestrictions ? constraintMaximumSelections(fieldEffects, code) : undefined
+          );
           const value = field.getValue();
           values.set(code, value);
-          if (JSON.stringify(value) !== JSON.stringify(previousValue)) selectionChanged = true;
+          if (JSON.stringify(value) !== JSON.stringify(previousValue)) {
+            for (const effect of fieldEffects) {
+              if (!constraintEffectAllowedValues(effect, field.definition)) continue;
+              const rule = (this.options.rules ?? []).find((item) => item.id === effect.ruleId);
+              if (!rule) continue;
+              const change: ConstraintSimulationChange = {
+                ruleId: rule.id,
+                code: rule.code,
+                name: rule.name,
+                feature: code,
+                type: effect.type,
+                value,
+                previousValue,
+                condition: structuredClone(effect.trigger ?? rule.ast.condition)
+              };
+              automaticChanges.set(JSON.stringify([rule.id, code, effect.type]), change);
+            }
+          }
         });
-        if (!selectionChanged) break;
+        if (previous === JSON.stringify([...values])) break;
       }
 
       const currentEffects = activeConstraintEffects(this.options.rules ?? [], features, values);
@@ -264,15 +330,160 @@ export default class ConfigurationPreviewDialog {
         const feedbacks = fieldEffects
           .map((effect) => previewFeedback(effect, featureByCode))
           .filter((feedback): feedback is { text: string; type: PreviewMessageType } => !!feedback);
+        const conflict = simulation?.conflicts.find((item) => item.feature === code);
+        const conflictText = conflict
+          ? trFormat(
+              "cmConstraintConflictDetails",
+              [
+                field.definition.name,
+                conflict.rules.map((rule) => `${rule.code} · ${rule.name}`).join(" / ")
+              ],
+              field.definition.name
+            )
+          : undefined;
         const inputError = domainErrors.length
           ? `${field.definition.name}: ${domainErrors[0]}`
-          : feedbacks.find((feedback) => feedback.type === "Error")?.text;
+          : (conflictText ?? feedbacks.find((feedback) => feedback.type === "Error")?.text);
         const inputWarning = feedbacks.find((feedback) => feedback.type === "Warning")?.text;
         field.setValueState(
           inputError ? "Error" : inputWarning ? "Warning" : "None",
           inputError ?? inputWarning
         );
       });
+      simulationFeedback.destroyItems();
+      for (const conflict of simulation?.conflicts ?? []) {
+        const feature = featureByCode.get(conflict.feature);
+        const reasons = conflict.rules
+          .map((rule) => {
+            const details = (this.options.rules ?? []).find((item) => item.id === rule.id);
+            const effects = currentEffects
+              .filter(
+                (effect) =>
+                  effect.ruleId === rule.id &&
+                  collectPreviewPredicates(effect.target).some(
+                    (predicate) => predicate.feature === conflict.feature
+                  )
+              )
+              .map((effect) => describePreviewEffect(effect, featureByCode))
+              .join("; ");
+            return `${rule.code} · ${rule.name}${details ? `: ${describePreviewCondition(details.ast.condition, featureByCode)}` : ""}${effects ? ` → ${effects}` : ""}`;
+          })
+          .join(" / ");
+        simulationFeedback.addItem(
+          new MessageStrip({
+            text: trFormat(
+              "cmConstraintConflictDetails",
+              [feature?.name ?? conflict.feature, reasons],
+              conflict.feature
+            ),
+            type: "Error",
+            showIcon: true
+          })
+        );
+      }
+      for (const change of automaticChanges.values()) {
+        const feature = featureByCode.get(change.feature);
+        if (!feature) continue;
+        simulationFeedback.addItem(
+          new MessageStrip({
+            text: trFormat(
+              "cmConstraintAutomaticExplanation",
+              [
+                feature.name,
+                formatPreviewValue(change.value, feature) || tr("cmConstraintNoValue"),
+                `${change.code} · ${change.name}`,
+                describePreviewCondition(change.condition, featureByCode),
+                change.derivation
+                  ? describeConstraintDerivation(change.derivation, featureByCode, values)
+                  : ""
+              ],
+              change.name
+            ),
+            type: "Information",
+            showIcon: true
+          })
+        );
+      }
+      for (const effect of currentEffects) {
+        if (
+          effect.type !== "RESTRICT" ||
+          effect.derivation?.kind !== "LINK" ||
+          !effect.derivation.range ||
+          effect.status === "pending"
+        )
+          continue;
+        simulationFeedback.addItem(
+          new MessageStrip({
+            text: trFormat(
+              "cmConstraintLinkedRangeExplanation",
+              [
+                effect.name,
+                describePreviewCondition(effect.target, featureByCode),
+                describeConstraintDerivation(effect.derivation, featureByCode, values)
+              ],
+              effect.name
+            ),
+            type: "Information",
+            showIcon: true
+          })
+        );
+      }
+      for (const issue of simulation?.issues ?? [])
+        simulationFeedback.addItem(
+          new MessageStrip({
+            text: trFormat(
+              "cmConstraintSimulationIssue",
+              [issue.name, constraintIssueText(issue)],
+              constraintIssueText(issue)
+            ),
+            type: "Warning",
+            showIcon: true
+          })
+        );
+      for (const recommendation of simulation?.recommendations ?? []) {
+        const key = JSON.stringify([recommendation.ruleId, recommendation.feature]);
+        const feature = featureByCode.get(recommendation.feature);
+        if (!feature || dismissedRecommendations.has(key)) continue;
+        simulationFeedback.addItem(
+          new HBox({
+            width: "100%",
+            alignItems: "Center",
+            wrap: "Wrap",
+            items: [
+              new Text({
+                text: trFormat(
+                  "cmConstraintRecommendationExplanation",
+                  [
+                    feature.name,
+                    formatPreviewValue(recommendation.value, feature),
+                    recommendation.name
+                  ],
+                  feature.name
+                ),
+                wrapping: true
+              }),
+              new Button({
+                text: tr("cmConstraintAcceptRecommendation"),
+                type: "Transparent",
+                press: () => {
+                  inputValues.set(feature.code, recommendation.value);
+                  touchedFeatureCodes.add(feature.code);
+                  dismissedRecommendations.add(key);
+                  updatePreview();
+                }
+              }),
+              new Button({
+                text: tr("cmConstraintKeepCurrent"),
+                type: "Transparent",
+                press: () => {
+                  dismissedRecommendations.add(key);
+                  updatePreview();
+                }
+              })
+            ]
+          }).addStyleClass("cmConstraintRecommendation")
+        );
+      }
     };
 
     const useDefault = this.options.profile.defaultBehavior !== "No Default";
@@ -298,11 +509,13 @@ export default class ConfigurationPreviewDialog {
           this.addDefinitionControl(
             content,
             values,
+            inputValues,
             fields,
             definition,
             definitions.length > 1 || definition.name !== family.name,
             useDefault,
             touchedFeatureCodes,
+            dismissedRecommendations,
             updatePreview
           )
         );
@@ -336,11 +549,13 @@ export default class ConfigurationPreviewDialog {
   private addDefinitionControl(
     content: VBox,
     values: Map<string, unknown>,
+    inputValues: Map<string, unknown>,
     fields: Map<string, PreviewFeatureField>,
     definition: FeatureDefinition,
     showLabel: boolean,
     useDefault: boolean,
     touchedFeatureCodes: Set<string>,
+    dismissedRecommendations: Set<string>,
     updatePreview: () => void
   ): void {
     if (showLabel)
@@ -352,7 +567,8 @@ export default class ConfigurationPreviewDialog {
       );
 
     let getValue: () => unknown;
-    let setAvailableValues: (codes: Set<string> | undefined) => void = () => undefined;
+    let setValue: (value: unknown) => void;
+    let setAvailableValues: PreviewFeatureField["setAvailableValues"] = () => undefined;
     let setValueState: PreviewFeatureField["setValueState"] = () => undefined;
     let onValueChange = (): void => undefined;
     let control: Control;
@@ -376,16 +592,33 @@ export default class ConfigurationPreviewDialog {
             : allowed.filter((value) => value.defaultValue).map((value) => value.code)
           : [],
         items: allowed.map((value) => new Item({ key: value.code, text: value.value })),
+        selectionChange: () => onValueChange(),
         selectionFinish: () => onValueChange()
       });
       control = input;
       getValue = () => input.getSelectedKeys();
-      setAvailableValues = (codes) => {
+      setValue = (value) => {
+        const keys = Array.isArray(value)
+          ? value.map(String)
+          : hasPreviewSelection(value)
+            ? [String(value)]
+            : [];
+        if (JSON.stringify(input.getSelectedKeys()) !== JSON.stringify(keys))
+          input.setSelectedKeys(keys);
+      };
+      setAvailableValues = (codes, maximum) => {
         const current = getValue();
         const availableSelection = reconcileConstrainedSelection(current, codes);
         const retained = Array.isArray(availableSelection) ? availableSelection : [];
         if (JSON.stringify(current) !== JSON.stringify(retained)) input.setSelectedKeys(retained);
-        input.getItems().forEach((item) => item.setEnabled(!codes || codes.has(item.getKey())));
+        input.getItems().forEach((item) => {
+          const enabled =
+            (!codes || codes.has(item.getKey())) &&
+            (maximum === undefined ||
+              retained.length < maximum ||
+              retained.includes(item.getKey()));
+          if (item.getEnabled() !== enabled) item.setEnabled(enabled);
+        });
       };
       setValueState = (state, message) => {
         input.setValueState(state);
@@ -401,6 +634,10 @@ export default class ConfigurationPreviewDialog {
         });
         control = input;
         getValue = () => allowed[input.getSelectedIndex()]?.code ?? "";
+        setValue = (value) => {
+          const index = allowed.findIndex((entry) => entry.code === String(value ?? ""));
+          if (input.getSelectedIndex() !== index) input.setSelectedIndex(index);
+        };
         setValueState = (state, message) =>
           input.setTooltip(state === "None" ? "" : (message ?? ""));
         setAvailableValues = (codes) => {
@@ -427,6 +664,10 @@ export default class ConfigurationPreviewDialog {
         });
         control = input;
         getValue = () => input.getSelectedKey();
+        setValue = (value) => {
+          const key = value === undefined || value === null ? "" : String(value);
+          if (input.getSelectedKey() !== key) input.setSelectedKey(key);
+        };
         setAvailableValues = (codes) => {
           const selected = String(getValue() ?? "");
           const retained = reconcileConstrainedSelection(selected, codes, true);
@@ -444,13 +685,28 @@ export default class ConfigurationPreviewDialog {
       }
     } else if (dataType === "Boolean") {
       if (!definition.mandatory) {
+        let booleanValue: boolean | undefined =
+          initial === "true" ? true : initial === "false" ? false : undefined;
         const input = new CheckBox({
           text: definition.name,
           selected: initial === "true",
-          select: () => onValueChange()
+          select: () => {
+            booleanValue = input.getSelected();
+            onValueChange();
+          }
         });
         control = input;
-        getValue = () => (input.getSelected() ? true : undefined);
+        getValue = () => booleanValue;
+        setValue = (value) => {
+          booleanValue =
+            value === true || value === "true"
+              ? true
+              : value === false || value === "false"
+                ? false
+                : undefined;
+          if (input.getSelected() !== (booleanValue === true))
+            input.setSelected(booleanValue === true);
+        };
         setValueState = (state, message) =>
           input.setTooltip(state === "None" ? "" : (message ?? ""));
       } else {
@@ -466,6 +722,10 @@ export default class ConfigurationPreviewDialog {
         });
         control = input;
         getValue = () => input.getSelectedKey();
+        setValue = (value) => {
+          const key = value === undefined || value === null ? "" : String(value);
+          if (input.getSelectedKey() !== key) input.setSelectedKey(key);
+        };
         setAvailableValues = (codes) => {
           const selected = String(getValue() ?? "");
           const retained = reconcileConstrainedSelection(selected, codes, true);
@@ -485,6 +745,7 @@ export default class ConfigurationPreviewDialog {
       const input = new Input({
         value: initial,
         width: "100%",
+        valueLiveUpdate: true,
         type: ["Integer", "Decimal"].includes(dataType)
           ? "Number"
           : dataType === "Date"
@@ -506,6 +767,10 @@ export default class ConfigurationPreviewDialog {
       });
       control = input;
       getValue = () => input.getValue();
+      setValue = (value) => {
+        const text = value === undefined || value === null ? "" : String(value);
+        if (input.getValue() !== text) input.setValue(text);
+      };
       setValueState = (state, message) => {
         input.setValueState(state);
         input.setValueStateText(message ?? "");
@@ -514,10 +779,13 @@ export default class ConfigurationPreviewDialog {
 
     onValueChange = () => {
       touchedFeatureCodes.add(definition.code);
+      dismissedRecommendations.clear();
       values.set(definition.code, getValue());
+      inputValues.set(definition.code, getValue());
       updatePreview();
     };
     values.set(definition.code, getValue());
+    inputValues.set(definition.code, getValue());
     content.addItem(control);
 
     if (["Decimal", "Integer", "Range"].includes(dataType))
@@ -530,6 +798,7 @@ export default class ConfigurationPreviewDialog {
     fields.set(definition.code, {
       definition,
       getValue,
+      setValue,
       setAvailableValues,
       setValueState
     });

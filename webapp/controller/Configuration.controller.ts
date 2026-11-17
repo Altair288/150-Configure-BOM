@@ -38,7 +38,7 @@ import type { ConstraintRule } from "../model/constraintRules";
 import ConfigurationScopeView from "./configuration/ConfigurationScopeView";
 import { buildContextTreeRows } from "./configuration/ConfigurationViewModel";
 import type { Field, Selection, Values } from "./configuration/types";
-import { button, form, select, setI18nBundle, tr, txt } from "../util/configurationUi";
+import { button, form, select, setI18nBundle, tr, trFormat, txt } from "../util/configurationUi";
 import {
   createSeed,
   ensureLoadTestContexts,
@@ -1890,11 +1890,27 @@ export default class ConfigurationController extends BaseController {
   }
   private preview(rules?: ConstraintRule[]): void {
     const context = this.currentContext();
+    const features = contextReferences(this.store, context.id).map((reference) =>
+      resolveDefinition(this.store, reference)
+    );
+    let previewRules: ConstraintRule[];
+    try {
+      previewRules =
+        rules ??
+        (this.ruleWorkspaceContextId === context.id
+          ? this.ruleWorkspaceView?.rulesForPreview()
+          : undefined) ??
+        this.constraintRuleRepository.list(context.id, features);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      MessageBox.error(trFormat("cmConstraintPreviewLoadFailed", [message], message));
+      return;
+    }
     new ConfigurationPreviewDialog({
       store: this.store,
       context,
       profile: this.currentProfile(),
-      rules,
+      rules: previewRules,
       getHost: () => this.getView()
     }).open();
   }

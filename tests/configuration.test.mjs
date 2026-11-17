@@ -18,15 +18,19 @@ import {
   appendConstraintPredicate,
   activeConstraintEffects,
   constraintEffectAllowedValues,
+  constraintMaximumSelections,
   constraintRelationshipsForRule,
   reconcileConstrainedSelection,
   createConstraintRule,
   createConstraintRuleSamples,
   constraintOperatorsFor,
+  detectConstraintConflicts,
   formatConstraintExpression,
+  isConstraintRuleAst,
   normalizeConstraintConditionForDesigner,
   removeConstraintExpressionAtPath,
   previewConstraintRules,
+  simulateConstraintActions,
   migrateLegacyConstraintRuleAst,
   parseConstraintExpression,
   validateConstraintRule
@@ -830,4 +834,568 @@ test("constraint sample feature migration is additive and idempotent", () => {
   const repeated = ensureConstraintSampleFeatures(migrated);
   assert.equal(repeated.definitions.length, migrated.definitions.length);
   assert.equal(repeated.references.length, migrated.references.length);
+});
+
+function scenarioFeature(code, dataType, values = []) {
+  return {
+    id: `feature-${code}`,
+    code,
+    name: code,
+    description: "",
+    version: 1,
+    sourceType: "Local",
+    dimension: "Engineering",
+    dataType,
+    unit: "",
+    mandatory: false,
+    defaultValue: "",
+    minSelections: 0,
+    maxSelections: dataType === "Multi Enumeration" ? values.length : 1,
+    active: true,
+    domain: {
+      values: values.map((value, index) => ({
+        id: `${code}-${value}`,
+        code: value,
+        value,
+        description: "",
+        sort: index,
+        defaultValue: false,
+        active: true
+      }))
+    },
+    modified: "2026-01-01"
+  };
+}
+
+function scenarioRule(id, condition, actions) {
+  return createConstraintRule({ id, code: id, name: id, ast: { condition, actions } });
+}
+
+test("extended constraint actions and derivations round-trip through expressions", () => {
+  const ast = {
+    condition: { type: "GREATER_THAN", feature: "FLOORS", value: 20 },
+    actions: [
+      {
+        type: "DERIVE",
+        target: { type: "EQUALS", feature: "POWER", value: "" },
+        derivation: {
+          kind: "CALCULATE",
+          formula: {
+            operands: [
+              { kind: "FEATURE", feature: "LOAD" },
+              { kind: "FEATURE", feature: "SPEED" },
+              { kind: "FEATURE", feature: "EFFICIENCY" }
+            ],
+            operators: ["MULTIPLY", "DIVIDE"],
+            rounding: { mode: "ROUND", digits: 2 },
+            conversion: { factor: 0.001, fromUnit: "W", toUnit: "kW" }
+          }
+        }
+      },
+      {
+        type: "DERIVE",
+        target: { type: "EQUALS", feature: "MOTOR", value: "" },
+        derivation: {
+          kind: "MAP",
+          source: "LOAD",
+          rows: [
+            { minimum: 0, maximum: 500, value: "A" },
+            { minimum: 501, maximum: 1000, value: "B" }
+          ]
+        }
+      },
+      {
+        type: "RESTRICT",
+        target: { type: "COUNT_AT_MOST", feature: "PACKS", value: 3 }
+      },
+      { type: "DEFAULT", target: { type: "EQUALS", feature: "SPEED", value: 1.75 } },
+      { type: "RECOMMEND", target: { type: "EQUALS", feature: "MOTOR", value: "A" } },
+      { type: "ADD", target: { type: "EQUALS", feature: "PACKS", value: "BRAKE" } },
+      {
+        type: "RESTRICT",
+        target: { type: "EQUALS", feature: "POWER", value: "" },
+        derivation: {
+          kind: "LINK",
+          formula: { operands: [{ kind: "FEATURE", feature: "LOAD" }], operators: [] },
+          range: { minimumOffset: 100, maximumOffset: 200 }
+        }
+      }
+    ]
+  };
+  assert.deepEqual(parseConstraintExpression(formatConstraintExpression(ast)), ast);
+  assert.equal(isConstraintRuleAst(ast), true);
+  const invalidShape = structuredClone(ast);
+  invalidShape.actions[0].derivation.formula.operators = ["UNKNOWN"];
+  assert.equal(isConstraintRuleAst(invalidShape), false);
+  const unset = {
+    condition: { type: "IS_UNSET", feature: "SPEED", value: true },
+    actions: [{ type: "DEFAULT", target: { type: "EQUALS", feature: "SPEED", value: 1.75 } }]
+  };
+  assert.deepEqual(parseConstraintExpression(formatConstraintExpression(unset)), unset);
+  const always = {
+    condition: { type: "ALWAYS", feature: "PACKS", value: true },
+    actions: [{ type: "RESTRICT", target: { type: "COUNT_AT_MOST", feature: "PACKS", value: 2 } }]
+  };
+  assert.deepEqual(parseConstraintExpression(formatConstraintExpression(always)), always);
+});
+
+test("extended validation checks referenced features, overlapping mappings and quantity bounds", () => {
+  const features = [
+    scenarioFeature("LOAD", "Decimal"),
+    scenarioFeature("POWER", "Decimal"),
+    scenarioFeature("MOTOR", "Enumeration", ["A", "B"]),
+    scenarioFeature("PACKS", "Multi Enumeration", ["BRAKE", "AUDIO"])
+  ];
+  const condition = { type: "GREATER_THAN", feature: "LOAD", value: 20 };
+  const badMapping = scenarioRule("MAP", condition, [
+    {
+      type: "DERIVE",
+      target: { type: "EQUALS", feature: "MOTOR", value: "" },
+      derivation: {
+        kind: "MAP",
+        source: "LOAD",
+        rows: [
+          { minimum: 0, maximum: 500, value: "A" },
+          { minimum: 500, maximum: 1000, value: "B" }
+        ]
+      }
+    }
+  ]);
+  assert.ok(
+    validateConstraintRule(badMapping, [], features).some((issue) => issue.code === "MAP_OVERLAP")
+  );
+  const badFormula = scenarioRule("FORMULA", condition, [
+    {
+      type: "DERIVE",
+      target: { type: "EQUALS", feature: "POWER", value: "" },
+      derivation: {
+        kind: "CALCULATE",
+        formula: { operands: [{ kind: "FEATURE", feature: "UNKNOWN" }], operators: [] }
+      }
+    }
+  ]);
+  assert.ok(
+    validateConstraintRule(badFormula, [], features).some(
+      (issue) => issue.code === "FEATURE_NOT_FOUND"
+    )
+  );
+  const quantity = scenarioRule("COUNT", condition, [
+    { type: "RESTRICT", target: { type: "COUNT_AT_MOST", feature: "PACKS", value: -1 } }
+  ]);
+  assert.ok(
+    validateConstraintRule(quantity, [], features).some((issue) => issue.code === "INVALID_COUNT")
+  );
+  const sameFeatureExclusion = scenarioRule(
+    "SAME",
+    { type: "IN", feature: "PACKS", value: ["BRAKE"] },
+    [{ type: "EXCLUDE", target: { type: "EQUALS", feature: "PACKS", value: "AUDIO" } }]
+  );
+  assert.ok(
+    !validateConstraintRule(sameFeatureExclusion, [], features).some(
+      (issue) => issue.code === "CIRCULAR_DEPENDENCY"
+    )
+  );
+  assert.equal(
+    previewConstraintRules(
+      [sameFeatureExclusion],
+      features,
+      new Map([["PACKS", ["BRAKE", "AUDIO"]]])
+    )[0].status,
+    "conflict"
+  );
+  const unconditionalCount = scenarioRule(
+    "ALWAYS_COUNT",
+    { type: "ALWAYS", feature: "PACKS", value: true },
+    [{ type: "RESTRICT", target: { type: "COUNT_AT_MOST", feature: "PACKS", value: 1 } }]
+  );
+  assert.deepEqual(validateConstraintRule(unconditionalCount, [], features), []);
+  assert.equal(
+    previewConstraintRules([unconditionalCount], features, new Map([["PACKS", []]]))[0].status,
+    "satisfied"
+  );
+  assert.equal(
+    previewConstraintRules(
+      [unconditionalCount],
+      features,
+      new Map([["PACKS", ["BRAKE", "AUDIO"]]])
+    )[0].status,
+    "conflict"
+  );
+});
+
+test("local simulation applies automatic actions and defaults but leaves recommendations optional", () => {
+  const features = [
+    scenarioFeature("FLOORS", "Integer"),
+    scenarioFeature("SPEED", "Decimal"),
+    scenarioFeature("PACKS", "Multi Enumeration", ["BRAKE", "AUDIO"]),
+    scenarioFeature("MOTOR", "Enumeration", ["A", "B"])
+  ];
+  const condition = { type: "GREATER_THAN", feature: "FLOORS", value: 20 };
+  const rules = [
+    scenarioRule("AUTO", condition, [
+      { type: "DEFAULT", target: { type: "EQUALS", feature: "SPEED", value: 1.75 } },
+      { type: "ADD", target: { type: "EQUALS", feature: "PACKS", value: "BRAKE" } },
+      { type: "RECOMMEND", target: { type: "EQUALS", feature: "MOTOR", value: "B" } }
+    ])
+  ];
+  const input = new Map([
+    ["FLOORS", 25],
+    ["PACKS", ["AUDIO"]],
+    ["MOTOR", "A"]
+  ]);
+  const result = simulateConstraintActions(rules, features, input, new Set());
+  assert.equal(result.values.get("SPEED"), 1.75);
+  assert.deepEqual(result.values.get("PACKS"), ["AUDIO", "BRAKE"]);
+  assert.equal(result.values.get("MOTOR"), "A");
+  assert.deepEqual(
+    result.recommendations.map((entry) => [entry.feature, entry.value]),
+    [["MOTOR", "B"]]
+  );
+  assert.ok(result.changes.every((change) => change.ruleId === "AUTO"));
+  assert.equal(input.has("SPEED"), false);
+  assert.deepEqual(input.get("PACKS"), ["AUDIO"]);
+  const touched = simulateConstraintActions(rules, features, input, new Set(["SPEED"]));
+  assert.equal(touched.values.has("SPEED"), false);
+  const setPacks = scenarioRule("SET_PACKS", condition, [
+    { type: "SET", target: { type: "EQUALS", feature: "PACKS", value: ["BRAKE", "AUDIO"] } }
+  ]);
+  assert.deepEqual(validateConstraintRule(setPacks, [], features), []);
+  assert.deepEqual(
+    parseConstraintExpression(formatConstraintExpression(setPacks.ast)),
+    setPacks.ast
+  );
+  assert.deepEqual(
+    simulateConstraintActions([setPacks], features, input, new Set()).values.get("PACKS"),
+    ["BRAKE", "AUDIO"]
+  );
+  const forced = scenarioRule("FORCED", condition, [
+    { type: "SET", target: { type: "EQUALS", feature: "SPEED", value: 2 } }
+  ]);
+  assert.equal(
+    simulateConstraintActions([...rules, forced], features, input, new Set()).values.get("SPEED"),
+    2
+  );
+  const conflicting = scenarioRule("OTHER", condition, [
+    { type: "SET", target: { type: "EQUALS", feature: "SPEED", value: 2.5 } }
+  ]);
+  const conflictResult = simulateConstraintActions(
+    [forced, conflicting],
+    features,
+    input,
+    new Set()
+  );
+  assert.equal(conflictResult.values.has("SPEED"), false);
+  assert.deepEqual(new Set(conflictResult.conflicts[0].ruleIds), new Set(["FORCED", "OTHER"]));
+  const delayedConflict = scenarioRule("DELAYED", { type: "EQUALS", feature: "SPEED", value: 2 }, [
+    { type: "SET", target: { type: "EQUALS", feature: "SPEED", value: 2.5 } }
+  ]);
+  const unstable = simulateConstraintActions([forced, delayedConflict], features, input, new Set());
+  assert.equal(unstable.values.has("SPEED"), false);
+  assert.ok(unstable.issues.some((issue) => issue.code === "AUTOMATIC_CYCLE"));
+  assert.ok(
+    validateConstraintRule(delayedConflict, [], features).some(
+      (issue) => issue.code === "CIRCULAR_DEPENDENCY"
+    )
+  );
+});
+
+test("local simulation evaluates formulas and maps, and does not apply conflicting values", () => {
+  const features = [
+    scenarioFeature("LOAD", "Decimal"),
+    scenarioFeature("SPEED", "Decimal"),
+    scenarioFeature("EFFICIENCY", "Decimal"),
+    scenarioFeature("POWER", "Decimal"),
+    scenarioFeature("MOTOR", "Enumeration", ["A", "B"])
+  ];
+  const condition = { type: "GREATER_THAN", feature: "LOAD", value: 0 };
+  const rules = [
+    scenarioRule("CALC", condition, [
+      {
+        type: "DERIVE",
+        target: { type: "EQUALS", feature: "POWER", value: "" },
+        derivation: {
+          kind: "CALCULATE",
+          formula: {
+            operands: [
+              { kind: "FEATURE", feature: "LOAD" },
+              { kind: "FEATURE", feature: "SPEED" },
+              { kind: "FEATURE", feature: "EFFICIENCY" }
+            ],
+            operators: ["MULTIPLY", "DIVIDE"]
+          }
+        }
+      },
+      {
+        type: "DERIVE",
+        target: { type: "EQUALS", feature: "MOTOR", value: "" },
+        derivation: {
+          kind: "MAP",
+          source: "LOAD",
+          rows: [
+            { minimum: 0, maximum: 500, value: "A" },
+            { minimum: 501, maximum: 1000, value: "B" }
+          ]
+        }
+      }
+    ])
+  ];
+  const input = new Map([
+    ["LOAD", 600],
+    ["SPEED", 2],
+    ["EFFICIENCY", 0.8]
+  ]);
+  const result = simulateConstraintActions(rules, features, input, new Set());
+  assert.equal(result.values.get("POWER"), 1500);
+  assert.equal(result.values.get("MOTOR"), "B");
+  const linkedRange = scenarioRule("LINK_RANGE", condition, [
+    {
+      type: "RESTRICT",
+      target: { type: "EQUALS", feature: "POWER", value: "" },
+      derivation: {
+        kind: "LINK",
+        formula: { operands: [{ kind: "FEATURE", feature: "LOAD" }], operators: [] },
+        range: { minimumOffset: 100, maximumOffset: 200 }
+      }
+    }
+  ]);
+  assert.deepEqual(validateConstraintRule(linkedRange, [], features), []);
+  assert.equal(
+    previewConstraintRules([linkedRange], features, new Map([...input, ["POWER", 750]]))[0].status,
+    "satisfied"
+  );
+  assert.equal(
+    previewConstraintRules([linkedRange], features, new Map([...input, ["POWER", 900]]))[0].status,
+    "conflict"
+  );
+  const rounded = scenarioRule("ROUND", condition, [
+    {
+      type: "DERIVE",
+      target: { type: "EQUALS", feature: "POWER", value: "" },
+      derivation: {
+        kind: "CALCULATE",
+        formula: {
+          operands: [{ kind: "VALUE", value: -1.5 }],
+          operators: [],
+          rounding: { mode: "ROUND", digits: 0 }
+        }
+      }
+    }
+  ]);
+  assert.equal(
+    simulateConstraintActions([rounded], features, input, new Set()).values.get("POWER"),
+    -2
+  );
+  const divideByZero = simulateConstraintActions(
+    rules,
+    features,
+    new Map([...input, ["EFFICIENCY", 0]]),
+    new Set()
+  );
+  assert.equal(divideByZero.values.has("POWER"), false);
+  assert.ok(divideByZero.issues.some((issue) => issue.code === "DIVISION_BY_ZERO"));
+  const noMapping = simulateConstraintActions(
+    rules,
+    features,
+    new Map([...input, ["LOAD", 2000]]),
+    new Set()
+  );
+  assert.equal(noMapping.values.has("MOTOR"), false);
+  assert.ok(noMapping.issues.some((issue) => issue.code === "MAP_NO_MATCH"));
+
+  const requireA = scenarioRule("REQUIRE_A", condition, [
+    { type: "REQUIRE", target: { type: "EQUALS", feature: "MOTOR", value: "A" } }
+  ]);
+  const excludeA = scenarioRule("EXCLUDE_A", condition, [
+    { type: "EXCLUDE", target: { type: "EQUALS", feature: "MOTOR", value: "A" } }
+  ]);
+  const conflicts = detectConstraintConflicts([requireA, excludeA], features, input);
+  assert.deepEqual(new Set(conflicts[0].ruleIds), new Set(["REQUIRE_A", "EXCLUDE_A"]));
+});
+
+test("multi-select requirements preserve other choices and identify only conflicting rules", () => {
+  const features = [
+    scenarioFeature("FLOORS", "Integer"),
+    scenarioFeature("PACKS", "Multi Enumeration", ["BRAKE", "AUDIO", "COMFORT"])
+  ];
+  const condition = { type: "GREATER_THAN", feature: "FLOORS", value: 10 };
+  const requireBrake = scenarioRule("BRAKE_REQUIRED", condition, [
+    { type: "REQUIRE", target: { type: "EQUALS", feature: "PACKS", value: "BRAKE" } }
+  ]);
+  const requireAudio = scenarioRule("AUDIO_REQUIRED", condition, [
+    { type: "REQUIRE", target: { type: "EQUALS", feature: "PACKS", value: "AUDIO" } }
+  ]);
+  const forbidBrake = scenarioRule("BRAKE_FORBIDDEN", condition, [
+    { type: "EXCLUDE", target: { type: "EQUALS", feature: "PACKS", value: "BRAKE" } }
+  ]);
+  const input = new Map([
+    ["FLOORS", 20],
+    ["PACKS", ["BRAKE", "AUDIO"]]
+  ]);
+  const effects = activeConstraintEffects([requireBrake, requireAudio], features, input);
+  assert.ok(effects.every((effect) => effect.status === "satisfied"));
+  assert.equal(constraintEffectAllowedValues(effects[0], features[1]), undefined);
+  assert.deepEqual(detectConstraintConflicts([requireBrake, requireAudio], features, input), []);
+  const conflicts = detectConstraintConflicts(
+    [requireBrake, requireAudio, forbidBrake],
+    features,
+    input
+  );
+  assert.deepEqual(new Set(conflicts[0].ruleIds), new Set(["BRAKE_REQUIRED", "BRAKE_FORBIDDEN"]));
+  const addBrake = scenarioRule("ADD_BRAKE", condition, [
+    { type: "ADD", target: { type: "EQUALS", feature: "PACKS", value: "BRAKE" } }
+  ]);
+  const partial = simulateConstraintActions(
+    [requireAudio, addBrake],
+    features,
+    new Map([
+      ["FLOORS", 20],
+      ["PACKS", []]
+    ]),
+    new Set()
+  );
+  assert.deepEqual(partial.values.get("PACKS"), ["BRAKE"]);
+  assert.deepEqual(partial.conflicts, []);
+  const maxOne = scenarioRule("MAX_ONE", condition, [
+    { type: "RESTRICT", target: { type: "COUNT_AT_MOST", feature: "PACKS", value: 1 } }
+  ]);
+  assert.equal(
+    constraintMaximumSelections(activeConstraintEffects([maxOne], features, input), "PACKS"),
+    1
+  );
+  const countConflict = detectConstraintConflicts(
+    [requireBrake, requireAudio, maxOne],
+    features,
+    input
+  );
+  assert.deepEqual(
+    new Set(countConflict[0].ruleIds),
+    new Set(["BRAKE_REQUIRED", "AUDIO_REQUIRED", "MAX_ONE"])
+  );
+
+  const restrictChoices = scenarioRule("CHOICES", condition, [
+    { type: "RESTRICT", target: { type: "IN", feature: "PACKS", value: ["BRAKE", "AUDIO"] } }
+  ]);
+  assert.equal(
+    previewConstraintRules(
+      [restrictChoices],
+      features,
+      new Map([
+        ["FLOORS", 20],
+        ["PACKS", ["BRAKE", "COMFORT"]]
+      ])
+    )[0].status,
+    "conflict"
+  );
+});
+
+test("value mappings support active enumeration values without overlapping matches", () => {
+  const features = [
+    scenarioFeature("REGION", "Enumeration", ["CN", "JP"]),
+    scenarioFeature("STEERING", "Enumeration", ["LEFT", "RIGHT"])
+  ];
+  const rule = scenarioRule("REGION_MAP", { type: "ALWAYS", feature: "REGION", value: true }, [
+    {
+      type: "DERIVE",
+      target: { type: "EQUALS", feature: "STEERING", value: "" },
+      derivation: {
+        kind: "MAP",
+        source: "REGION",
+        rows: [
+          { match: "CN", value: "LEFT" },
+          { match: "JP", value: "RIGHT" }
+        ]
+      }
+    }
+  ]);
+  assert.deepEqual(validateConstraintRule(rule, [], features), []);
+  assert.deepEqual(parseConstraintExpression(formatConstraintExpression(rule.ast)), rule.ast);
+  assert.deepEqual(constraintRelationshipsForRule(rule), [
+    { source: "REGION", target: "STEERING", type: "DERIVE" }
+  ]);
+  assert.equal(
+    simulateConstraintActions([rule], features, new Map([["REGION", "JP"]]), new Set()).values.get(
+      "STEERING"
+    ),
+    "RIGHT"
+  );
+  const inactive = features.map((feature) =>
+    feature.code === "REGION" ? { ...feature, active: false } : feature
+  );
+  assert.equal(
+    simulateConstraintActions([rule], inactive, new Map([["REGION", "JP"]]), new Set()).values.has(
+      "STEERING"
+    ),
+    false
+  );
+  const duplicate = structuredClone(rule);
+  duplicate.ast.actions[0].derivation.rows[1].match = "CN";
+  assert.ok(
+    validateConstraintRule(duplicate, [], features).some((issue) => issue.code === "MAP_OVERLAP")
+  );
+});
+
+test("date range conflicts identify their actual rule sources", () => {
+  const features = [scenarioFeature("ENABLED", "Boolean"), scenarioFeature("DELIVERY", "Date")];
+  const condition = { type: "EQUALS", feature: "ENABLED", value: true };
+  const after = scenarioRule("AFTER", condition, [
+    {
+      type: "RESTRICT",
+      target: { type: "GREATER_THAN_OR_EQUAL", feature: "DELIVERY", value: "2026-03-01" }
+    }
+  ]);
+  const before = scenarioRule("BEFORE", condition, [
+    {
+      type: "RESTRICT",
+      target: { type: "LESS_THAN_OR_EQUAL", feature: "DELIVERY", value: "2026-02-01" }
+    }
+  ]);
+  const input = new Map([["ENABLED", true]]);
+  const conflicts = detectConstraintConflicts([after, before], features, input);
+  assert.deepEqual(new Set(conflicts[0].ruleIds), new Set(["AFTER", "BEFORE"]));
+});
+
+test("conditional ranges enforce their own step from the lower bound", () => {
+  const features = [scenarioFeature("FLOORS", "Integer"), scenarioFeature("SPEED", "Decimal")];
+  const rule = scenarioRule("SPEED_RANGE", { type: "GREATER_THAN", feature: "FLOORS", value: 20 }, [
+    {
+      type: "RESTRICT",
+      target: {
+        type: "AND",
+        expressions: [
+          { type: "GREATER_THAN_OR_EQUAL", feature: "SPEED", value: 1.75 },
+          { type: "LESS_THAN_OR_EQUAL", feature: "SPEED", value: 2.5 },
+          { type: "STEP", feature: "SPEED", value: [1.75, 0.25] }
+        ]
+      }
+    }
+  ]);
+  assert.deepEqual(validateConstraintRule(rule, [], features), []);
+  assert.deepEqual(parseConstraintExpression(formatConstraintExpression(rule.ast)), rule.ast);
+  assert.equal(
+    previewConstraintRules(
+      [rule],
+      features,
+      new Map([
+        ["FLOORS", 25],
+        ["SPEED", 2]
+      ])
+    )[0].status,
+    "satisfied"
+  );
+  assert.equal(
+    previewConstraintRules(
+      [rule],
+      features,
+      new Map([
+        ["FLOORS", 25],
+        ["SPEED", 2.1]
+      ])
+    )[0].status,
+    "conflict"
+  );
+  const invalid = structuredClone(rule);
+  invalid.ast.actions[0].target.expressions[2].value[1] = 0;
+  assert.ok(
+    validateConstraintRule(invalid, [], features).some((issue) => issue.code === "INVALID_STEP")
+  );
 });

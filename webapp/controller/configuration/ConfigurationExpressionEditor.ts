@@ -39,7 +39,12 @@ import type {
   ConstraintRule
 } from "../../model/constraintRules";
 import type { FeatureDefinition } from "../../model/configuration";
-import { tr, trFormat } from "../../util/configurationUi";
+import {
+  constraintActionLabels,
+  constraintOperatorLabels,
+  tr,
+  trFormat
+} from "../../util/configurationUi";
 
 type EditorMode = "structured" | "expression";
 type ExpressionPathPart = number | "expression";
@@ -67,16 +72,28 @@ const operatorItems: OperatorItem[] = [
   { key: "NOT_IN", label: "不属于" },
   { key: "CONTAINS", label: "包含" },
   { key: "STARTS_WITH", label: "开头为" },
-  { key: "ENDS_WITH", label: "结尾为" }
+  { key: "ENDS_WITH", label: "结尾为" },
+  { key: "ALWAYS", label: "cmConstraintAlways" },
+  { key: "IS_UNSET", label: "cmConstraintIsUnset" },
+  { key: "COUNT_AT_LEAST", label: "cmConstraintCountAtLeast" },
+  { key: "COUNT_AT_MOST", label: "cmConstraintCountAtMost" },
+  { key: "COUNT_EXACTLY", label: "cmConstraintCountExactly" },
+  { key: "STEP", label: "cmConstraintStep" }
 ];
 
-const actionItems: Array<{ key: ConstraintActionType; label: string }> = [
-  { key: "REQUIRE", label: "要求" },
-  { key: "EXCLUDE", label: "互斥" },
-  { key: "SET", label: "设置" },
-  { key: "RESTRICT", label: "限制" },
-  { key: "DERIVE", label: "派生" }
-];
+const actionItems: Array<{ key: ConstraintActionType; label: string }> = (
+  [
+    "REQUIRE",
+    "EXCLUDE",
+    "SET",
+    "RESTRICT",
+    "DERIVE",
+    "DEFAULT",
+    "RECOMMEND",
+    "ADD",
+    "REMOVE"
+  ] as const
+).map((key) => ({ key, label: constraintActionLabels[key] }));
 
 function isPredicate(expression: ConstraintExpression): expression is ConstraintPredicate {
   return "feature" in expression;
@@ -95,19 +112,8 @@ function describeConditionForUser(
 ): string {
   if (isPredicate(expression)) {
     const feature = features.find((item) => item.code === expression.feature);
-    const operatorLabels: Record<ConstraintOperator, string> = {
-      EQUALS: "等于",
-      NOT_EQUALS: "不等于",
-      GREATER_THAN: "大于",
-      GREATER_THAN_OR_EQUAL: "大于等于",
-      LESS_THAN: "小于",
-      LESS_THAN_OR_EQUAL: "小于等于",
-      IN: "属于",
-      NOT_IN: "不属于",
-      CONTAINS: "包含",
-      STARTS_WITH: "开头为",
-      ENDS_WITH: "结尾为"
-    };
+    if (expression.type === "STEP" && Array.isArray(expression.value))
+      return `${feature?.name ?? expression.feature} ${tr("cmConstraintStep")} ${String(expression.value[1] ?? "")}${feature?.unit ? ` ${feature.unit}` : ""}`;
     const describeValue = (value: ConstraintLiteral): string => {
       if (typeof value === "boolean") return tr(value ? "Yes" : "No");
       if (typeof value !== "string") return String(value);
@@ -120,7 +126,10 @@ function describeConditionForUser(
       feature && ["Integer", "Decimal", "Range"].includes(feature.dataType) && feature.unit
         ? ` ${feature.unit}`
         : "";
-    return `${feature?.name ?? expression.feature} ${tr(operatorLabels[expression.type])} ${value}${unit}`;
+    if (expression.type === "ALWAYS") return tr("cmConstraintAlways");
+    return expression.type === "IS_UNSET"
+      ? `${feature?.name ?? expression.feature} ${tr(constraintOperatorLabels[expression.type])}`
+      : `${feature?.name ?? expression.feature} ${tr(constraintOperatorLabels[expression.type])} ${value}${unit}`;
   }
 
   if (expression.type === "NOT")
@@ -562,15 +571,19 @@ export default class ConfigurationExpressionEditor {
               ? Array.isArray(predicate.value)
                 ? predicate.value
                 : [predicate.value]
-              : Array.isArray(predicate.value)
-                ? (predicate.value[0] ?? "")
-                : predicate.value;
+              : predicate.type.startsWith("COUNT_") || predicate.type === "IS_UNSET"
+                ? feature
+                  ? defaultValue(feature)
+                  : ""
+                : Array.isArray(predicate.value)
+                  ? (predicate.value[0] ?? "")
+                  : predicate.value;
           target = { ...predicate, type: operator, value };
         }
       }
     }
     const actions = this.rule.ast.actions.map((item, actionIndex) =>
-      actionIndex === index ? { ...item, type, target } : item
+      actionIndex === index ? { type, target } : item
     );
     this.commitAst({ ...this.rule.ast, actions });
   }
@@ -620,24 +633,34 @@ export default class ConfigurationExpressionEditor {
       type: "Transparent",
       press: () => this.removeAction(index)
     });
-    const targetControl = isPredicate(action.target)
-      ? this.buildPredicateControls(
-          action.target,
-          (target) => this.replaceActionTarget(index, target),
-          action.type
-        )
-      : new VBox({
-          width: "100%",
+    const targetControl = action.derivation
+      ? new VBox({
           items: [
             new Text({
-              text: formatConstraintCondition(action.target),
+              text: `${this.options.features.find((item) => "feature" in action.target && item.code === action.target.feature)?.name ?? ("feature" in action.target ? action.target.feature : "")} · ${tr(`cmConstraintDerivation${action.derivation.kind}`)}`,
               wrapping: true
-            }).addStyleClass("cmConstraintComplexActionExpression"),
-            new Text({
-              text: tr("复杂结果可在高级表达式模式中编辑。")
-            }).addStyleClass("cmConstraintExpressionHint")
+            }),
+            new Text({ text: tr("cmConstraintDerivedEditWysiwyg"), wrapping: true })
           ]
-        }).addStyleClass("cmConstraintComplexAction");
+        }).addStyleClass("cmConstraintComplexAction")
+      : isPredicate(action.target)
+        ? this.buildPredicateControls(
+            action.target,
+            (target) => this.replaceActionTarget(index, target),
+            action.type
+          )
+        : new VBox({
+            width: "100%",
+            items: [
+              new Text({
+                text: formatConstraintCondition(action.target),
+                wrapping: true
+              }).addStyleClass("cmConstraintComplexActionExpression"),
+              new Text({
+                text: tr("复杂结果可在高级表达式模式中编辑。")
+              }).addStyleClass("cmConstraintExpressionHint")
+            ]
+          }).addStyleClass("cmConstraintComplexAction");
     return new VBox({
       width: "100%",
       items: [
@@ -677,7 +700,12 @@ export default class ConfigurationExpressionEditor {
         if (selected) onChange(defaultPredicate(selected));
       }
     });
-    const allowed = feature ? constraintOperatorsFor(feature.dataType, actionType) : ["EQUALS"];
+    const allowed: ConstraintOperator[] = feature
+      ? constraintOperatorsFor(feature.dataType, actionType)
+      : ["EQUALS"];
+    if (!actionType && (predicate.type === "IS_UNSET" || predicate.type === "ALWAYS"))
+      allowed.push(predicate.type);
+    if (actionType === "RESTRICT" && predicate.type === "STEP") allowed.push("STEP");
     const operatorSelect = new Select({
       width: "13.5rem",
       selectedKey: predicate.type,
@@ -693,16 +721,22 @@ export default class ConfigurationExpressionEditor {
             ? Array.isArray(currentValue)
               ? currentValue
               : [currentValue]
-            : Array.isArray(currentValue)
-              ? (currentValue[0] ?? "")
-              : currentValue;
+            : type.startsWith("COUNT_")
+              ? 0
+              : (predicate.type === "IS_UNSET" || predicate.type === "ALWAYS") && feature
+                ? defaultValue(feature)
+                : Array.isArray(currentValue)
+                  ? (currentValue[0] ?? "")
+                  : currentValue;
         onChange({ ...predicate, type, value });
       }
     });
     const items: Control[] = [
       featureSelect,
       operatorSelect,
-      this.buildValueControl(predicate, feature, onChange, actionType)
+      ...(predicate.type === "IS_UNSET" || predicate.type === "ALWAYS"
+        ? []
+        : [this.buildValueControl(predicate, feature, onChange, actionType)])
     ];
     if (onRemove) {
       items.push(
@@ -738,6 +772,24 @@ export default class ConfigurationExpressionEditor {
       });
     const currentValue = predicate.value;
     const options = feature.domain.values.filter((item) => item.active);
+    if (predicate.type === "STEP")
+      return new Input({
+        width: "20rem",
+        value: Array.isArray(currentValue) ? currentValue.join(", ") : String(currentValue),
+        enabled: false,
+        tooltip: tr("cmConstraintStepEditWysiwyg")
+      });
+    if (predicate.type.startsWith("COUNT_"))
+      return new Input({
+        width: "10rem",
+        type: "Number",
+        value: String(currentValue),
+        tooltip: tr("cmConstraintSelectionCount"),
+        change: (event: InputBase$ChangeEvent) => {
+          const raw = event.getSource().getValue();
+          onChange({ ...predicate, value: raw.trim() ? Number(raw) : Number.NaN });
+        }
+      });
     if (feature.dataType === "Boolean") {
       return new Select({
         width: "15rem",
@@ -751,10 +803,12 @@ export default class ConfigurationExpressionEditor {
           onChange({ ...predicate, value: event.getSource().getSelectedKey() === "true" })
       });
     }
+    const multiAssignment =
+      feature.dataType === "Multi Enumeration" &&
+      !!actionType &&
+      ["SET", "DEFAULT", "RECOMMEND"].includes(actionType);
     const allowMultiSelection =
-      predicate.type === "IN" ||
-      predicate.type === "NOT_IN" ||
-      (feature.dataType === "Multi Enumeration" && actionType !== "SET" && actionType !== "DERIVE");
+      predicate.type === "IN" || predicate.type === "NOT_IN" || multiAssignment;
     if (allowMultiSelection && options.length > 0) {
       return new MultiComboBox({
         width: "20rem",
@@ -764,8 +818,9 @@ export default class ConfigurationExpressionEditor {
         selectionFinish: (event: MultiComboBox$SelectionFinishEvent) =>
           onChange({
             ...predicate,
-            type:
-              predicate.type === "NOT_IN"
+            type: multiAssignment
+              ? "EQUALS"
+              : predicate.type === "NOT_IN"
                 ? "NOT_IN"
                 : feature.dataType === "Multi Enumeration"
                   ? "IN"
@@ -774,17 +829,14 @@ export default class ConfigurationExpressionEditor {
           })
       });
     }
-    if (
-      ["Enumeration", "Reference"].includes(feature.dataType) ||
-      (feature.dataType === "Multi Enumeration" && actionType === "SET")
-    )
+    if (["Enumeration", "Reference", "Multi Enumeration"].includes(feature.dataType))
       return new Select({
         width: "20rem",
         selectedKey: String(Array.isArray(currentValue) ? (currentValue[0] ?? "") : currentValue),
         tooltip: tr("Allowed Value"),
         items: options.map((item) => new Item({ key: item.code, text: item.value })),
         change: (event: Select$ChangeEvent) =>
-          onChange({ ...predicate, type: "EQUALS", value: event.getSource().getSelectedKey() })
+          onChange({ ...predicate, value: event.getSource().getSelectedKey() })
       });
 
     const numeric = ["Integer", "Decimal", "Range"].includes(feature.dataType);

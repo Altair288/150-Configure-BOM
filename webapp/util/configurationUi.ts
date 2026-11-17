@@ -9,9 +9,48 @@ import Label from "sap/m/Label";
 import Select from "sap/m/Select";
 import ObjectStatus from "sap/m/ObjectStatus";
 import SimpleForm from "sap/ui/layout/form/SimpleForm";
+import type {
+  ConstraintActionType,
+  ConstraintDerivation,
+  ConstraintFormulaOperator,
+  ConstraintOperator
+} from "../model/constraintRules";
+import type { FeatureDefinition } from "../model/configuration";
 
 export type ResourceBundle = {
   getText?: (resourceKey: string, args?: string[]) => string | undefined;
+};
+
+export const constraintOperatorLabels: Record<ConstraintOperator, string> = {
+  EQUALS: "等于",
+  NOT_EQUALS: "不等于",
+  GREATER_THAN: "大于",
+  GREATER_THAN_OR_EQUAL: "大于等于",
+  LESS_THAN: "小于",
+  LESS_THAN_OR_EQUAL: "小于等于",
+  IN: "属于",
+  NOT_IN: "不属于",
+  CONTAINS: "包含",
+  STARTS_WITH: "开头为",
+  ENDS_WITH: "结尾为",
+  ALWAYS: "cmConstraintAlways",
+  IS_UNSET: "cmConstraintIsUnset",
+  COUNT_AT_LEAST: "cmConstraintCountAtLeast",
+  COUNT_AT_MOST: "cmConstraintCountAtMost",
+  COUNT_EXACTLY: "cmConstraintCountExactly",
+  STEP: "cmConstraintStep"
+};
+
+export const constraintActionLabels: Record<ConstraintActionType, string> = {
+  REQUIRE: "要求",
+  EXCLUDE: "互斥",
+  SET: "设置",
+  RESTRICT: "限制",
+  DERIVE: "cmConstraintDeriveMenu",
+  DEFAULT: "cmConstraintDefaultAction",
+  RECOMMEND: "cmConstraintRecommendAction",
+  ADD: "cmConstraintAddComponent",
+  REMOVE: "cmConstraintRemoveComponent"
 };
 
 const rawI18nKeys: Record<string, string> = {
@@ -311,6 +350,109 @@ export function tr(text: string): string {
   } catch {
     return text;
   }
+}
+
+export function constraintIssueText(issue: { code: string; message: string }): string {
+  const keys: Record<string, string> = {
+    DERIVATION_SOURCE_REQUIRED: "cmConstraintChooseSource",
+    DERIVATION_REQUIRES_NUMBER: "cmConstraintNumericSourceRequired",
+    INVALID_DERIVATION_TARGET: "cmConstraintInvalidTarget",
+    MAP_ROWS_REQUIRED: "cmConstraintMapRowsRequired",
+    INVALID_MAP_RANGE: "cmConstraintMapInvalidRange",
+    INVALID_MAP_MATCH: "cmConstraintInvalidMapMatch",
+    MAP_OVERLAP: "cmConstraintMapOverlap",
+    INVALID_FORMULA: "cmConstraintInvalidFormula",
+    INVALID_ROUNDING: "cmConstraintInvalidRounding",
+    INVALID_CONVERSION: "cmConstraintInvalidConversion",
+    INVALID_LINK_RANGE: "cmConstraintInvalidLinkedRange",
+    INVALID_COUNT: "cmConstraintInvalidCount",
+    INVALID_STEP: "cmConstraintInvalidStep",
+    INVALID_COMPONENT_ACTION: "cmConstraintInvalidComponent",
+    DERIVATION_INPUT_MISSING: "cmConstraintMissingInput",
+    MAP_NO_MATCH: "cmConstraintMapNoMatch",
+    DIVISION_BY_ZERO: "cmConstraintDivideByZero",
+    INVALID_FORMULA_RESULT: "cmConstraintInvalidResult",
+    AUTOMATIC_CYCLE: "cmConstraintAutomaticCycle",
+    VALUE_NOT_ALLOWED: "cmConstraintInvalidResult"
+  };
+  return keys[issue.code] ? tr(keys[issue.code]) : issue.message;
+}
+
+export function describeConstraintDerivation(
+  derivation: ConstraintDerivation,
+  features: ReadonlyMap<string, FeatureDefinition>,
+  values: ReadonlyMap<string, unknown>
+): string {
+  const featureValue = (code: string): string => {
+    const feature = features.get(code);
+    const value = values.get(code);
+    const display =
+      value === undefined || value === null || value === ""
+        ? tr("cmConstraintNoValue")
+        : feature?.dataType === "Boolean"
+          ? tr(value === true || value === "true" ? "Yes" : "No")
+          : (feature?.domain.values.find((item) => item.code === String(value))?.value ??
+            String(value));
+    return `${feature?.name ?? code} (${display}${feature?.unit ? ` ${feature.unit}` : ""})`;
+  };
+  if (derivation.kind === "MAP") {
+    const raw = values.get(derivation.source);
+    const feature = features.get(derivation.source);
+    const value =
+      feature?.dataType === "Boolean"
+        ? raw === true || raw === "true"
+          ? true
+          : raw === false || raw === "false"
+            ? false
+            : undefined
+        : feature && ["Integer", "Decimal"].includes(feature.dataType) && raw !== ""
+          ? Number(raw)
+          : raw;
+    const row = derivation.rows.find((item) =>
+      "match" in item
+        ? item.match === value
+        : typeof value === "number" && value >= item.minimum && value <= item.maximum
+    );
+    return row
+      ? "match" in row
+        ? featureValue(derivation.source)
+        : `${featureValue(derivation.source)} · ${row.minimum}–${row.maximum}`
+      : featureValue(derivation.source);
+  }
+  const symbols: Record<ConstraintFormulaOperator, string> = {
+    ADD: "+",
+    SUBTRACT: "−",
+    MULTIPLY: "×",
+    DIVIDE: "÷",
+    MIN: tr("cmConstraintFormulaMin"),
+    MAX: tr("cmConstraintFormulaMax")
+  };
+  const formula = derivation.formula.operands
+    .map((operand, index) => {
+      const value =
+        operand.kind === "FEATURE" ? featureValue(operand.feature) : String(operand.value);
+      return index === 0 ? value : `${symbols[derivation.formula.operators[index - 1]]} ${value}`;
+    })
+    .join(" ");
+  const conversion = derivation.formula.conversion;
+  const rounding = derivation.formula.rounding;
+  const range = derivation.kind === "LINK" ? derivation.range : undefined;
+  return [
+    formula,
+    conversion ? `${conversion.fromUnit} → ${conversion.toUnit} × ${conversion.factor}` : "",
+    rounding
+      ? `${tr(rounding.mode === "ROUND" ? "cmConstraintRound" : rounding.mode === "FLOOR" ? "cmConstraintFloor" : "cmConstraintCeil")} (${rounding.digits})`
+      : "",
+    range
+      ? trFormat(
+          "cmConstraintLinkedRangeOffsets",
+          [range.minimumOffset, range.maximumOffset],
+          `${range.minimumOffset}–${range.maximumOffset}`
+        )
+      : ""
+  ]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 export function trFormat(key: string, args: Array<string | number>, fallback = key): string {

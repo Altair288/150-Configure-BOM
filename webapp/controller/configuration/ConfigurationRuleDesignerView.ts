@@ -24,6 +24,7 @@ import ObjectPageSubSection from "sap/uxap/ObjectPageSubSection";
 import type { Input$LiveChangeEvent } from "sap/m/Input";
 import type { InputBase$ChangeEvent } from "sap/m/InputBase";
 import type { MultiComboBox$SelectionFinishEvent } from "sap/m/MultiComboBox";
+import type { MultiComboBox$SelectionChangeEvent } from "sap/m/MultiComboBox";
 import type { RadioButtonGroup$SelectEvent } from "sap/m/RadioButtonGroup";
 import type { SegmentedButton$SelectionChangeEvent } from "sap/m/SegmentedButton";
 import type { Select$ChangeEvent } from "sap/m/Select";
@@ -43,26 +44,44 @@ import {
   appendConstraintPredicate,
   collectConstraintPredicates,
   constraintEffectAllowedValues,
+  constraintMaximumSelections,
   constraintOperatorsFor,
+  detectConstraintConflicts,
   formatConstraintExpression,
   normalizeConstraintConditionForDesigner,
   reconcileConstrainedSelection,
   removeConstraintExpressionAtPath,
   constraintRelationshipsForRule,
+  simulateConstraintActions,
   validateConstraintRule
 } from "../../model/constraintRules";
 import ConstraintRelationshipOverlay from "./ConstraintRelationshipOverlay";
 import type {
   ConstraintAction,
   ConstraintActionType,
+  ConstraintDerivation,
   ConstraintExpression,
+  ConstraintConflict,
   ConstraintLiteral,
   ConstraintOperator,
   ConstraintPredicate,
   ConstraintPreviewEffect,
+  ConstraintSimulation,
+  ConstraintSimulationChange,
   ConstraintRule
 } from "../../model/constraintRules";
-import { tr, trFormat } from "../../util/configurationUi";
+import {
+  buildConstraintDerivationEditor,
+  createConstraintDerivation
+} from "./ConfigurationConstraintDerivationEditor";
+import {
+  constraintActionLabels as actionLabels,
+  constraintIssueText,
+  constraintOperatorLabels as operatorLabels,
+  describeConstraintDerivation,
+  tr,
+  trFormat
+} from "../../util/configurationUi";
 
 type DesignerMode = "design" | "configure";
 type ConditionConnector = "AND" | "OR";
@@ -77,7 +96,8 @@ interface DesignerField {
   definition: FeatureDefinition;
   control: Control;
   getValue: () => unknown;
-  setAvailableValues: (codes: Set<string> | undefined) => void;
+  setValue: (value: unknown) => void;
+  setAvailableValues: (codes: Set<string> | undefined, maximum?: number) => void;
   setValueState: (state: PreviewValueState, message?: string) => void;
   relationStatus: ObjectStatus;
 }
@@ -98,7 +118,11 @@ interface ActionDraft {
   value: unknown;
   actionIndex?: number;
   targetPath?: ExpressionPathPart[];
+  derivation?: ConstraintDerivation;
+  range?: { minimum: unknown; maximum: unknown; step?: unknown };
 }
+
+type ActionVariant = "range" | "count" | "LINK_RANGE" | ConstraintDerivation["kind"];
 
 type ExpressionPathPart = number | "expression";
 
@@ -133,6 +157,8 @@ interface ConfigurationRuleDesignerOptions {
   isNewDraft: () => boolean;
   canEdit: () => boolean;
   onRuleChange: (rule: ConstraintRule) => void;
+  onPreviewConflicts: (conflicts: ConstraintConflict[]) => void;
+  onOpenRule: (ruleId: string) => void;
 }
 
 function predicatePathsForFeature(
@@ -170,28 +196,6 @@ function replaceExpressionAtPath(
     };
   return expression;
 }
-
-const operatorLabels: Record<ConstraintOperator, string> = {
-  EQUALS: "等于",
-  NOT_EQUALS: "不等于",
-  GREATER_THAN: "大于",
-  GREATER_THAN_OR_EQUAL: "大于等于",
-  LESS_THAN: "小于",
-  LESS_THAN_OR_EQUAL: "小于等于",
-  IN: "属于",
-  NOT_IN: "不属于",
-  CONTAINS: "包含",
-  STARTS_WITH: "开头为",
-  ENDS_WITH: "结尾为"
-};
-
-const actionLabels: Record<ConstraintActionType, string> = {
-  REQUIRE: "要求",
-  EXCLUDE: "互斥",
-  SET: "设置",
-  RESTRICT: "限制",
-  DERIVE: "派生"
-};
 
 function isSelected(value: unknown): boolean {
   return (
@@ -281,6 +285,9 @@ export default class ConfigurationRuleDesignerView {
   private readonly observedLazySections = new Map<ObjectPageSection, Element>();
   private readonly fields = new Map<string, DesignerField>();
   private readonly values = new Map<string, unknown>();
+  private readonly inputValues = new Map<string, unknown>();
+  private readonly touchedFeatures = new Set<string>();
+  private readonly dismissedRecommendations = new Set<string>();
   private readonly interactionMenuHost = new VBox({ width: "100%" }).addStyleClass(
     "cmConstraintDesignerInteractionMenu"
   );
@@ -326,7 +333,7 @@ export default class ConfigurationRuleDesignerView {
       modal: false,
       showHeader: true,
       horizontalScrolling: false,
-      verticalScrolling: false,
+      verticalScrolling: true,
       content: [this.interactionMenuHost],
       afterOpen: () => {
         this.interactionPopoverOpen = true;
@@ -407,6 +414,7 @@ export default class ConfigurationRuleDesignerView {
 
   public setFeatures(features: FeatureDefinition[]): void {
     this.dismissInteractionPopover();
+    this.options.features = features;
     this.featuresByCode.clear();
     features.forEach((feature) => this.featuresByCode.set(feature.code, feature));
     this.buildForm();
@@ -432,6 +440,9 @@ export default class ConfigurationRuleDesignerView {
     this.clearLazyFormSections();
     this.fields.clear();
     this.values.clear();
+    this.inputValues.clear();
+    this.touchedFeatures.clear();
+    this.dismissedRecommendations.clear();
     this.objectPage.destroySections();
     const groups = this.options.store.groups
       .filter((group) => group.contextId === this.options.context.id)
@@ -668,12 +679,16 @@ export default class ConfigurationRuleDesignerView {
   private buildField(definition: FeatureDefinition, question: string): DesignerField {
     const initial = initialFeatureValue(definition, this.options.profile);
     let readValue: () => unknown = () => undefined;
+    let setValue: DesignerField["setValue"] = () => undefined;
     let setAvailableValues: DesignerField["setAvailableValues"] = () => undefined;
     let setValueState: DesignerField["setValueState"] = () => undefined;
     const allowed = definition.domain.values
       .filter((value) => value.active)
       .sort((left, right) => left.sort - right.sort);
     const onChange = (value: unknown, anchor?: Control, captureSelection = true): void => {
+      this.inputValues.set(definition.code, value);
+      this.touchedFeatures.add(definition.code);
+      this.dismissedRecommendations.clear();
       this.values.set(definition.code, value);
       this.updatePreview();
       if (captureSelection && anchor) this.showFieldInteractionMenu(definition.code, anchor);
@@ -684,23 +699,45 @@ export default class ConfigurationRuleDesignerView {
         width: "100%",
         selectedKeys: valueToKeys(initial),
         items: allowed.map((value) => new Item({ key: value.code, text: value.value })),
+        selectionChange: (event: MultiComboBox$SelectionChangeEvent) => {
+          if (this.mode === "configure")
+            onChange(event.getSource().getSelectedKeys(), undefined, false);
+        },
         selectionFinish: (event: MultiComboBox$SelectionFinishEvent) =>
           onChange(event.getSource().getSelectedKeys(), event.getSource())
       });
       readValue = () => input.getSelectedKeys();
-      setAvailableValues = (codes) => {
+      setValue = (value) => {
+        const keys = valueToKeys(value);
+        if (JSON.stringify(input.getSelectedKeys()) !== JSON.stringify(keys))
+          input.setSelectedKeys(keys);
+      };
+      setAvailableValues = (codes, maximum) => {
         const current = readValue();
         const retained = reconcileConstrainedSelection(current, codes);
         const keys = Array.isArray(retained) ? retained : [];
         if (JSON.stringify(current) !== JSON.stringify(keys)) input.setSelectedKeys(keys);
-        input.getItems().forEach((item) => item.setEnabled(!codes || codes.has(item.getKey())));
+        input.getItems().forEach((item) => {
+          const enabled =
+            (!codes || codes.has(item.getKey())) &&
+            (maximum === undefined || keys.length < maximum || keys.includes(item.getKey()));
+          if (item.getEnabled() !== enabled) item.setEnabled(enabled);
+        });
       };
       setValueState = (state, message) => {
         input.setValueState(state === "Success" ? "None" : state);
         input.setValueStateText(message ?? "");
       };
-      const field = this.makeField(definition, input, readValue, setAvailableValues, setValueState);
+      const field = this.makeField(
+        definition,
+        input,
+        readValue,
+        setValue,
+        setAvailableValues,
+        setValueState
+      );
       this.values.set(definition.code, readValue());
+      this.inputValues.set(definition.code, readValue());
       return field;
     }
 
@@ -732,6 +769,10 @@ export default class ConfigurationRuleDesignerView {
         }
       });
       readValue = () => allowed[input.getSelectedIndex()]?.code;
+      setValue = (value) => {
+        const index = allowed.findIndex((entry) => entry.code === String(value ?? ""));
+        if (input.getSelectedIndex() !== index) input.setSelectedIndex(index);
+      };
       setAvailableValues = (codes) => {
         const current = String(readValue() ?? "");
         const retained = reconcileConstrainedSelection(current, codes, true);
@@ -745,9 +786,23 @@ export default class ConfigurationRuleDesignerView {
           );
       };
       setValueState = (state, message) =>
-        input.setTooltip(state === "None" ? question : (message ?? question));
-      const field = this.makeField(definition, input, readValue, setAvailableValues, setValueState);
+        input.setTooltip(
+          trFormat(
+            "cmConstraintContextMenuHint",
+            [state === "None" ? question : (message ?? question)],
+            question
+          )
+        );
+      const field = this.makeField(
+        definition,
+        input,
+        readValue,
+        setValue,
+        setAvailableValues,
+        setValueState
+      );
       this.values.set(definition.code, readValue());
+      this.inputValues.set(definition.code, readValue());
       return field;
     }
 
@@ -771,6 +826,10 @@ export default class ConfigurationRuleDesignerView {
           onChange(event.getSource().getSelectedKey(), event.getSource())
       });
       readValue = () => input.getSelectedKey();
+      setValue = (value) => {
+        const key = value === undefined || value === null ? "" : String(value);
+        if (input.getSelectedKey() !== key) input.setSelectedKey(key);
+      };
       setAvailableValues = (codes) => {
         const selected = String(readValue() ?? "");
         const retained = reconcileConstrainedSelection(selected, codes, true);
@@ -783,13 +842,22 @@ export default class ConfigurationRuleDesignerView {
         input.setValueState(state === "Success" ? "None" : state);
         input.setValueStateText(message ?? "");
       };
-      const field = this.makeField(definition, input, readValue, setAvailableValues, setValueState);
+      const field = this.makeField(
+        definition,
+        input,
+        readValue,
+        setValue,
+        setAvailableValues,
+        setValueState
+      );
       this.values.set(definition.code, readValue());
+      this.inputValues.set(definition.code, readValue());
       return field;
     }
 
     const input = new Input({
       width: "100%",
+      valueLiveUpdate: true,
       value: initial === undefined || initial === null ? "" : String(initial),
       type: ["Integer", "Decimal"].includes(definition.dataType)
         ? "Number"
@@ -811,12 +879,24 @@ export default class ConfigurationRuleDesignerView {
         onChange(event.getSource().getValue(), event.getSource())
     });
     readValue = () => input.getValue();
+    setValue = (value) => {
+      const text = value === undefined || value === null ? "" : String(value);
+      if (input.getValue() !== text) input.setValue(text);
+    };
     setValueState = (state, message) => {
       input.setValueState(state === "Success" ? "None" : state);
       input.setValueStateText(message ?? "");
     };
-    const field = this.makeField(definition, input, readValue, setAvailableValues, setValueState);
+    const field = this.makeField(
+      definition,
+      input,
+      readValue,
+      setValue,
+      setAvailableValues,
+      setValueState
+    );
     this.values.set(definition.code, readValue());
+    this.inputValues.set(definition.code, readValue());
     return field;
   }
 
@@ -824,16 +904,35 @@ export default class ConfigurationRuleDesignerView {
     definition: FeatureDefinition,
     control: Control,
     getValue: () => unknown,
+    setValue: DesignerField["setValue"],
     setAvailableValues: DesignerField["setAvailableValues"],
     setValueState: DesignerField["setValueState"]
   ): DesignerField {
     const relationStatus = new ObjectStatus({ text: "", visible: false });
     control.addStyleClass("cmConstraintDesignerFieldControl");
-    control.setTooltip(definition.description);
+    control.setTooltip(
+      trFormat("cmConstraintContextMenuHint", [definition.description], definition.description)
+    );
+    control.attachBrowserEvent("contextmenu", (event: MouseEvent) => {
+      if (this.mode !== "design" || !this.options.canEdit()) return;
+      event.preventDefault();
+      this.showFieldInteractionMenu(definition.code, control);
+    });
+    control.attachBrowserEvent("keydown", (event: KeyboardEvent) => {
+      if (
+        this.mode !== "design" ||
+        !this.options.canEdit() ||
+        (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10"))
+      )
+        return;
+      event.preventDefault();
+      this.showFieldInteractionMenu(definition.code, control);
+    });
     const field = {
       definition,
       control,
       getValue,
+      setValue,
       setAvailableValues,
       setValueState,
       relationStatus
@@ -894,10 +993,6 @@ export default class ConfigurationRuleDesignerView {
     const field = this.fields.get(featureCode);
     if (!field) return false;
     const value = asConstraintValue(field.definition, field.getValue());
-    if (value === undefined) {
-      this.dismissInteractionPopover();
-      return false;
-    }
 
     this.conditionDraft = undefined;
     this.actionDraft = undefined;
@@ -909,7 +1004,10 @@ export default class ConfigurationRuleDesignerView {
         );
       this.interactionMenuHost.addItem(
         new ObjectStatus({
-          text: this.describeSelectedValue(value, field.definition),
+          text:
+            value === undefined
+              ? tr("cmConstraintNoValue")
+              : this.describeSelectedValue(value, field.definition),
           state: "Information"
         }).addStyleClass("cmConstraintDesignerInteractionValue")
       );
@@ -944,23 +1042,45 @@ export default class ConfigurationRuleDesignerView {
           )
         );
       }
-      const existingActions = this.currentRule.ast.actions.flatMap((action, actionIndex) =>
-        predicatePathsForFeature(action.target, featureCode).map((entry) => ({
+      const existingActions = this.currentRule.ast.actions.flatMap((action, actionIndex) => {
+        const entries = predicatePathsForFeature(action.target, featureCode);
+        const range =
+          action.type === "RESTRICT" &&
+          action.target.type === "AND" &&
+          action.target.expressions.length >= 2 &&
+          action.target.expressions.length <= 3 &&
+          action.target.expressions.every((expression) => "feature" in expression) &&
+          entries.length === action.target.expressions.length &&
+          entries.every((entry) =>
+            ["GREATER_THAN_OR_EQUAL", "LESS_THAN_OR_EQUAL", "STEP"].includes(entry.predicate.type)
+          ) &&
+          entries.filter((entry) => entry.predicate.type === "GREATER_THAN_OR_EQUAL").length ===
+            1 &&
+          entries.filter((entry) => entry.predicate.type === "LESS_THAN_OR_EQUAL").length === 1;
+        return (range ? entries.slice(0, 1) : entries).map((entry) => ({
           actionIndex,
           actionType: action.type,
+          derivation: action.derivation,
+          range,
           ...entry
-        }))
-      );
+        }));
+      });
       if (existingActions.length) {
         addGroupTitle(tr("cmConstraintAction"));
         existingActions.forEach((entry) =>
           addMenuButton(
-            `${this.actionLabel(entry.actionType)} · ${this.describePredicate(entry.predicate)}`,
+            entry.derivation
+              ? `${this.actionLabel(entry.actionType)} · ${tr(`cmConstraintDerivation${entry.derivation.kind}`)}`
+              : entry.range
+                ? `${this.actionLabel(entry.actionType)} · ${tr("cmConstraintRange")}`
+                : `${this.actionLabel(entry.actionType)} · ${this.describePredicate(entry.predicate)}`,
             () =>
               this.beginActionDraft(featureCode, entry.actionType, anchor, {
                 actionIndex: entry.actionIndex,
                 predicate: entry.predicate,
-                path: entry.path
+                path: entry.path,
+                derivation: entry.derivation,
+                range: entry.range
               }),
             "sap-icon://edit"
           )
@@ -975,21 +1095,45 @@ export default class ConfigurationRuleDesignerView {
             () => this.beginConditionDraft(featureCode, connector, anchor)
           );
       } else {
-        addMenuButton(tr("cmConstraintAddCondition"), () =>
-          this.beginConditionDraft(featureCode, "AND", anchor)
+        addMenuButton(tr("cmConstraintConditionMenu"), () =>
+          this.beginConditionDraft(featureCode, "AND", anchor, undefined, true)
         );
       }
 
       if (hasConfiguredCondition) {
         addGroupTitle(tr("cmConstraintActionMenu"));
-        for (const type of ["REQUIRE", "EXCLUDE", "RESTRICT", "SET", "DERIVE"] as const)
+        addMenuButton(this.actionLabel("REQUIRE"), () =>
+          this.beginActionDraft(featureCode, "REQUIRE", anchor, undefined, undefined, true)
+        );
+        if (
+          !["Integer", "Decimal", "Range", "Date", "DateTime"].includes(field.definition.dataType)
+        )
+          addMenuButton(this.actionLabel("EXCLUDE"), () =>
+            this.beginActionDraft(featureCode, "EXCLUDE", anchor, undefined, undefined, true)
+          );
+        for (const type of ["RESTRICT", "SET", "DERIVE"] as const)
           addMenuButton(this.actionLabel(type), () =>
-            this.beginActionDraft(featureCode, type, anchor)
+            this.showActionVariants(featureCode, type, anchor)
           );
       } else {
+        addMenuButton(this.actionLabel("DEFAULT"), () =>
+          this.beginActionDraft(featureCode, "DEFAULT", anchor)
+        );
+        if (field.definition.dataType === "Multi Enumeration")
+          addMenuButton(tr("cmConstraintSelectionCount"), () =>
+            this.beginActionDraft(featureCode, "RESTRICT", anchor, undefined, "count")
+          );
+        if (["Integer", "Decimal", "Date", "DateTime"].includes(field.definition.dataType))
+          addMenuButton(tr("cmConstraintRange"), () =>
+            this.beginActionDraft(featureCode, "RESTRICT", anchor, undefined, "range")
+          );
+        if (!["Multi Enumeration", "Range"].includes(field.definition.dataType))
+          addMenuButton(this.actionLabel("DERIVE"), () =>
+            this.showActionVariants(featureCode, "DERIVE", anchor)
+          );
         this.interactionMenuHost.addItem(
           new ObjectStatus({
-            text: tr("cmConstraintAddConditionFirst"),
+            text: tr("cmConstraintOtherActionsNeedCondition"),
             state: "Information"
           })
         );
@@ -998,6 +1142,59 @@ export default class ConfigurationRuleDesignerView {
       this.interactionPopover.setTitle(field.definition.name);
     });
     return true;
+  }
+
+  private showActionVariants(
+    featureCode: string,
+    type: "RESTRICT" | "SET" | "DERIVE",
+    anchor: Control
+  ): void {
+    const feature = this.fields.get(featureCode)?.definition;
+    if (!feature) return;
+    this.updateInteractionPopover(anchor, () => {
+      this.interactionMenuHost.destroyItems();
+      const add = (label: string, action: ConstraintActionType, variant?: ActionVariant): void => {
+        this.interactionMenuHost.addItem(
+          new Button({
+            text: tr(label),
+            width: "100%",
+            type: "Transparent",
+            press: () => this.beginActionDraft(featureCode, action, anchor, undefined, variant)
+          }).addStyleClass("cmConstraintDesignerInteractionMenuButton")
+        );
+      };
+      if (type === "RESTRICT") {
+        add("cmConstraintComparison", "RESTRICT");
+        if (["Integer", "Decimal", "Date", "DateTime"].includes(feature.dataType))
+          add("cmConstraintRange", "RESTRICT", "range");
+        if (feature.dataType === "Multi Enumeration")
+          add("cmConstraintSelectionCount", "RESTRICT", "count");
+      } else if (type === "SET") {
+        add("cmConstraintSetValue", "SET");
+        add(actionLabels.DEFAULT, "DEFAULT");
+        add(actionLabels.RECOMMEND, "RECOMMEND");
+        if (["Boolean", "Multi Enumeration"].includes(feature.dataType)) {
+          add(actionLabels.ADD, "ADD");
+          add(actionLabels.REMOVE, "REMOVE");
+        }
+      } else {
+        if (["Integer", "Decimal"].includes(feature.dataType)) {
+          add("cmConstraintDerivationCALCULATE", "DERIVE", "CALCULATE");
+          add("cmConstraintDerivationLINK", "DERIVE", "LINK");
+          add("cmConstraintLinkedRange", "RESTRICT", "LINK_RANGE");
+        }
+        if (feature.dataType !== "Multi Enumeration" && feature.dataType !== "Range")
+          add("cmConstraintDerivationMAP", "DERIVE", "MAP");
+      }
+      this.interactionMenuHost.addItem(
+        new Button({
+          text: tr("cmConstraintBack"),
+          type: "Transparent",
+          press: () => this.showFieldInteractionMenu(featureCode, anchor)
+        })
+      );
+      this.interactionPopover.setTitle(`${feature.name} · ${this.actionLabel(type)}`);
+    });
   }
 
   public hasConfiguredCondition(): boolean {
@@ -1011,7 +1208,8 @@ export default class ConfigurationRuleDesignerView {
     featureCode: string,
     connector: ConditionConnector,
     anchor: Control,
-    existing?: PredicatePathEntry
+    existing?: PredicatePathEntry,
+    quick = false
   ): void {
     const field = this.fields.get(featureCode);
     if (!field) return;
@@ -1042,6 +1240,15 @@ export default class ConfigurationRuleDesignerView {
       value: draftValue,
       editPath: existing?.path
     };
+    if (
+      quick &&
+      !existing &&
+      !Array.isArray(value) &&
+      ["Boolean", "Enumeration", "Reference"].includes(field.definition.dataType)
+    ) {
+      this.addConditionDraft(value);
+      return;
+    }
     this.renderConditionDraft(anchor);
   }
 
@@ -1215,9 +1422,21 @@ export default class ConfigurationRuleDesignerView {
       actionIndex: number;
       predicate: ConstraintPredicate;
       path: ExpressionPathPart[];
-    }
+      derivation?: ConstraintDerivation;
+      range?: boolean;
+    },
+    variant?: ActionVariant,
+    quick = false
   ): void {
-    if (!this.hasConfiguredCondition()) {
+    if (
+      !this.hasConfiguredCondition() &&
+      type !== "DEFAULT" &&
+      type !== "DERIVE" &&
+      !(
+        type === "RESTRICT" &&
+        (variant === "count" || variant === "range" || variant === "LINK_RANGE")
+      )
+    ) {
       MessageToast.show(tr("cmConstraintAddConditionFirst"));
       return;
     }
@@ -1228,15 +1447,34 @@ export default class ConfigurationRuleDesignerView {
     const preferredOperator =
       existing && operators.includes(existing.predicate.type)
         ? existing.predicate.type
-        : type === "RESTRICT" && operators.includes("GREATER_THAN_OR_EQUAL")
-          ? "GREATER_THAN_OR_EQUAL"
-          : type === "REQUIRE" && Array.isArray(selected) && operators.includes("IN")
-            ? "IN"
-            : "EQUALS";
+        : variant === "count"
+          ? "COUNT_AT_MOST"
+          : type === "RESTRICT" && operators.includes("GREATER_THAN_OR_EQUAL")
+            ? "GREATER_THAN_OR_EQUAL"
+            : ["REQUIRE", "EXCLUDE", "RESTRICT"].includes(type) &&
+                Array.isArray(selected) &&
+                operators.includes("IN")
+              ? "IN"
+              : "EQUALS";
     const defaultValue = initialFeatureValue(field.definition, this.options.profile);
     let value =
       selected ?? existing?.predicate.value ?? asConstraintValue(field.definition, defaultValue);
+    if (variant === "count") value = field.definition.maxSelections;
     if (preferredOperator === "IN" && value !== undefined && !Array.isArray(value)) value = [value];
+    const derivation = existing?.derivation
+      ? structuredClone(existing.derivation)
+      : variant === "CALCULATE" ||
+          variant === "MAP" ||
+          variant === "LINK" ||
+          variant === "LINK_RANGE"
+        ? createConstraintDerivation(
+            variant === "LINK_RANGE" ? "LINK" : variant,
+            field.definition,
+            this.options.features
+          )
+        : undefined;
+    if (variant === "LINK_RANGE" && derivation?.kind === "LINK")
+      derivation.range = { minimumOffset: 0, maximumOffset: 0 };
     this.actionDraft = {
       feature: field.definition,
       type,
@@ -1244,12 +1482,49 @@ export default class ConfigurationRuleDesignerView {
       selectedValue: selected,
       actionIndex: existing?.actionIndex,
       targetPath: existing?.path,
-      value:
-        value ??
-        (["Integer", "Decimal", "Range"].includes(field.definition.dataType)
-          ? field.definition.domain.minimum
-          : undefined)
+      derivation,
+      range:
+        variant === "range" || existing?.range
+          ? {
+              minimum:
+                existing?.range && existing.actionIndex !== undefined
+                  ? collectConstraintPredicates(
+                      this.currentRule.ast.actions[existing.actionIndex].target
+                    ).find((predicate) => predicate.type === "GREATER_THAN_OR_EQUAL")?.value
+                  : (field.definition.domain.minimum ?? field.definition.domain.minimumDate),
+              maximum:
+                existing?.range && existing.actionIndex !== undefined
+                  ? collectConstraintPredicates(
+                      this.currentRule.ast.actions[existing.actionIndex].target
+                    ).find((predicate) => predicate.type === "LESS_THAN_OR_EQUAL")?.value
+                  : (field.definition.domain.maximum ?? field.definition.domain.maximumDate),
+              step:
+                existing?.range && existing.actionIndex !== undefined
+                  ? collectConstraintPredicates(
+                      this.currentRule.ast.actions[existing.actionIndex].target
+                    ).find((predicate) => predicate.type === "STEP")?.value
+                  : undefined
+            }
+          : undefined,
+      value
     };
+    if (
+      (variant === "CALCULATE" ||
+        variant === "MAP" ||
+        variant === "LINK" ||
+        variant === "LINK_RANGE") &&
+      !this.actionDraft.derivation
+    ) {
+      this.actionDraft = undefined;
+      MessageToast.show(
+        tr(variant === "MAP" ? "cmConstraintNoMapSource" : "cmConstraintNoNumericSource")
+      );
+      return;
+    }
+    if (quick && selected !== undefined && (!Array.isArray(selected) || selected.length === 1)) {
+      this.addActionDraft(selected);
+      return;
+    }
     this.renderActionDraft(anchor);
   }
 
@@ -1264,6 +1539,7 @@ export default class ConfigurationRuleDesignerView {
       const operatorSelect = new Select({
         width: "9rem",
         selectedKey: draft.operator,
+        tooltip: tr("操作符"),
         items: operators.map(
           (operator) => new Item({ key: operator, text: tr(operatorLabels[operator]) })
         ),
@@ -1279,15 +1555,25 @@ export default class ConfigurationRuleDesignerView {
         }
       });
       const actionTypeSelect =
-        draft.actionIndex === undefined
+        draft.actionIndex === undefined || draft.derivation || draft.range
           ? undefined
           : new Select({
               width: "9rem",
               selectedKey: draft.type,
               tooltip: tr("cmConstraintAction"),
-              items: (["REQUIRE", "EXCLUDE", "RESTRICT", "SET", "DERIVE"] as const).map(
-                (type) => new Item({ key: type, text: this.actionLabel(type) })
-              ),
+              items: (
+                [
+                  "REQUIRE",
+                  "EXCLUDE",
+                  "RESTRICT",
+                  "SET",
+                  "DERIVE",
+                  "DEFAULT",
+                  "RECOMMEND",
+                  "ADD",
+                  "REMOVE"
+                ] as const
+              ).map((type) => new Item({ key: type, text: this.actionLabel(type) })),
               change: (event: Select$ChangeEvent) => {
                 draft.type = event.getSource().getSelectedKey() as ConstraintActionType;
                 const nextOperators = constraintOperatorsFor(draft.feature.dataType, draft.type);
@@ -1299,9 +1585,80 @@ export default class ConfigurationRuleDesignerView {
               }
             });
       let valueEditor: ValueControl;
-      if (
+      if (draft.derivation) {
+        valueEditor = {
+          control: buildConstraintDerivationEditor(
+            draft.feature,
+            this.options.features,
+            draft.derivation,
+            () => this.renderActionDraft(anchor)
+          ),
+          getValue: () => undefined
+        };
+      } else if (draft.range) {
+        const range = draft.range;
+        if (Array.isArray(range.step)) range.step = range.step[1];
+        const minimum = this.buildPredicateValueControl(
+          draft.feature,
+          "GREATER_THAN_OR_EQUAL",
+          range.minimum,
+          (value) => {
+            range.minimum = value;
+          }
+        );
+        const maximum = this.buildPredicateValueControl(
+          draft.feature,
+          "LESS_THAN_OR_EQUAL",
+          range.maximum,
+          (value) => {
+            range.maximum = value;
+          }
+        );
+        const step = ["Integer", "Decimal"].includes(draft.feature.dataType)
+          ? this.buildPredicateValueControl(
+              draft.feature,
+              "GREATER_THAN_OR_EQUAL",
+              range.step,
+              (value) => {
+                range.step = value;
+              }
+            )
+          : undefined;
+        valueEditor = {
+          control: new VBox({
+            width: "100%",
+            items: [
+              new Label({ text: tr("cmConstraintRangeMinimum"), labelFor: minimum.control }),
+              minimum.control,
+              new Label({ text: tr("cmConstraintRangeMaximum"), labelFor: maximum.control }),
+              maximum.control,
+              ...(step
+                ? [
+                    new Label({ text: tr("cmConstraintRangeStep"), labelFor: step.control }),
+                    step.control
+                  ]
+                : [])
+            ]
+          }),
+          getValue: () => undefined
+        };
+      } else if (
+        (draft.type === "ADD" || draft.type === "REMOVE") &&
+        draft.feature.dataType === "Boolean"
+      ) {
+        const selected = draft.type === "ADD";
+        valueEditor = {
+          control: new ObjectStatus({
+            text: this.describeSelectedValue(selected, draft.feature),
+            state: "Information"
+          }),
+          getValue: () => selected
+        };
+      } else if (
         (draft.operator === "EQUALS" || draft.operator === "NOT_EQUALS") &&
-        draft.selectedValue !== undefined
+        draft.selectedValue !== undefined &&
+        draft.type !== "ADD" &&
+        draft.type !== "REMOVE"
       ) {
         const selectedValue = draft.selectedValue;
         valueEditor = {
@@ -1339,7 +1696,7 @@ export default class ConfigurationRuleDesignerView {
               wrap: "Wrap",
               items: [
                 ...(actionTypeSelect ? [actionTypeSelect] : []),
-                operatorSelect,
+                ...(draft.derivation || draft.range ? [] : [operatorSelect]),
                 valueEditor.control
               ]
             }).addStyleClass("cmConstraintDesignerDraftControls"),
@@ -1390,7 +1747,7 @@ export default class ConfigurationRuleDesignerView {
     const currentAction = this.currentRule.ast.actions[draft.actionIndex];
     if (!currentAction) return;
     const target =
-      draft.targetPath === undefined
+      draft.targetPath === undefined || draft.range || draft.derivation
         ? undefined
         : removeConstraintExpressionAtPath(currentAction.target, draft.targetPath);
     const actions =
@@ -1407,35 +1764,137 @@ export default class ConfigurationRuleDesignerView {
   private addActionDraft(value: unknown): void {
     const draft = this.actionDraft;
     if (!draft || !this.options.canEdit()) return;
-    const literal = asConstraintValue(draft.feature, value);
-    if (literal === undefined) {
-      MessageToast.show(tr("cmConstraintChooseValueFirst"));
-      return;
-    }
-    const issues = validateValue(draft.feature, literal, false);
-    if (issues.length) {
-      MessageToast.show(`${draft.feature.name}: ${issues[0]}`);
-      return;
-    }
-    const action: ConstraintAction = {
-      type: draft.type,
-      target: {
-        type: draft.operator,
-        feature: draft.feature.code,
-        value: literal
+    let action: ConstraintAction;
+    if (draft.derivation) {
+      action = {
+        type: draft.derivation.kind === "LINK" && draft.derivation.range ? "RESTRICT" : "DERIVE",
+        target: { type: "EQUALS", feature: draft.feature.code, value: "" },
+        derivation: structuredClone(draft.derivation)
+      };
+    } else if (draft.range) {
+      const minimum = asConstraintValue(draft.feature, draft.range.minimum);
+      const maximum = asConstraintValue(draft.feature, draft.range.maximum);
+      if (
+        minimum === undefined ||
+        maximum === undefined ||
+        Array.isArray(minimum) ||
+        Array.isArray(maximum) ||
+        typeof minimum !== typeof maximum ||
+        minimum > maximum
+      ) {
+        MessageToast.show(tr("cmConstraintInvalidRange"));
+        return;
       }
-    };
+      const errors = [
+        ...validateValue(draft.feature, minimum, false),
+        ...validateValue(draft.feature, maximum, false)
+      ];
+      if (errors.length) {
+        MessageToast.show(`${draft.feature.name}: ${errors[0]}`);
+        return;
+      }
+      const expressions: ConstraintExpression[] = [
+        { type: "GREATER_THAN_OR_EQUAL", feature: draft.feature.code, value: minimum },
+        { type: "LESS_THAN_OR_EQUAL", feature: draft.feature.code, value: maximum }
+      ];
+      if (isSelected(draft.range.step)) {
+        const step = Number(draft.range.step);
+        if (
+          typeof minimum !== "number" ||
+          !Number.isFinite(step) ||
+          step <= 0 ||
+          (draft.feature.dataType === "Integer" && !Number.isInteger(step))
+        ) {
+          MessageToast.show(tr("cmConstraintInvalidStep"));
+          return;
+        }
+        expressions.push({ type: "STEP", feature: draft.feature.code, value: [minimum, step] });
+      }
+      action = {
+        type: "RESTRICT",
+        target: {
+          type: "AND",
+          expressions
+        }
+      };
+    } else {
+      const literal =
+        draft.type === "ADD" && draft.feature.dataType === "Boolean"
+          ? true
+          : draft.type === "REMOVE" && draft.feature.dataType === "Boolean"
+            ? false
+            : draft.operator.startsWith("COUNT_")
+              ? typeof value === "number"
+                ? value
+                : typeof value === "string" && value.trim()
+                  ? Number(value)
+                  : Number.NaN
+              : asConstraintValue(draft.feature, value);
+      if (literal === undefined) {
+        MessageToast.show(tr("cmConstraintChooseValueFirst"));
+        return;
+      }
+      if (!draft.operator.startsWith("COUNT_")) {
+        const issues = validateValue(draft.feature, literal, false);
+        if (issues.length) {
+          MessageToast.show(`${draft.feature.name}: ${issues[0]}`);
+          return;
+        }
+      }
+      action = {
+        type: draft.type,
+        target: {
+          type: draft.operator,
+          feature: draft.feature.code,
+          value: literal
+        }
+      };
+    }
+    const withoutCondition = !this.hasConfiguredCondition();
+    const derivedSource =
+      draft.derivation?.kind === "MAP"
+        ? draft.derivation.source
+        : draft.derivation?.formula.operands.find(
+            (operand) => operand.kind === "FEATURE" && !!operand.feature
+          );
+    const conditionFeature =
+      typeof derivedSource === "string"
+        ? derivedSource || draft.feature.code
+        : derivedSource?.kind === "FEATURE"
+          ? derivedSource.feature
+          : draft.feature.code;
+    const condition: ConstraintExpression = withoutCondition
+      ? {
+          type: draft.type === "DEFAULT" ? "IS_UNSET" : "ALWAYS",
+          feature: conditionFeature,
+          value: true
+        }
+      : this.currentRule.ast.condition;
+    const validation = validateConstraintRule(
+      { ...this.currentRule, ast: { condition, actions: [action] } },
+      [],
+      this.options.features
+    ).filter((issue) => issue.severity === "Error");
+    if (validation.length) {
+      MessageToast.show(constraintIssueText(validation[0]));
+      return;
+    }
     if (draft.actionIndex !== undefined) {
       const currentAction = this.currentRule.ast.actions[draft.actionIndex];
       if (!currentAction) return;
       const target =
-        draft.targetPath === undefined
+        draft.targetPath === undefined || draft.range || draft.derivation
           ? action.target
           : replaceExpressionAtPath(currentAction.target, draft.targetPath, action.target);
       const actions = this.currentRule.ast.actions.map((existing, index) =>
-        index === draft.actionIndex ? { ...existing, type: draft.type, target } : existing
+        index === draft.actionIndex ? { ...action, target } : existing
       );
-      this.commitAst({ ...this.currentRule.ast, actions });
+      const currentCondition = this.currentRule.ast.condition;
+      const updatedCondition =
+        currentCondition.type === "ALWAYS" && action.derivation
+          ? { ...currentCondition, feature: conditionFeature }
+          : currentCondition;
+      this.commitAst({ ...this.currentRule.ast, condition: updatedCondition, actions });
       this.dismissInteractionPopover();
       MessageToast.show(tr("cmConstraintUnsavedChanges"));
       return;
@@ -1443,8 +1902,9 @@ export default class ConfigurationRuleDesignerView {
     const isNew = this.isNewDraft;
     const actions =
       isNew && !this.newDraftHasAction ? [action] : [...this.currentRule.ast.actions, action];
+    if (withoutCondition) this.newDraftHasCondition = true;
     this.newDraftHasAction = true;
-    this.commitAst({ ...this.currentRule.ast, actions });
+    this.commitAst({ ...this.currentRule.ast, condition, actions });
     this.dismissInteractionPopover();
     MessageToast.show(tr("cmConstraintRelationAdded"));
   }
@@ -1458,10 +1918,17 @@ export default class ConfigurationRuleDesignerView {
     const allowed = feature.domain.values
       .filter((item) => item.active)
       .sort((left, right) => left.sort - right.sort);
-    const multi =
-      operator === "IN" ||
-      operator === "NOT_IN" ||
-      (feature.dataType === "Multi Enumeration" && operator !== "EQUALS");
+    if (operator.startsWith("COUNT_")) {
+      const control = new Input({
+        width: "100%",
+        type: "Number",
+        value: isSelected(initial) ? String(initial) : "",
+        tooltip: tr("cmConstraintSelectionCount"),
+        liveChange: (event: Input$LiveChangeEvent) => onChange(event.getParameter("value") ?? "")
+      });
+      return { control, getValue: () => control.getValue() };
+    }
+    const multi = operator === "IN" || operator === "NOT_IN";
     if (
       multi &&
       feature.dataType !== "Boolean" &&
@@ -1478,7 +1945,10 @@ export default class ConfigurationRuleDesignerView {
       return { control, getValue: () => control.getSelectedKeys() };
     }
 
-    if (["Enumeration", "Reference", "Boolean"].includes(feature.dataType)) {
+    if (
+      ["Enumeration", "Reference", "Boolean"].includes(feature.dataType) ||
+      (feature.dataType === "Multi Enumeration" && !multi)
+    ) {
       const items =
         feature.dataType === "Boolean"
           ? [
@@ -1487,6 +1957,8 @@ export default class ConfigurationRuleDesignerView {
               new Item({ key: "false", text: tr("No") })
             ]
           : allowed.map((item) => new Item({ key: item.code, text: item.value }));
+      if (feature.dataType !== "Boolean")
+        items.unshift(new Item({ key: "", text: tr("cmConstraintNoValue") }));
       const control = new Select({
         width: "100%",
         selectedKey: valueToKeys(initial)[0] ?? "",
@@ -1542,7 +2014,9 @@ export default class ConfigurationRuleDesignerView {
 
   private updateFieldRelations(condition: ConstraintExpression): void {
     const conditionFeatures = new Set(
-      collectConstraintPredicates(condition).map((predicate) => predicate.feature)
+      collectConstraintPredicates(condition)
+        .filter((predicate) => predicate.type !== "ALWAYS")
+        .map((predicate) => predicate.feature)
     );
     const actionTypes = new Map<string, Set<ConstraintActionType>>();
     for (const action of this.currentRule.ast.actions) {
@@ -1594,7 +2068,7 @@ export default class ConfigurationRuleDesignerView {
     if (issues.length)
       this.validationHost.addItem(
         new MessageStrip({
-          text: issues.map((issue) => issue.message).join("；"),
+          text: issues.map(constraintIssueText).join("；"),
           type: "Error",
           showIcon: true,
           showCloseButton: false
@@ -1603,10 +2077,38 @@ export default class ConfigurationRuleDesignerView {
   }
 
   private updatePreview(): void {
-    this.fields.forEach((field, code) => this.values.set(code, field.getValue()));
+    this.values.clear();
+    this.fields.forEach((field, code) => {
+      field.setValue(this.inputValues.get(code));
+      this.values.set(code, field.getValue());
+    });
     const rules = this.options.rules();
+    const automaticChanges = new Map<string, ConstraintSimulationChange>();
+    let simulation: ConstraintSimulation | undefined;
     for (let pass = 0; pass <= this.fields.size; pass += 1) {
+      const previous = JSON.stringify([...this.values]);
+      simulation =
+        this.mode === "configure"
+          ? simulateConstraintActions(
+              rules,
+              this.options.features,
+              this.values,
+              this.touchedFeatures
+            )
+          : undefined;
+      if (simulation) {
+        simulation.changes.forEach((change) =>
+          automaticChanges.set(JSON.stringify([change.ruleId, change.feature, change.type]), change)
+        );
+        for (const [code, value] of simulation.values) {
+          const field = this.fields.get(code);
+          if (!field) continue;
+          field.setValue(value);
+          this.values.set(code, field.getValue());
+        }
+      }
       const effects = activeConstraintEffects(rules, this.options.features, this.values);
+      const conflicts = detectConstraintConflicts(rules, this.options.features, this.values);
       const effectsByFeature = new Map<string, ConstraintPreviewEffect[]>();
       for (const effect of effects)
         for (const predicate of collectConstraintPredicates(effect.target)) {
@@ -1615,25 +2117,51 @@ export default class ConfigurationRuleDesignerView {
           effectsByFeature.set(predicate.feature, entries);
         }
 
-      let changed = false;
       for (const [code, field] of this.fields) {
-        const previous = field.getValue();
+        const previousValue = field.getValue();
         const fieldEffects = effectsByFeature.get(code) ?? [];
         const available = intersectAllowedValues(
           fieldEffects
             .map((effect) => constraintEffectAllowedValues(effect, field.definition))
             .filter((set): set is Set<string> => set !== undefined)
         );
-        field.setAvailableValues(this.mode === "configure" ? available : undefined);
+        const applyRestrictions =
+          this.mode === "configure" &&
+          !conflicts.some((conflict) => conflict.feature === code) &&
+          !simulation?.conflicts.some((conflict) => conflict.feature === code);
+        field.setAvailableValues(
+          applyRestrictions ? available : undefined,
+          applyRestrictions ? constraintMaximumSelections(fieldEffects, code) : undefined
+        );
         const value = field.getValue();
         this.values.set(code, value);
-        if (JSON.stringify(previous) !== JSON.stringify(value)) changed = true;
+        if (this.mode === "configure" && JSON.stringify(previousValue) !== JSON.stringify(value)) {
+          for (const effect of fieldEffects) {
+            if (!constraintEffectAllowedValues(effect, field.definition)) continue;
+            const rule = rules.find((item) => item.id === effect.ruleId);
+            if (!rule) continue;
+            const change: ConstraintSimulationChange = {
+              ruleId: rule.id,
+              code: rule.code,
+              name: rule.name,
+              feature: code,
+              type: effect.type,
+              value,
+              previousValue,
+              condition: structuredClone(effect.trigger ?? rule.ast.condition)
+            };
+            automaticChanges.set(JSON.stringify([rule.id, code, effect.type]), change);
+          }
+        }
       }
-      if (!changed) break;
+      if (previous === JSON.stringify([...this.values])) break;
     }
 
     const effects = activeConstraintEffects(rules, this.options.features, this.values);
     const conflicting = effects.filter((effect) => effect.status === "conflict");
+    const conflicts =
+      simulation?.conflicts ?? detectConstraintConflicts(rules, this.options.features, this.values);
+    this.options.onPreviewConflicts(conflicts);
     const restrictedCodes = new Set(
       effects
         .map((effect) => ("feature" in effect.target ? effect.target.feature : undefined))
@@ -1650,13 +2178,21 @@ export default class ConfigurationRuleDesignerView {
       const explanation = fieldEffects
         .map(
           (effect) =>
-            `${effect.code} · ${this.actionLabel(effect.type)}: ${this.describeExpression(effect.target)}`
+            `${effect.code} · ${this.actionLabel(effect.type)}: ${
+              effect.derivation
+                ? `${describeConstraintDerivation(effect.derivation, this.featuresByCode, this.values)}${
+                    effect.type === "RESTRICT" ? ` · ${this.describeExpression(effect.target)}` : ""
+                  }`
+                : this.describeExpression(effect.target)
+            }`
         )
         .join("\n");
       const value = field.getValue();
       const domainErrors = isSelected(value) ? validateValue(field.definition, value, false) : [];
       field.setValueState(
-        domainErrors.length || error
+        domainErrors.length ||
+          error ||
+          conflicts.some((conflict) => conflict.feature === field.definition.code)
           ? "Error"
           : pending
             ? "Warning"
@@ -1679,7 +2215,11 @@ export default class ConfigurationRuleDesignerView {
           .map((effect) => constraintEffectAllowedValues(effect, field.definition))
           .filter((set): set is Set<string> => set !== undefined)
       );
-      if (available?.size === 0)
+      if (
+        available?.size === 0 &&
+        (field.definition.dataType !== "Multi Enumeration" ||
+          conflicts.some((conflict) => conflict.feature === field.definition.code))
+      )
         this.previewFeedbackHost.addItem(
           new MessageStrip({
             text: trFormat(
@@ -1706,10 +2246,172 @@ export default class ConfigurationRuleDesignerView {
           showCloseButton: false
         })
       );
+    for (const conflict of conflicts) {
+      const feature = this.featuresByCode.get(conflict.feature);
+      const names = conflict.rules
+        .map((rule) => {
+          const ruleDetails = rules.find((item) => item.id === rule.id);
+          const relatedEffects = effects.filter(
+            (effect) =>
+              effect.ruleId === rule.id &&
+              collectConstraintPredicates(effect.target).some(
+                (predicate) => predicate.feature === conflict.feature
+              )
+          );
+          const details = relatedEffects
+            .map(
+              (effect) =>
+                `${this.actionLabel(effect.type)} ${
+                  effect.derivation
+                    ? describeConstraintDerivation(
+                        effect.derivation,
+                        this.featuresByCode,
+                        this.values
+                      )
+                    : this.describeExpression(effect.target)
+                }`
+            )
+            .join("; ");
+          return `${rule.code} · ${rule.name}${ruleDetails ? `: ${this.describeExpression(ruleDetails.ast.condition)}` : ""}${details ? ` → ${details}` : ""}`;
+        })
+        .join(" / ");
+      this.previewFeedbackHost.addItem(
+        new MessageStrip({
+          text: trFormat(
+            "cmConstraintConflictDetails",
+            [feature?.name ?? conflict.feature, names],
+            `${feature?.name ?? conflict.feature}: ${names}`
+          ),
+          type: "Error",
+          showIcon: true
+        })
+      );
+      this.previewFeedbackHost.addItem(
+        new HBox({
+          wrap: "Wrap",
+          items: conflict.rules.map(
+            (rule) =>
+              new Button({
+                text: `${rule.code} · ${rule.name}`,
+                type: "Transparent",
+                press: () => this.options.onOpenRule(rule.id)
+              })
+          )
+        }).addStyleClass("cmConstraintConflictLinks")
+      );
+    }
+    if (this.mode !== "configure") return;
+    for (const effect of effects) {
+      if (
+        effect.type !== "RESTRICT" ||
+        effect.derivation?.kind !== "LINK" ||
+        !effect.derivation.range ||
+        effect.status === "pending"
+      )
+        continue;
+      this.previewFeedbackHost.addItem(
+        new MessageStrip({
+          text: trFormat(
+            "cmConstraintLinkedRangeExplanation",
+            [
+              effect.name,
+              this.describeExpression(effect.target),
+              describeConstraintDerivation(effect.derivation, this.featuresByCode, this.values)
+            ],
+            effect.name
+          ),
+          type: "Information",
+          showIcon: true
+        })
+      );
+    }
+    for (const change of automaticChanges.values()) {
+      const feature = this.featuresByCode.get(change.feature);
+      if (!feature) continue;
+      const displayValue = asConstraintValue(feature, change.value);
+      this.previewFeedbackHost.addItem(
+        new MessageStrip({
+          text: trFormat(
+            "cmConstraintAutomaticExplanation",
+            [
+              feature.name,
+              displayValue === undefined
+                ? tr("cmConstraintNoValue")
+                : this.describeSelectedValue(displayValue, feature),
+              `${change.code} · ${change.name}`,
+              this.describeExpression(change.condition),
+              change.derivation
+                ? describeConstraintDerivation(change.derivation, this.featuresByCode, this.values)
+                : ""
+            ],
+            `${feature.name}: ${change.name}`
+          ),
+          type: "Information",
+          showIcon: true
+        })
+      );
+    }
+    for (const issue of simulation?.issues ?? [])
+      this.previewFeedbackHost.addItem(
+        new MessageStrip({
+          text: trFormat(
+            "cmConstraintSimulationIssue",
+            [issue.name, constraintIssueText(issue)],
+            `${issue.name}: ${constraintIssueText(issue)}`
+          ),
+          type: "Warning",
+          showIcon: true
+        })
+      );
+    for (const recommendation of simulation?.recommendations ?? []) {
+      const key = JSON.stringify([recommendation.ruleId, recommendation.feature]);
+      if (this.dismissedRecommendations.has(key)) continue;
+      const feature = this.featuresByCode.get(recommendation.feature);
+      if (!feature) continue;
+      const value = asConstraintValue(feature, recommendation.value);
+      if (value === undefined) continue;
+      this.previewFeedbackHost.addItem(
+        new HBox({
+          width: "100%",
+          alignItems: "Center",
+          wrap: "Wrap",
+          items: [
+            new Text({
+              text: trFormat(
+                "cmConstraintRecommendationExplanation",
+                [feature.name, this.describeSelectedValue(value, feature), recommendation.name],
+                `${feature.name}: ${this.describeSelectedValue(value, feature)}`
+              ),
+              wrapping: true
+            }),
+            new Button({
+              text: tr("cmConstraintAcceptRecommendation"),
+              type: "Transparent",
+              press: () => {
+                this.inputValues.set(feature.code, value);
+                this.touchedFeatures.add(feature.code);
+                this.dismissedRecommendations.add(key);
+                this.updatePreview();
+              }
+            }),
+            new Button({
+              text: tr("cmConstraintKeepCurrent"),
+              type: "Transparent",
+              press: () => {
+                this.dismissedRecommendations.add(key);
+                this.updatePreview();
+              }
+            })
+          ]
+        }).addStyleClass("cmConstraintRecommendation")
+      );
+    }
   }
 
   private describePredicate(predicate: ConstraintPredicate): string {
     const feature = this.featuresByCode.get(predicate.feature);
+    if (predicate.type === "STEP" && Array.isArray(predicate.value))
+      return `${feature?.name ?? predicate.feature} ${tr("cmConstraintStep")} ${String(predicate.value[1] ?? "")}${feature?.unit ? ` ${feature.unit}` : ""}`;
     const values = (Array.isArray(predicate.value) ? predicate.value : [predicate.value]).map(
       (value) => this.describeLiteral(value, feature)
     );
@@ -1718,7 +2420,10 @@ export default class ConfigurationRuleDesignerView {
       feature && ["Integer", "Decimal", "Range"].includes(feature.dataType) && feature.unit
         ? ` ${feature.unit}`
         : "";
-    return `${feature?.name ?? predicate.feature} ${operator} ${values.join(", ")}${unit}`;
+    if (predicate.type === "ALWAYS") return tr("cmConstraintAlways");
+    return predicate.type === "IS_UNSET"
+      ? `${feature?.name ?? predicate.feature} ${operator}`
+      : `${feature?.name ?? predicate.feature} ${operator} ${values.join(", ")}${unit}`;
   }
 
   private describeExpression(expression: ConstraintExpression, parent?: "AND" | "OR"): string {

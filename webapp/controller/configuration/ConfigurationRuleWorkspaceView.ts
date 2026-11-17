@@ -56,14 +56,21 @@ import type {
 import { MockConstraintAIService } from "../../service/mockConstraintAIService";
 import { ConstraintRuleRepository } from "../../service/constraintRuleRepository";
 import type {
+  ConstraintAction,
   ConstraintActionType,
+  ConstraintConflict,
   ConstraintExpression,
   ConstraintOperator,
   ConstraintPredicate,
   ConstraintRule
 } from "../../model/constraintRules";
 import type { BlueprintPredicateSelection } from "../../blueprint/constraint-blueprint";
-import { tr, trFormat } from "../../util/configurationUi";
+import {
+  constraintActionLabels,
+  constraintOperatorLabels,
+  tr,
+  trFormat
+} from "../../util/configurationUi";
 import ConfigurationExpressionEditor from "./ConfigurationExpressionEditor";
 import ConfigurationRuleDesignerView from "./ConfigurationRuleDesignerView";
 
@@ -162,6 +169,7 @@ export default class ConfigurationRuleWorkspaceView {
   private assistantRunId = 0;
   private pendingAmbiguity?: ConstraintAIResponse["ambiguity"];
   private readonly ruleByListItemId = new Map<string, string>();
+  private readonly previewConflictRuleIds = new Set<string>();
   private modeSelector?: SegmentedButton;
   private advancedModeSelector?: IconTabBar;
   private mainFullscreenButton?: Button;
@@ -298,9 +306,13 @@ export default class ConfigurationRuleWorkspaceView {
       const item = new StandardListItem({
         title: rule.name,
         description: this.ruleSummary(rule),
-        info: rule.status,
+        info: this.previewConflictRuleIds.has(rule.id) ? tr("cmConstraintConflict") : rule.status,
         infoState:
-          rule.status === "Valid" ? "Success" : rule.status === "Invalid" ? "Error" : "Information",
+          this.previewConflictRuleIds.has(rule.id) || rule.status === "Invalid"
+            ? "Error"
+            : rule.status === "Valid"
+              ? "Success"
+              : "Information",
         type: "Active",
         wrapping: true
       });
@@ -376,21 +388,41 @@ export default class ConfigurationRuleWorkspaceView {
       this.currentRuleIsNew &&
       !this.designerView?.hasConfiguredCondition();
     const condition = isPendingNewRuleCondition ? "" : this.describeExpression(rule.ast.condition);
-    const actions = rule.ast.actions
-      .map((action) => `${this.actionLabel(action.type)} ${this.describeExpression(action.target)}`)
-      .join("; ");
+    const actions = rule.ast.actions.map((action) => this.describeAction(action)).join("; ");
     return [condition, actions].filter(Boolean).join(" → ");
   }
 
+  private describeAction(action: ConstraintAction): string {
+    if (!action.derivation)
+      return `${this.actionLabel(action.type)} ${this.describeExpression(action.target)}`;
+    const target = "feature" in action.target ? action.target.feature : "";
+    const name = this.features.find((feature) => feature.code === target)?.name ?? target;
+    const sources =
+      action.derivation.kind === "MAP"
+        ? [action.derivation.source]
+        : action.derivation.formula.operands.flatMap((operand) =>
+            operand.kind === "FEATURE" ? [operand.feature] : []
+          );
+    const sourceNames = sources.map(
+      (code) => this.features.find((feature) => feature.code === code)?.name ?? code
+    );
+    return `${tr(`cmConstraintDerivation${action.derivation.kind}`)} ${name} (${sourceNames.join(", ")})`;
+  }
+
+  private setPreviewConflicts(conflicts: ConstraintConflict[]): void {
+    const next = new Set(conflicts.flatMap((conflict) => conflict.ruleIds));
+    if (
+      next.size === this.previewConflictRuleIds.size &&
+      [...next].every((id) => this.previewConflictRuleIds.has(id))
+    )
+      return;
+    this.previewConflictRuleIds.clear();
+    next.forEach((id) => this.previewConflictRuleIds.add(id));
+    this.renderRuleList();
+  }
+
   private actionLabel(type: ConstraintActionType): string {
-    const labels: Record<ConstraintActionType, string> = {
-      REQUIRE: "要求",
-      EXCLUDE: "互斥",
-      SET: "设置",
-      RESTRICT: "限制",
-      DERIVE: "派生"
-    };
-    return tr(labels[type]);
+    return tr(constraintActionLabels[type]);
   }
 
   private ruleMetadata(rule: ConstraintRule): string {
@@ -454,7 +486,9 @@ export default class ConfigurationRuleWorkspaceView {
       rules: () => this.rulesForPreview(),
       isNewDraft: () => this.currentRuleIsNew,
       canEdit: this.canEdit,
-      onRuleChange: (rule) => this.updateWorkingRule(rule, "designer")
+      onRuleChange: (rule) => this.updateWorkingRule(rule, "designer"),
+      onPreviewConflicts: (conflicts) => this.setPreviewConflicts(conflicts),
+      onOpenRule: (ruleId) => this.selectRule(ruleId)
     });
     this.designerHost = new VBox({
       width: "100%",
@@ -1050,17 +1084,13 @@ export default class ConfigurationRuleWorkspaceView {
 
   private blueprintPreview(rule: ConstraintRule): string {
     const condition = this.describeExpression(rule.ast.condition);
-    const actions = rule.ast.actions
-      .map((action) => `${this.actionLabel(action.type)} ${this.describeExpression(action.target)}`)
-      .join("; ");
+    const actions = rule.ast.actions.map((action) => this.describeAction(action)).join("; ");
     return `${condition} → ${actions}`;
   }
 
   private structuredPreview(rule: ConstraintRule): string {
     const when = this.describeExpression(rule.ast.condition);
-    const then = rule.ast.actions
-      .map((action) => `${this.actionLabel(action.type)} ${this.describeExpression(action.target)}`)
-      .join("; ");
+    const then = rule.ast.actions.map((action) => this.describeAction(action)).join("; ");
     const blueprint = this.blueprintPreview(rule);
     return trFormat(
       "cmConstraintStructuredPreview",
@@ -1075,19 +1105,8 @@ export default class ConfigurationRuleWorkspaceView {
   ): string {
     if ("feature" in expression) {
       const feature = this.features.find((item) => item.code === expression.feature);
-      const operatorLabels: Record<ConstraintOperator, string> = {
-        EQUALS: tr("等于"),
-        NOT_EQUALS: tr("不等于"),
-        GREATER_THAN: tr("大于"),
-        GREATER_THAN_OR_EQUAL: tr("大于等于"),
-        LESS_THAN: tr("小于"),
-        LESS_THAN_OR_EQUAL: tr("小于等于"),
-        IN: tr("属于"),
-        NOT_IN: tr("不属于"),
-        CONTAINS: tr("包含"),
-        STARTS_WITH: tr("开头为"),
-        ENDS_WITH: tr("结尾为")
-      };
+      if (expression.type === "STEP" && Array.isArray(expression.value))
+        return `${feature?.name ?? expression.feature} ${tr("cmConstraintStep")} ${String(expression.value[1] ?? "")}${feature?.unit ? ` ${feature.unit}` : ""}`;
       const describeValue = (value: string | number | boolean): string => {
         if (typeof value !== "string") return String(value);
         return feature?.domain.values.find((item) => item.code === value)?.value ?? value;
@@ -1095,7 +1114,11 @@ export default class ConfigurationRuleWorkspaceView {
       const value = Array.isArray(expression.value)
         ? expression.value.map(describeValue).join(", ")
         : describeValue(expression.value);
-      return `${feature?.name ?? expression.feature} ${operatorLabels[expression.type]} ${value}`;
+      const operator = tr(constraintOperatorLabels[expression.type]);
+      if (expression.type === "ALWAYS") return tr("cmConstraintAlways");
+      return expression.type === "IS_UNSET"
+        ? `${feature?.name ?? expression.feature} ${operator}`
+        : `${feature?.name ?? expression.feature} ${operator} ${value}`;
     }
     if ("expression" in expression) {
       const negated = this.describeExpression(expression.expression);
@@ -1383,6 +1406,18 @@ export default class ConfigurationRuleWorkspaceView {
     }
     const feature = this.features.find((item) => item.code === selection.predicate.feature);
     if (!feature) return;
+    if (selection.isDerived || selection.predicate.type === "STEP") {
+      this.blueprintInspectorFields.addItem(
+        new MessageStrip({
+          text: tr(
+            selection.isDerived ? "cmConstraintDerivedEditWysiwyg" : "cmConstraintStepEditWysiwyg"
+          ),
+          type: "Information",
+          showIcon: true
+        })
+      );
+      return;
+    }
     this.blueprintInspectorFields.addItem(new Label({ text: tr("Feature") }));
     this.blueprintInspectorFields.addItem(
       new Select({
@@ -1410,25 +1445,17 @@ export default class ConfigurationRuleWorkspaceView {
       })
     );
     this.blueprintInspectorFields.addItem(new Label({ text: tr("操作符") }));
-    const operatorLabels: Record<ConstraintOperator, string> = {
-      EQUALS: tr("等于"),
-      NOT_EQUALS: tr("不等于"),
-      GREATER_THAN: tr("大于"),
-      GREATER_THAN_OR_EQUAL: tr("大于等于"),
-      LESS_THAN: tr("小于"),
-      LESS_THAN_OR_EQUAL: tr("小于等于"),
-      IN: tr("属于"),
-      NOT_IN: tr("不属于"),
-      CONTAINS: tr("包含"),
-      STARTS_WITH: tr("开头为"),
-      ENDS_WITH: tr("结尾为")
-    };
     this.blueprintInspectorFields.addItem(
       new Select({
         width: "100%",
         selectedKey: selection.predicate.type,
-        items: constraintOperatorsFor(feature.dataType, selection.actionType).map(
-          (operator) => new Item({ key: operator, text: operatorLabels[operator] })
+        items: [
+          ...constraintOperatorsFor(feature.dataType, selection.actionType),
+          ...(selection.predicate.type === "IS_UNSET" || selection.predicate.type === "ALWAYS"
+            ? [selection.predicate.type]
+            : [])
+        ].map(
+          (operator) => new Item({ key: operator, text: tr(constraintOperatorLabels[operator]) })
         ),
         change: (event: Select$ChangeEvent) => {
           const operator = event.getSource().getSelectedKey() as ConstraintOperator;
@@ -1448,8 +1475,10 @@ export default class ConfigurationRuleWorkspaceView {
         }
       })
     );
-    this.blueprintInspectorFields.addItem(new Label({ text: tr("允许值") }));
-    this.blueprintInspectorFields.addItem(this.buildBlueprintValueControl(selection, feature));
+    if (selection.predicate.type !== "IS_UNSET" && selection.predicate.type !== "ALWAYS") {
+      this.blueprintInspectorFields.addItem(new Label({ text: tr("允许值") }));
+      this.blueprintInspectorFields.addItem(this.buildBlueprintValueControl(selection, feature));
+    }
   }
 
   private buildBlueprintValueControl(
@@ -1458,6 +1487,19 @@ export default class ConfigurationRuleWorkspaceView {
   ): Input | Select | MultiComboBox {
     const predicate = selection.predicate;
     const currentValue = predicate.value;
+    if (predicate.type.startsWith("COUNT_"))
+      return new Input({
+        width: "100%",
+        type: "Number",
+        value: String(currentValue),
+        change: (event: InputBase$ChangeEvent) => {
+          const value = event.getSource().getValue();
+          this.updateBlueprintPredicate(selection, {
+            ...predicate,
+            value: value.trim() ? Number(value) : Number.NaN
+          });
+        }
+      });
     if (feature.dataType === "Boolean")
       return new Select({
         width: "100%",
@@ -1470,6 +1512,24 @@ export default class ConfigurationRuleWorkspaceView {
           this.updateBlueprintPredicate(selection, {
             ...predicate,
             value: event.getSource().getSelectedKey() === "true"
+          })
+      });
+    if (
+      feature.dataType === "Multi Enumeration" &&
+      selection.actionType &&
+      ["SET", "DEFAULT", "RECOMMEND"].includes(selection.actionType)
+    )
+      return new MultiComboBox({
+        width: "100%",
+        selectedKeys: (Array.isArray(currentValue) ? currentValue : [currentValue]).map(String),
+        items: feature.domain.values
+          .filter((item) => item.active)
+          .map((item) => new Item({ key: item.code, text: item.value })),
+        selectionFinish: (event: MultiComboBox$SelectionFinishEvent) =>
+          this.updateBlueprintPredicate(selection, {
+            ...predicate,
+            type: "EQUALS",
+            value: event.getSource().getSelectedKeys()
           })
       });
     if (

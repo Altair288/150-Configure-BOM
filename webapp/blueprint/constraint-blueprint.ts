@@ -15,6 +15,7 @@ import type { ConstraintMockNode, ConstraintNodeKind } from "./constraint-mock-r
 import type {
   ConstraintActionType,
   ConstraintBlueprintLayout,
+  ConstraintDerivation,
   ConstraintExpression,
   ConstraintPredicate,
   ConstraintRuleAst
@@ -28,15 +29,22 @@ type BlueprintSemantic =
       side: "when" | "then";
       predicate: ConstraintPredicate;
       actionType?: ConstraintActionType;
+      isDerived?: boolean;
     }
   | { role: "logic"; side: "when" | "then"; operator: "AND" | "OR" | "NOT" }
-  | { role: "action"; index: number; actionType: ConstraintActionType };
+  | {
+      role: "action";
+      index: number;
+      actionType: ConstraintActionType;
+      derivation?: ConstraintDerivation;
+    };
 
 export interface BlueprintPredicateSelection {
   id: string;
   side: "when" | "then";
   predicate: ConstraintPredicate;
   actionType?: ConstraintActionType;
+  isDerived?: boolean;
 }
 
 class BlueprintNode extends ClassicPreset.Node {
@@ -414,7 +422,8 @@ class BlueprintEditor {
                 id: node.id,
                 side: node.semantic.side,
                 predicate: structuredClone(node.semantic.predicate),
-                actionType: node.semantic.actionType
+                actionType: node.semantic.actionType,
+                isDerived: node.semantic.isDerived
               }
             : undefined
         );
@@ -488,7 +497,15 @@ class BlueprintEditor {
       if (node.semantic?.role !== "action") return undefined;
       const targetRoot = connections.find((connection) => connection.source === node.id)?.target;
       const target = targetRoot ? this.exportExpressionNode(targetRoot, "then") : undefined;
-      return target ? { type: node.semantic.actionType, target } : undefined;
+      return target
+        ? {
+            type: node.semantic.actionType,
+            target,
+            ...(node.semantic.derivation
+              ? { derivation: structuredClone(node.semantic.derivation) }
+              : {})
+          }
+        : undefined;
     });
     if (actions.some((action) => !action))
       return this.currentConstraintAst ? structuredClone(this.currentConstraintAst) : undefined;
@@ -539,7 +556,8 @@ class BlueprintEditor {
       id: node.id,
       side: node.semantic.side,
       predicate: structuredClone(predicate),
-      actionType: node.semantic.actionType
+      actionType: node.semantic.actionType,
+      isDerived: node.semantic.isDerived
     });
   }
 
@@ -584,13 +602,18 @@ class BlueprintEditor {
       const actionNode = new BlueprintNode(action.type, "action");
       actionNode.id = `constraint-action-node-${index}`;
       actionNode.parent = scope.id;
-      actionNode.semantic = { role: "action", index, actionType: action.type };
+      actionNode.semantic = {
+        role: "action",
+        index,
+        actionType: action.type,
+        ...(action.derivation ? { derivation: structuredClone(action.derivation) } : {})
+      };
       actionNode.addInput("condition", new ClassicPreset.Input(socket, "条件成立"));
       actionNode.addOutput("target", new ClassicPreset.Output(socket, "应用结果"));
       actionNode.addControl(
         "detail",
         new ClassicPreset.InputControl("text", {
-          initial: action.type,
+          initial: action.derivation ? `${action.type} · ${action.derivation.kind}` : action.type,
           readonly: true
         })
       );
@@ -608,7 +631,8 @@ class BlueprintEditor {
         y,
         constraintLayout,
         featureLabels,
-        action.type
+        action.type,
+        !!action.derivation
       );
       const targetNode = this.editor.getNode(targetRoot);
       if (conditionNode && targetNode) {
@@ -638,7 +662,8 @@ class BlueprintEditor {
     y: number,
     layout: ConstraintBlueprintLayout,
     featureLabels: Record<string, string>,
-    actionType?: ConstraintActionType
+    actionType?: ConstraintActionType,
+    isDerived = false
   ): Promise<string> {
     const id = `constraint-${path}`;
     if ("feature" in expression) {
@@ -657,7 +682,8 @@ class BlueprintEditor {
         role: "predicate",
         side,
         predicate: structuredClone(expression),
-        actionType
+        actionType,
+        isDerived
       };
       node.addControl(
         "detail",
@@ -704,7 +730,8 @@ class BlueprintEditor {
           y + (index - (children.length - 1) / 2) * 150,
           layout,
           featureLabels,
-          actionType
+          actionType,
+          isDerived
         )
       )
     );
