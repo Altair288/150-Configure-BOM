@@ -793,6 +793,9 @@
 .cmConstraintObjectPage .sapUxAPObjectPageSubSectionHeader.cmConstraintRelationshipStickyHeader {
   z-index: 8;
 }
+.cmConstraintObjectPage .sapUxAPObjectPageHeaderTitle.sapUxAPObjectPageHeaderStickied {
+  z-index: 9;
+}
 .cmConstraintRelationshipOverlay {
   position: absolute;
   z-index: 6;
