@@ -16,8 +16,12 @@ import Select from "sap/m/Select";
 import Text from "sap/m/Text";
 import VBox from "sap/m/VBox";
 import Control from "sap/ui/core/Control";
+import Event from "sap/ui/base/Event";
 import CustomData from "sap/ui/core/CustomData";
 import FlexItemData from "sap/m/FlexItemData";
+import Popup from "sap/ui/core/Popup";
+import UnifiedMenu from "sap/ui/unified/Menu";
+import UnifiedMenuItem from "sap/ui/unified/MenuItem";
 import ObjectPageLayout from "sap/uxap/ObjectPageLayout";
 import ObjectPageSection from "sap/uxap/ObjectPageSection";
 import ObjectPageSubSection from "sap/uxap/ObjectPageSubSection";
@@ -47,6 +51,7 @@ import {
   constraintMaximumSelections,
   constraintOperatorsFor,
   detectConstraintConflicts,
+  findConstraintRuleSemanticConflict,
   formatConstraintExpression,
   normalizeConstraintConditionForDesigner,
   reconcileConstrainedSelection,
@@ -297,6 +302,9 @@ export default class ConfigurationRuleDesignerView {
     "cmConstraintDesignerInteractionMenu"
   );
   private readonly interactionPopover: Popover;
+  private previewContextMenu?: UnifiedMenu;
+  private previewContextMenuRoot?: Element;
+  private previewContextMenuHandler?: EventListener;
   private interactionPopoverOpen = false;
   private interactionPopoverAnchor?: Control;
   private pendingInteractionPopover?: PendingInteractionPopover;
@@ -337,6 +345,7 @@ export default class ConfigurationRuleDesignerView {
       onAfterRendering: () => {
         this.observeLazyFormSections();
         this.relationshipOverlay.afterRendering();
+        this.attachPreviewContextMenu();
       }
     });
     this.interactionPopover = new Popover({
@@ -456,6 +465,7 @@ export default class ConfigurationRuleDesignerView {
 
   public dispose(): void {
     this.dismissInteractionPopover();
+    this.detachPreviewContextMenu();
     this.relationshipOverlay.dispose();
     this.clearLazyFormSections();
   }
@@ -707,6 +717,86 @@ export default class ConfigurationRuleDesignerView {
     this.lazyFormSections.length = 0;
   }
 
+  private attachPreviewContextMenu(): void {
+    const root = this.objectPage.getDomRef();
+    if (!root || root === this.previewContextMenuRoot) return;
+    this.detachPreviewContextMenu();
+    this.previewContextMenuRoot = root;
+    this.previewContextMenuHandler = (event) =>
+      this.openPreviewContextMenu(event as MouseEvent);
+    root.addEventListener("contextmenu", this.previewContextMenuHandler);
+  }
+
+  private detachPreviewContextMenu(): void {
+    if (this.previewContextMenuRoot && this.previewContextMenuHandler)
+      this.previewContextMenuRoot.removeEventListener(
+        "contextmenu",
+        this.previewContextMenuHandler
+      );
+    this.destroyPreviewContextMenu();
+    this.previewContextMenuRoot = undefined;
+    this.previewContextMenuHandler = undefined;
+  }
+
+  private destroyPreviewContextMenu(): void {
+    this.previewContextMenu?.destroy();
+    this.previewContextMenu = undefined;
+  }
+
+  private openPreviewContextMenu(event: MouseEvent): void {
+    if (!this.toolbarVisible || this.mode !== "configure") return;
+    const root = this.previewContextMenuRoot;
+    const target = event.target instanceof Element ? event.target : undefined;
+    if (!root || !target || !root.contains(target)) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    this.destroyPreviewContextMenu();
+
+    const clearItem = new UnifiedMenuItem({
+      text: tr("cmConstraintClearAllSelections"),
+      icon: "sap-icon://clear-all",
+      enabled: [...this.fields.values()].some((field) => isSelected(field.getValue()))
+    });
+    const menu = new UnifiedMenu({
+      items: [clearItem],
+      itemSelect: (menuEvent: Event) => {
+        const selectedItem = (
+          menuEvent as Event & {
+            getParameter: (name: "item") => UnifiedMenuItem | undefined;
+          }
+        ).getParameter("item");
+        if (selectedItem?.getId() === clearItem.getId())
+          window.setTimeout(() => {
+            this.clearAllSelectedInputs();
+            this.destroyPreviewContextMenu();
+          }, 0);
+      }
+    });
+    this.previewContextMenu = menu;
+    this.objectPage.addDependent(menu);
+    const rootBounds = root.getBoundingClientRect();
+    const offset = `${Math.round(event.clientX - rootBounds.left)} ${Math.round(event.clientY - rootBounds.top)}`;
+    menu.open(
+      false,
+      target,
+      Popup.Dock.LeftTop,
+      Popup.Dock.LeftTop,
+      root,
+      offset
+    );
+  }
+
+  private clearAllSelectedInputs(): void {
+    this.dismissedRecommendations.clear();
+    this.fields.forEach((field, code) => {
+      field.setValue(undefined);
+      this.inputValues.set(code, field.getValue());
+    });
+    this.updatePreview(false);
+    MessageToast.show(tr("cmConstraintSelectionsCleared"));
+  }
+
   private buildField(definition: FeatureDefinition, question: string): DesignerField {
     const initial = initialFeatureValue(definition, this.options.profile);
     let readValue: () => unknown = () => undefined;
@@ -943,21 +1033,6 @@ export default class ConfigurationRuleDesignerView {
     control.setTooltip(
       trFormat("cmConstraintContextMenuHint", [definition.description], definition.description)
     );
-    control.attachBrowserEvent("contextmenu", (event: MouseEvent) => {
-      if (this.mode !== "design" || !this.options.canEdit()) return;
-      event.preventDefault();
-      this.showFieldInteractionMenu(definition.code, control);
-    });
-    control.attachBrowserEvent("keydown", (event: KeyboardEvent) => {
-      if (
-        this.mode !== "design" ||
-        !this.options.canEdit() ||
-        (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10"))
-      )
-        return;
-      event.preventDefault();
-      this.showFieldInteractionMenu(definition.code, control);
-    });
     const field = {
       definition,
       control,
@@ -1058,10 +1133,10 @@ export default class ConfigurationRuleDesignerView {
           }).addStyleClass("cmConstraintDesignerInteractionMenuButton")
         );
       };
-      const existingConditions = predicatePathsForFeature(
-        this.currentRule.ast.condition,
-        featureCode
-      );
+      const hasConfiguredCondition = this.hasConfiguredCondition();
+      const existingConditions = hasConfiguredCondition
+        ? predicatePathsForFeature(this.currentRule.ast.condition, featureCode)
+        : [];
       if (existingConditions.length) {
         addGroupTitle(tr("cmConstraintCondition"));
         existingConditions.forEach((entry) =>
@@ -1116,7 +1191,6 @@ export default class ConfigurationRuleDesignerView {
           )
         );
       }
-      const hasConfiguredCondition = this.hasConfiguredCondition();
       if (hasConfiguredCondition) {
         addGroupTitle(tr("cmConstraintConditionMenu"));
         for (const connector of ["AND", "OR"] as const)
@@ -1423,6 +1497,20 @@ export default class ConfigurationRuleDesignerView {
               draft.connector,
               predicate
             );
+    const semanticConflict = findConstraintRuleSemanticConflict(
+      condition,
+      this.currentRule.ast.actions,
+      this.options.features
+    );
+    if (semanticConflict) {
+      MessageToast.show(
+        constraintIssueText({
+          code: semanticConflict.code,
+          message: "Rule contains incompatible single-select values"
+        })
+      );
+      return;
+    }
     const previousState = this.captureHistoryState();
     this.newDraftHasCondition = true;
     this.commitAst({ ...this.currentRule.ast, condition }, previousState);
@@ -1957,15 +2045,8 @@ export default class ConfigurationRuleDesignerView {
           value: true
         }
       : this.currentRule.ast.condition;
-    const validation = validateConstraintRule(
-      { ...this.currentRule, ast: { condition, actions: [action] } },
-      [],
-      this.options.features
-    ).filter((issue) => issue.severity === "Error");
-    if (validation.length) {
-      MessageToast.show(constraintIssueText(validation[0]));
-      return;
-    }
+    let actions: ConstraintAction[];
+    let conditionForValidation = condition;
     if (draft.actionIndex !== undefined) {
       const currentAction = this.currentRule.ast.actions[draft.actionIndex];
       if (!currentAction) return;
@@ -1973,23 +2054,42 @@ export default class ConfigurationRuleDesignerView {
         draft.targetPath === undefined || draft.range || draft.derivation
           ? action.target
           : replaceExpressionAtPath(currentAction.target, draft.targetPath, action.target);
-      const actions = this.currentRule.ast.actions.map((existing, index) =>
+      actions = this.currentRule.ast.actions.map((existing, index) =>
         index === draft.actionIndex ? { ...action, target } : existing
       );
       const currentCondition = this.currentRule.ast.condition;
-      const updatedCondition =
+      conditionForValidation =
         currentCondition.type === "ALWAYS" && action.derivation
           ? { ...currentCondition, feature: conditionFeature }
           : currentCondition;
-      this.commitAst({ ...this.currentRule.ast, condition: updatedCondition, actions });
+    } else {
+      actions =
+        this.isNewDraft && !this.newDraftHasAction
+          ? [action]
+          : [...this.currentRule.ast.actions, action];
+    }
+
+    const validation = validateConstraintRule(
+      { ...this.currentRule, ast: { condition: conditionForValidation, actions } },
+      [],
+      this.options.features
+    ).filter((issue) => issue.severity === "Error");
+    if (validation.length) {
+      MessageToast.show(constraintIssueText(validation[0]));
+      return;
+    }
+
+    const previousState = this.captureHistoryState();
+    if (draft.actionIndex !== undefined) {
+      this.commitAst({
+        ...this.currentRule.ast,
+        condition: conditionForValidation,
+        actions
+      }, previousState);
       this.dismissInteractionPopover();
       MessageToast.show(tr("cmConstraintUnsavedChanges"));
       return;
     }
-    const isNew = this.isNewDraft;
-    const actions =
-      isNew && !this.newDraftHasAction ? [action] : [...this.currentRule.ast.actions, action];
-    const previousState = this.captureHistoryState();
     if (withoutCondition) this.newDraftHasCondition = true;
     this.newDraftHasAction = true;
     this.commitAst({ ...this.currentRule.ast, condition, actions }, previousState);
@@ -2134,9 +2234,9 @@ export default class ConfigurationRuleDesignerView {
     const relationships = constraintRelationshipsForRule(this.currentRule);
     this.relationshipOverlay.setRelationships(relationships);
     this.updateRelationshipSections(relationships);
-    const projectedCondition = normalizeConstraintConditionForDesigner(
-      this.currentRule.ast.condition
-    );
+    const projectedCondition = this.hasConfiguredCondition()
+      ? normalizeConstraintConditionForDesigner(this.currentRule.ast.condition)
+      : undefined;
     this.updateFieldRelations(projectedCondition);
     this.renderValidation();
     this.updateToolbarState();
@@ -2144,18 +2244,21 @@ export default class ConfigurationRuleDesignerView {
 
   private updateToolbarState(): void {
     this.modeSelector.setVisible(this.toolbarVisible);
-    this.undoButton.setVisible(this.toolbarVisible);
-    this.redoButton.setVisible(this.toolbarVisible);
-    const canEdit = this.options.canEdit();
+    const showHistory = this.toolbarVisible && this.mode === "design";
+    this.undoButton.setVisible(showHistory);
+    this.redoButton.setVisible(showHistory);
+    const canEdit = this.options.canEdit() && this.mode === "design";
     this.undoButton.setEnabled(canEdit && this.undoStack.length > 0);
     this.redoButton.setEnabled(canEdit && this.redoStack.length > 0);
   }
 
-  private updateFieldRelations(condition: ConstraintExpression): void {
+  private updateFieldRelations(condition?: ConstraintExpression): void {
     const conditionFeatures = new Set(
-      collectConstraintPredicates(condition)
-        .filter((predicate) => predicate.type !== "ALWAYS")
-        .map((predicate) => predicate.feature)
+      condition
+        ? collectConstraintPredicates(condition)
+            .filter((predicate) => predicate.type !== "ALWAYS")
+            .map((predicate) => predicate.feature)
+        : []
     );
     const actionTypes = new Map<string, Set<ConstraintActionType>>();
     for (const action of this.currentRule.ast.actions) {
@@ -2215,7 +2318,7 @@ export default class ConfigurationRuleDesignerView {
       );
   }
 
-  private updatePreview(): void {
+  private updatePreview(applyAutomaticActions = true): void {
     this.values.clear();
     this.fields.forEach((field, code) => {
       field.setValue(this.inputValues.get(code));
@@ -2227,7 +2330,7 @@ export default class ConfigurationRuleDesignerView {
     for (let pass = 0; pass <= this.fields.size; pass += 1) {
       const previous = JSON.stringify([...this.values]);
       simulation =
-        this.mode === "configure"
+        this.mode === "configure" && applyAutomaticActions
           ? simulateConstraintActions(
               rules,
               this.options.features,
@@ -2632,6 +2735,7 @@ export default class ConfigurationRuleDesignerView {
     }
     if (this.mode !== mode) {
       this.dismissInteractionPopover();
+      this.destroyPreviewContextMenu();
       this.resetInputsToInitialValues();
     }
     this.mode = mode;

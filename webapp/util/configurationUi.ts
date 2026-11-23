@@ -355,6 +355,9 @@ export function tr(text: string): string {
 export function constraintIssueText(issue: { code: string; message: string }): string {
   const keys: Record<string, string> = {
     DEFAULT_ACTION_DEPRECATED: "cmConstraintDefaultFeatureOnly",
+    CONTRADICTORY_SINGLE_SELECT_AND: "cmConstraintSingleSelectAndConflict",
+    CONDITION_ACTION_CONFLICT: "cmConstraintConditionActionConflict",
+    CONTRADICTORY_SINGLE_SELECT_ACTIONS: "cmConstraintSingleSelectActionsConflict",
     DERIVATION_SOURCE_REQUIRED: "cmConstraintChooseSource",
     DERIVATION_REQUIRES_NUMBER: "cmConstraintNumericSourceRequired",
     INVALID_DERIVATION_TARGET: "cmConstraintInvalidTarget",

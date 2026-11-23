@@ -140,6 +140,16 @@ export interface ConstraintValidationIssue {
   feature?: string;
 }
 
+export type ConstraintRuleSemanticConflictCode =
+  | "CONTRADICTORY_SINGLE_SELECT_AND"
+  | "CONDITION_ACTION_CONFLICT"
+  | "CONTRADICTORY_SINGLE_SELECT_ACTIONS";
+
+export interface ConstraintRuleSemanticConflict {
+  code: ConstraintRuleSemanticConflictCode;
+  feature: string;
+}
+
 export type ConstraintPreviewStatus =
   "not-triggered" | "satisfied" | "pending" | "conflict" | "not-applied";
 
@@ -249,6 +259,130 @@ export function appendConstraintPredicate(
   }
 
   return { type: "AND", expressions: [current, addition] };
+}
+
+export function findContradictorySingleSelectAndFeature(
+  expression: ConstraintExpression,
+  featureDefinitions: FeatureDefinition[]
+): string | undefined {
+  const featureByCode = new Map(featureDefinitions.map((feature) => [feature.code, feature]));
+  const inspect = (current: ConstraintExpression): string | undefined => {
+    if ("feature" in current || current.type === "NOT") return undefined;
+
+    if (current.type === "AND") {
+      const conjuncts: ConstraintExpression[] = [];
+      const flatten = (item: ConstraintExpression): void => {
+        if (!("feature" in item) && item.type === "AND") item.expressions.forEach(flatten);
+        else conjuncts.push(item);
+      };
+      current.expressions.forEach(flatten);
+
+      const equalities = new Map<string, ConstraintLiteral>();
+      for (const conjunct of conjuncts) {
+        if (!("feature" in conjunct) || conjunct.type !== "EQUALS" || Array.isArray(conjunct.value))
+          continue;
+        const feature = featureByCode.get(conjunct.feature);
+        if (!feature || feature.dataType === "Multi Enumeration") continue;
+        if (equalities.has(feature.code) && equalities.get(feature.code) !== conjunct.value)
+          return feature.code;
+        equalities.set(feature.code, conjunct.value);
+      }
+    }
+
+    for (const child of current.expressions) {
+      const conflictingFeature = inspect(child);
+      if (conflictingFeature) return conflictingFeature;
+    }
+    return undefined;
+  };
+
+  return inspect(expression);
+}
+
+export function findConstraintRuleSemanticConflict(
+  condition: ConstraintExpression,
+  actions: ConstraintAction[],
+  featureDefinitions: FeatureDefinition[]
+): ConstraintRuleSemanticConflict | undefined {
+  const conflictingConditionFeature = findContradictorySingleSelectAndFeature(
+    condition,
+    featureDefinitions
+  );
+  if (conflictingConditionFeature)
+    return {
+      code: "CONTRADICTORY_SINGLE_SELECT_AND",
+      feature: conflictingConditionFeature
+    };
+
+  const featureByCode = new Map(featureDefinitions.map((feature) => [feature.code, feature]));
+  const conditionEqualities: ConstraintPredicate[] = [];
+  const collectConditionEqualities = (expression: ConstraintExpression): void => {
+    if ("feature" in expression) {
+      if (expression.type === "EQUALS" && !Array.isArray(expression.value))
+        conditionEqualities.push(expression);
+      return;
+    }
+    if (expression.type === "NOT") return;
+    expression.expressions.forEach(collectConditionEqualities);
+  };
+  collectConditionEqualities(condition);
+
+  for (const conditionPredicate of conditionEqualities) {
+    const feature = featureByCode.get(conditionPredicate.feature);
+    if (!feature || feature.dataType === "Multi Enumeration") continue;
+    for (const action of actions) {
+      if (!("feature" in action.target) || action.target.feature !== feature.code) continue;
+      const target = action.target;
+      const targetValues = Array.isArray(target.value) ? target.value : [target.value];
+      const includesConditionValue = targetValues.some(
+        (value) => value === conditionPredicate.value
+      );
+      const conflicts =
+        action.type === "REQUIRE" || action.type === "RESTRICT"
+          ? ["EQUALS", "IN"].includes(target.type)
+            ? !includesConditionValue
+            : ["NOT_EQUALS", "NOT_IN"].includes(target.type) && includesConditionValue
+          : action.type === "EXCLUDE"
+            ? ["EQUALS", "IN"].includes(target.type)
+              ? includesConditionValue
+              : ["NOT_EQUALS", "NOT_IN"].includes(target.type) && !includesConditionValue
+            : false;
+      if (conflicts)
+        return { code: "CONDITION_ACTION_CONFLICT", feature: feature.code };
+    }
+  }
+
+  const requiredValues = new Map<string, ConstraintLiteral>();
+  const excludedValues = new Map<string, Set<ConstraintLiteral>>();
+  for (const action of actions) {
+    if (
+      !["REQUIRE", "RESTRICT", "EXCLUDE"].includes(action.type) ||
+      !("feature" in action.target) ||
+      action.target.type !== "EQUALS" ||
+      Array.isArray(action.target.value)
+    )
+      continue;
+    const feature = featureByCode.get(action.target.feature);
+    if (!feature || feature.dataType === "Multi Enumeration") continue;
+    const value = action.target.value;
+    const excluded = excludedValues.get(feature.code);
+    if (action.type === "EXCLUDE") {
+      if (requiredValues.has(feature.code) && requiredValues.get(feature.code) === value)
+        return { code: "CONTRADICTORY_SINGLE_SELECT_ACTIONS", feature: feature.code };
+      const values = excluded ?? new Set<ConstraintLiteral>();
+      values.add(value);
+      excludedValues.set(feature.code, values);
+      continue;
+    }
+    if (
+      (requiredValues.has(feature.code) && requiredValues.get(feature.code) !== value) ||
+      excluded?.has(value)
+    )
+      return { code: "CONTRADICTORY_SINGLE_SELECT_ACTIONS", feature: feature.code };
+    requiredValues.set(feature.code, value);
+  }
+
+  return undefined;
 }
 
 export function removeConstraintExpressionAtPath(
@@ -1478,6 +1612,18 @@ export function validateConstraintRule(
   const issues: ConstraintValidationIssue[] = [];
   const featureByCode = new Map(featureDefinitions.map((feature) => [feature.code, feature]));
   validateExpression(rule.ast.condition, featureByCode, issues);
+  const semanticConflict = findConstraintRuleSemanticConflict(
+    rule.ast.condition,
+    rule.ast.actions,
+    featureDefinitions
+  );
+  if (semanticConflict)
+    issues.push({
+      severity: "Error",
+      code: semanticConflict.code,
+      feature: semanticConflict.feature,
+      message: `Rule has a single-select value conflict on ${semanticConflict.feature}`
+    });
   if (!rule.ast.actions.length) {
     issues.push({
       severity: "Error",

@@ -23,6 +23,7 @@ import type { InputBase$ChangeEvent } from "sap/m/InputBase";
 import {
   appendConstraintPredicate,
   constraintOperatorsFor,
+  findConstraintRuleSemanticConflict,
   formatConstraintCondition,
   formatConstraintExpression,
   removeConstraintExpressionAtPath,
@@ -42,6 +43,7 @@ import type { FeatureDefinition } from "../../model/configuration";
 import {
   constraintActionLabels,
   constraintOperatorLabels,
+  constraintIssueText,
   tr,
   trFormat
 } from "../../util/configurationUi";
@@ -483,6 +485,21 @@ export default class ConfigurationExpressionEditor {
   }
 
   private commitAst(ast: ConstraintRule["ast"], expression?: string, addHistory = true): void {
+    const semanticConflict = findConstraintRuleSemanticConflict(
+      ast.condition,
+      ast.actions,
+      this.options.features
+    );
+    if (semanticConflict) {
+      const message = constraintIssueText({
+        code: semanticConflict.code,
+        message: "Rule contains incompatible single-select values"
+      });
+      this.status.setType("Error");
+      this.status.setText(message);
+      if (expression !== undefined) this.parseError = message;
+      return;
+    }
     const astChanged = JSON.stringify(ast) !== JSON.stringify(this.rule.ast);
     if (addHistory && astChanged) this.undoStack.push(structuredClone(this.rule.ast));
     if (addHistory && astChanged) this.redoStack.length = 0;
@@ -935,7 +952,11 @@ export default class ConfigurationExpressionEditor {
           : "Success"
     );
     this.status.setText(
-      firstError?.message ?? issues[0]?.message ?? tr("Expression Valid · 表达式有效")
+      firstError
+        ? constraintIssueText(firstError)
+        : issues[0]
+          ? constraintIssueText(issues[0])
+          : tr("Expression Valid · 表达式有效")
     );
   }
 }

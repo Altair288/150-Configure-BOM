@@ -884,6 +884,127 @@ function scenarioRule(id, condition, actions) {
   return createConstraintRule({ id, code: id, name: id, ast: { condition, actions } });
 }
 
+test("single-select equality conditions conflict under AND but remain valid under OR", () => {
+  const features = [
+    scenarioFeature("WHEEL_SIZE", "Enumeration", ["18", "19", "20", "21"]),
+    scenarioFeature("PAINT", "Enumeration", ["RED", "BLUE"])
+  ];
+  const action = {
+    type: "REQUIRE",
+    target: { type: "EQUALS", feature: "PAINT", value: "RED" }
+  };
+  const wheelSize = (value) => ({ type: "EQUALS", feature: "WHEEL_SIZE", value });
+  const conflict = scenarioRule(
+    "wheel-size-and-conflict",
+    { type: "AND", expressions: [wheelSize("18"), wheelSize("19")] },
+    [action]
+  );
+  assert.ok(
+    validateConstraintRule(conflict, [], features).some(
+      (issue) => issue.code === "CONTRADICTORY_SINGLE_SELECT_AND" && issue.feature === "WHEEL_SIZE"
+    )
+  );
+
+  const alternatives = scenarioRule(
+    "wheel-size-or-alternatives",
+    { type: "OR", expressions: [wheelSize("18"), wheelSize("19")] },
+    [action]
+  );
+  assert.ok(
+    !validateConstraintRule(alternatives, [], features).some(
+      (issue) => issue.code === "CONTRADICTORY_SINGLE_SELECT_AND"
+    )
+  );
+
+  const independentConditions = scenarioRule(
+    "independent-and-conditions",
+    {
+      type: "AND",
+      expressions: [
+        wheelSize("18"),
+        { type: "EQUALS", feature: "PAINT", value: "RED" }
+      ]
+    },
+    [action]
+  );
+  assert.ok(
+    !validateConstraintRule(independentConditions, [], features).some(
+      (issue) => issue.code === "CONTRADICTORY_SINGLE_SELECT_AND"
+    )
+  );
+});
+
+test("single-select trigger values cannot contradict result actions", () => {
+  const features = [
+    scenarioFeature("WHEEL_SIZE", "Enumeration", ["18", "19", "20", "21"]),
+    scenarioFeature("WHEEL_MATERIAL", "Enumeration", ["WHEEL_AL", "WHEEL_STEEL"])
+  ];
+  const condition = {
+    type: "AND",
+    expressions: [
+      { type: "EQUALS", feature: "WHEEL_SIZE", value: "18" },
+      { type: "EQUALS", feature: "WHEEL_MATERIAL", value: "WHEEL_AL" }
+    ]
+  };
+  const conflictingRequirement = scenarioRule("wheel-material-require", condition, [
+    {
+      type: "REQUIRE",
+      target: { type: "EQUALS", feature: "WHEEL_MATERIAL", value: "WHEEL_STEEL" }
+    }
+  ]);
+  assert.ok(
+    validateConstraintRule(conflictingRequirement, [], features).some(
+      (issue) => issue.code === "CONDITION_ACTION_CONFLICT" && issue.feature === "WHEEL_MATERIAL"
+    )
+  );
+
+  const conflictingExclusion = scenarioRule("wheel-material-exclude", condition, [
+    {
+      type: "EXCLUDE",
+      target: { type: "EQUALS", feature: "WHEEL_MATERIAL", value: "WHEEL_AL" }
+    }
+  ]);
+  assert.ok(
+    validateConstraintRule(conflictingExclusion, [], features).some(
+      (issue) => issue.code === "CONDITION_ACTION_CONFLICT"
+    )
+  );
+
+  const compatibleRequirement = scenarioRule("wheel-material-compatible", condition, [
+    {
+      type: "REQUIRE",
+      target: { type: "EQUALS", feature: "WHEEL_MATERIAL", value: "WHEEL_AL" }
+    }
+  ]);
+  assert.ok(
+    !validateConstraintRule(compatibleRequirement, [], features).some(
+      (issue) => issue.code === "CONDITION_ACTION_CONFLICT"
+    )
+  );
+
+  const conflictingActions = scenarioRule("wheel-material-actions", {
+    type: "EQUALS",
+    feature: "WHEEL_SIZE",
+    value: "18"
+  }, [
+    {
+      type: "REQUIRE",
+      target: { type: "EQUALS", feature: "WHEEL_MATERIAL", value: "WHEEL_AL" }
+    },
+    {
+      type: "RESTRICT",
+      target: { type: "EQUALS", feature: "WHEEL_MATERIAL", value: "WHEEL_STEEL" }
+    }
+  ]);
+  assert.ok(
+    validateConstraintRule(conflictingActions, [], features).some(
+      (issue) =>
+        issue.code === "CONTRADICTORY_SINGLE_SELECT_ACTIONS" &&
+        issue.feature === "WHEEL_MATERIAL"
+    )
+  );
+});
+
 test("extended constraint actions and derivations round-trip through expressions", () => {
   const ast = {
     condition: { type: "GREATER_THAN", feature: "FLOORS", value: 20 },
