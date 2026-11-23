@@ -131,6 +131,12 @@ function describePreviewEffect(
       ? previewPredicateText(effect.target, features.get(effect.target.feature))
       : describePreviewCondition(effect.target, features);
   const detail = target || effect.description || effect.name;
+  if (effect.type === "DEFAULT")
+    return trFormat(
+      "cmConstraintLegacyDefaultPreview",
+      [effect.name],
+      `${effect.name}: this legacy default action is ignored; configure the Feature Model default instead`
+    );
   if (effect.direction === "condition")
     return trFormat(
       "cmPreviewReverseExcludeEffect",
@@ -163,6 +169,8 @@ function previewFeedback(
   features: Map<string, FeatureDefinition>
 ): { text: string; type: PreviewMessageType } | undefined {
   const description = describePreviewEffect(effect, features);
+  if (effect.type === "DEFAULT")
+    return { text: description, type: "Warning" };
   if (effect.status === "conflict")
     return {
       text: trFormat("cmPreviewConstraintConflict", [description], `约束冲突：${description}`),
@@ -249,8 +257,7 @@ export default class ConfigurationPreviewDialog {
         simulation = simulateConstraintActions(
           this.options.rules ?? [],
           features,
-          values,
-          touchedFeatureCodes
+          values
         );
         simulation.changes.forEach((change) =>
           automaticChanges.set(JSON.stringify([change.ruleId, change.feature, change.type]), change)

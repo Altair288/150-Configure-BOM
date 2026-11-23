@@ -311,22 +311,6 @@ export const constraintMockRules: ConstraintMockRule[] = [
     ]
   },
   {
-    id: "13-default-override",
-    title: "13 · 可覆盖默认：舒适套件",
-    category: "默认推导与自动代入",
-    summary: "Premium 配置默认推荐 Comfort Package，客户仍可手动取消。",
-    formula: "Trim Level = 'Premium' ⇒ DEFAULT(Packages.Comfort, True), override allowed",
-    nodes: [
-      source("trim", "特征 · Trim Level", "Enumeration · Premium", 120),
-      condition("premium", "条件 · Premium", "等于 Premium"),
-      action("comfort-default", "默认 · Packages", "Comfort Package = True · 可覆盖")
-    ],
-    connections: [
-      { from: "trim", to: "premium", input: 0 },
-      { from: "premium", to: "comfort-default", input: 0 }
-    ]
-  },
-  {
     id: "14-parent-child",
     title: "14 · 父级下传：市场区域继承",
     category: "跨层级与上下文传递",

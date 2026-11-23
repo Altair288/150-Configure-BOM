@@ -122,6 +122,12 @@ interface ActionDraft {
   range?: { minimum: unknown; maximum: unknown; step?: unknown };
 }
 
+interface DesignerHistoryState {
+  ast: ConstraintRule["ast"];
+  hasCondition: boolean;
+  hasAction: boolean;
+}
+
 type ActionVariant = "range" | "count" | "LINK_RANGE" | ConstraintDerivation["kind"];
 
 type ExpressionPathPart = number | "expression";
@@ -286,7 +292,6 @@ export default class ConfigurationRuleDesignerView {
   private readonly fields = new Map<string, DesignerField>();
   private readonly values = new Map<string, unknown>();
   private readonly inputValues = new Map<string, unknown>();
-  private readonly touchedFeatures = new Set<string>();
   private readonly dismissedRecommendations = new Set<string>();
   private readonly interactionMenuHost = new VBox({ width: "100%" }).addStyleClass(
     "cmConstraintDesignerInteractionMenu"
@@ -302,9 +307,14 @@ export default class ConfigurationRuleDesignerView {
   }).addStyleClass("cmConstraintDesignerMessageOverlay");
   private readonly modelReadiness: string[];
   private readonly modeSelector: SegmentedButton;
+  private readonly undoButton: Button;
+  private readonly redoButton: Button;
+  private readonly undoStack: DesignerHistoryState[] = [];
+  private readonly redoStack: DesignerHistoryState[] = [];
   private toolbarVisible = true;
   private currentRule: ConstraintRule;
   private isNewDraft: boolean;
+  private draftConditionPlaceholder?: ConstraintExpression;
   private mode: DesignerMode = "design";
   private conditionDraft?: ConditionDraft;
   private actionDraft?: ActionDraft;
@@ -316,6 +326,9 @@ export default class ConfigurationRuleDesignerView {
     this.featuresByCode = new Map(options.features.map((feature) => [feature.code, feature]));
     this.currentRule = structuredClone(options.rule);
     this.isNewDraft = options.isNewDraft();
+    this.draftConditionPlaceholder = this.isNewDraft
+      ? structuredClone(this.currentRule.ast.condition)
+      : undefined;
     this.modelReadiness = validateContext(options.store, options.context.id);
     this.mode = options.context.status === "Draft" ? "design" : "configure";
     this.relationshipOverlay = new ConstraintRelationshipOverlay(this.objectPage);
@@ -351,6 +364,18 @@ export default class ConfigurationRuleDesignerView {
       selectionChange: (event: SegmentedButton$SelectionChangeEvent) =>
         this.setMode(event.getParameter("selectedKey") as DesignerMode)
     }).addStyleClass("cmConstraintDesignerModeSelector");
+    this.undoButton = new Button({
+      text: tr("cmConstraintUndo"),
+      icon: "sap-icon://undo",
+      enabled: false,
+      press: () => this.undo()
+    });
+    this.redoButton = new Button({
+      text: tr("cmConstraintRedo"),
+      icon: "sap-icon://redo",
+      enabled: false,
+      press: () => this.redo()
+    });
     this.buildForm();
     this.renderRelations();
     this.updatePreview();
@@ -358,7 +383,7 @@ export default class ConfigurationRuleDesignerView {
 
   public buildToolbarItems(): Control[] {
     this.updateToolbarState();
-    return [this.modeSelector];
+    return [this.modeSelector, this.undoButton, this.redoButton];
   }
 
   public setToolbarVisible(visible: boolean): void {
@@ -401,12 +426,19 @@ export default class ConfigurationRuleDesignerView {
   public setRule(rule: ConstraintRule, isNewDraft: boolean): void {
     const changedRule = this.currentRule.id !== rule.id;
     const changedDraftState = this.isNewDraft !== isNewDraft;
+    const changedAst = JSON.stringify(this.currentRule.ast) !== JSON.stringify(rule.ast);
     this.currentRule = structuredClone(rule);
     this.isNewDraft = isNewDraft;
     if (changedRule || changedDraftState) {
+      this.draftConditionPlaceholder = isNewDraft
+        ? structuredClone(rule.ast.condition)
+        : undefined;
       this.newDraftHasCondition = !isNewDraft;
       this.newDraftHasAction = !isNewDraft;
+      this.clearHistory();
       this.dismissInteractionPopover();
+    } else if (changedAst) {
+      this.clearHistory();
     }
     this.renderRelations();
     this.updatePreview();
@@ -441,7 +473,6 @@ export default class ConfigurationRuleDesignerView {
     this.fields.clear();
     this.values.clear();
     this.inputValues.clear();
-    this.touchedFeatures.clear();
     this.dismissedRecommendations.clear();
     this.objectPage.destroySections();
     const groups = this.options.store.groups
@@ -687,7 +718,6 @@ export default class ConfigurationRuleDesignerView {
       .sort((left, right) => left.sort - right.sort);
     const onChange = (value: unknown, anchor?: Control, captureSelection = true): void => {
       this.inputValues.set(definition.code, value);
-      this.touchedFeatures.add(definition.code);
       this.dismissedRecommendations.clear();
       this.values.set(definition.code, value);
       this.updatePreview();
@@ -1116,9 +1146,6 @@ export default class ConfigurationRuleDesignerView {
             this.showActionVariants(featureCode, type, anchor)
           );
       } else {
-        addMenuButton(this.actionLabel("DEFAULT"), () =>
-          this.beginActionDraft(featureCode, "DEFAULT", anchor)
-        );
         if (field.definition.dataType === "Multi Enumeration")
           addMenuButton(tr("cmConstraintSelectionCount"), () =>
             this.beginActionDraft(featureCode, "RESTRICT", anchor, undefined, "count")
@@ -1171,7 +1198,6 @@ export default class ConfigurationRuleDesignerView {
           add("cmConstraintSelectionCount", "RESTRICT", "count");
       } else if (type === "SET") {
         add("cmConstraintSetValue", "SET");
-        add(actionLabels.DEFAULT, "DEFAULT");
         add(actionLabels.RECOMMEND, "RECOMMEND");
         if (["Boolean", "Multi Enumeration"].includes(feature.dataType)) {
           add(actionLabels.ADD, "ADD");
@@ -1259,7 +1285,12 @@ export default class ConfigurationRuleDesignerView {
       draft.editPath === undefined
         ? undefined
         : removeConstraintExpressionAtPath(this.currentRule.ast.condition, draft.editPath);
-    const canRemoveExistingCondition = conditionAfterEdit !== undefined;
+    const canResetNewDraftCondition =
+      this.isNewDraft &&
+      this.newDraftHasCondition &&
+      this.draftConditionPlaceholder !== undefined;
+    const canRemoveExistingCondition =
+      conditionAfterEdit !== undefined || canResetNewDraftCondition;
     this.updateInteractionPopover(anchor, () => {
       this.interactionMenuHost.destroyItems();
       const operatorSelect = new Select({
@@ -1392,8 +1423,9 @@ export default class ConfigurationRuleDesignerView {
               draft.connector,
               predicate
             );
+    const previousState = this.captureHistoryState();
     this.newDraftHasCondition = true;
-    this.commitAst({ ...this.currentRule.ast, condition });
+    this.commitAst({ ...this.currentRule.ast, condition }, previousState);
     this.dismissInteractionPopover();
     MessageToast.show(tr(isEditing ? "cmConstraintUnsavedChanges" : "cmConstraintConditionAdded"));
   }
@@ -1405,11 +1437,29 @@ export default class ConfigurationRuleDesignerView {
       this.currentRule.ast.condition,
       draft.editPath
     );
-    if (!condition) {
+    const placeholderCondition =
+      !condition && this.isNewDraft && this.newDraftHasCondition
+        ? this.draftConditionPlaceholder
+        : undefined;
+    const nextCondition = condition ?? placeholderCondition;
+    if (!nextCondition) {
       MessageToast.show(tr("cmConstraintAtLeastOneCondition"));
       return;
     }
-    this.commitAst({ ...this.currentRule.ast, condition });
+    const previousState = this.captureHistoryState();
+    const resetsNewDraft = condition === undefined && placeholderCondition !== undefined;
+    if (resetsNewDraft) {
+      this.newDraftHasCondition = false;
+      this.newDraftHasAction = false;
+    }
+    this.commitAst(
+      {
+        ...this.currentRule.ast,
+        condition: nextCondition,
+        actions: resetsNewDraft ? [] : this.currentRule.ast.actions
+      },
+      previousState
+    );
     this.dismissInteractionPopover();
     MessageToast.show(tr("cmConstraintUnsavedChanges"));
   }
@@ -1428,9 +1478,12 @@ export default class ConfigurationRuleDesignerView {
     variant?: ActionVariant,
     quick = false
   ): void {
+    if (type === "DEFAULT" && existing === undefined) {
+      MessageToast.show(tr("cmConstraintDefaultFeatureOnly"));
+      return;
+    }
     if (
       !this.hasConfiguredCondition() &&
-      type !== "DEFAULT" &&
       type !== "DERIVE" &&
       !(
         type === "RESTRICT" &&
@@ -1533,6 +1586,37 @@ export default class ConfigurationRuleDesignerView {
     if (!draft) return;
     this.updateInteractionPopover(anchor, () => {
       this.interactionMenuHost.destroyItems();
+      if (draft.type === "DEFAULT") {
+        this.interactionMenuHost.addItem(
+          new MessageStrip({
+            text: tr("cmConstraintLegacyDefaultMigration"),
+            type: "Warning",
+            showIcon: true
+          })
+        );
+        this.interactionMenuHost.addItem(
+          new HBox({
+            width: "100%",
+            justifyContent: "End",
+            items: [
+              new Button({
+                text: tr("cmConstraintRemoveLegacyDefault"),
+                icon: "sap-icon://delete",
+                type: "Emphasized",
+                enabled: draft.actionIndex !== undefined,
+                press: () => this.removeActionDraft()
+              }),
+              new Button({
+                text: tr("cmCancel"),
+                type: "Transparent",
+                press: () => this.dismissInteractionPopover()
+              })
+            ]
+          })
+        );
+        this.interactionPopover.setTitle(draft.feature.name);
+        return;
+      }
       const operators = constraintOperatorsFor(draft.feature.dataType, draft.type);
       if (!operators.includes(draft.operator))
         draft.operator = operators.includes("EQUALS") ? "EQUALS" : (operators[0] ?? "EQUALS");
@@ -1568,7 +1652,6 @@ export default class ConfigurationRuleDesignerView {
                   "RESTRICT",
                   "SET",
                   "DERIVE",
-                  "DEFAULT",
                   "RECOMMEND",
                   "ADD",
                   "REMOVE"
@@ -1764,6 +1847,10 @@ export default class ConfigurationRuleDesignerView {
   private addActionDraft(value: unknown): void {
     const draft = this.actionDraft;
     if (!draft || !this.options.canEdit()) return;
+    if (draft.type === "DEFAULT") {
+      MessageToast.show(tr("cmConstraintDefaultFeatureOnly"));
+      return;
+    }
     let action: ConstraintAction;
     if (draft.derivation) {
       action = {
@@ -1865,7 +1952,7 @@ export default class ConfigurationRuleDesignerView {
           : draft.feature.code;
     const condition: ConstraintExpression = withoutCondition
       ? {
-          type: draft.type === "DEFAULT" ? "IS_UNSET" : "ALWAYS",
+          type: "ALWAYS",
           feature: conditionFeature,
           value: true
         }
@@ -1902,9 +1989,10 @@ export default class ConfigurationRuleDesignerView {
     const isNew = this.isNewDraft;
     const actions =
       isNew && !this.newDraftHasAction ? [action] : [...this.currentRule.ast.actions, action];
+    const previousState = this.captureHistoryState();
     if (withoutCondition) this.newDraftHasCondition = true;
     this.newDraftHasAction = true;
-    this.commitAst({ ...this.currentRule.ast, condition, actions });
+    this.commitAst({ ...this.currentRule.ast, condition, actions }, previousState);
     this.dismissInteractionPopover();
     MessageToast.show(tr("cmConstraintRelationAdded"));
   }
@@ -1984,7 +2072,53 @@ export default class ConfigurationRuleDesignerView {
     return { control, getValue: () => control.getValue() };
   }
 
-  private commitAst(ast: ConstraintRule["ast"]): void {
+  private captureHistoryState(): DesignerHistoryState {
+    return {
+      ast: structuredClone(this.currentRule.ast),
+      hasCondition: this.newDraftHasCondition,
+      hasAction: this.newDraftHasAction
+    };
+  }
+
+  private clearHistory(): void {
+    this.undoStack.length = 0;
+    this.redoStack.length = 0;
+    this.updateToolbarState();
+  }
+
+  private undo(): void {
+    if (!this.options.canEdit()) return;
+    const previous = this.undoStack.pop();
+    if (!previous) return;
+    this.redoStack.push(this.captureHistoryState());
+    this.newDraftHasCondition = previous.hasCondition;
+    this.newDraftHasAction = previous.hasAction;
+    this.commitAst(previous.ast, null);
+  }
+
+  private redo(): void {
+    if (!this.options.canEdit()) return;
+    const next = this.redoStack.pop();
+    if (!next) return;
+    this.undoStack.push(this.captureHistoryState());
+    this.newDraftHasCondition = next.hasCondition;
+    this.newDraftHasAction = next.hasAction;
+    this.commitAst(next.ast, null);
+  }
+
+  private commitAst(
+    ast: ConstraintRule["ast"],
+    previousState: DesignerHistoryState | null = this.captureHistoryState()
+  ): void {
+    const changed =
+      JSON.stringify(ast) !== JSON.stringify(this.currentRule.ast) ||
+      (previousState !== null &&
+        (previousState.hasCondition !== this.newDraftHasCondition ||
+          previousState.hasAction !== this.newDraftHasAction));
+    if (changed && previousState) {
+      this.undoStack.push(previousState);
+      this.redoStack.length = 0;
+    }
     this.currentRule = {
       ...this.currentRule,
       ast: structuredClone(ast),
@@ -2010,6 +2144,11 @@ export default class ConfigurationRuleDesignerView {
 
   private updateToolbarState(): void {
     this.modeSelector.setVisible(this.toolbarVisible);
+    this.undoButton.setVisible(this.toolbarVisible);
+    this.redoButton.setVisible(this.toolbarVisible);
+    const canEdit = this.options.canEdit();
+    this.undoButton.setEnabled(canEdit && this.undoStack.length > 0);
+    this.redoButton.setEnabled(canEdit && this.redoStack.length > 0);
   }
 
   private updateFieldRelations(condition: ConstraintExpression): void {
@@ -2092,8 +2231,7 @@ export default class ConfigurationRuleDesignerView {
           ? simulateConstraintActions(
               rules,
               this.options.features,
-              this.values,
-              this.touchedFeatures
+              this.values
             )
           : undefined;
       if (simulation) {
@@ -2164,6 +2302,7 @@ export default class ConfigurationRuleDesignerView {
     this.options.onPreviewConflicts(conflicts);
     const restrictedCodes = new Set(
       effects
+        .filter((effect) => effect.type !== "DEFAULT")
         .map((effect) => ("feature" in effect.target ? effect.target.feature : undefined))
         .filter((code): code is string => !!code)
     );
@@ -2246,6 +2385,20 @@ export default class ConfigurationRuleDesignerView {
           showCloseButton: false
         })
       );
+    for (const effect of effects.filter((item) => item.type === "DEFAULT")) {
+      const rule = rules.find((item) => item.id === effect.ruleId);
+      this.previewFeedbackHost.addItem(
+        new MessageStrip({
+          text: trFormat(
+            "cmConstraintLegacyDefaultPreview",
+            [effect.name, rule?.code ?? effect.code],
+            `${effect.name}: this legacy default action is ignored; set the default in the Feature Model`
+          ),
+          type: "Warning",
+          showIcon: true
+        })
+      );
+    }
     for (const conflict of conflicts) {
       const feature = this.featuresByCode.get(conflict.feature);
       const names = conflict.rules
@@ -2389,7 +2542,6 @@ export default class ConfigurationRuleDesignerView {
               type: "Transparent",
               press: () => {
                 this.inputValues.set(feature.code, value);
-                this.touchedFeatures.add(feature.code);
                 this.dismissedRecommendations.add(key);
                 this.updatePreview();
               }
@@ -2463,13 +2615,26 @@ export default class ConfigurationRuleDesignerView {
     return tr(actionLabels[type]);
   }
 
+  private resetInputsToInitialValues(): void {
+    this.inputValues.clear();
+    this.dismissedRecommendations.clear();
+    this.fields.forEach((field, code) => {
+      const value = initialFeatureValue(field.definition, this.options.profile);
+      field.setValue(value);
+      this.inputValues.set(code, value);
+    });
+  }
+
   private setMode(mode: DesignerMode): void {
     if (mode === "design" && !this.options.canEdit()) {
       this.modeSelector.setSelectedKey("configure");
       return;
     }
+    if (this.mode !== mode) {
+      this.dismissInteractionPopover();
+      this.resetInputsToInitialValues();
+    }
     this.mode = mode;
-    if (mode !== "design") this.dismissInteractionPopover();
     this.modeSelector.setSelectedKey(mode);
     this.updateToolbarState();
     this.updatePreview();

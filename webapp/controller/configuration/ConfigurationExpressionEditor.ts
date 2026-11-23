@@ -88,7 +88,6 @@ const actionItems: Array<{ key: ConstraintActionType; label: string }> = (
     "SET",
     "RESTRICT",
     "DERIVE",
-    "DEFAULT",
     "RECOMMEND",
     "ADD",
     "REMOVE"
@@ -556,6 +555,7 @@ export default class ConfigurationExpressionEditor {
   }
 
   private changeActionType(index: number, type: ConstraintActionType): void {
+    if (type === "DEFAULT") return;
     const action = this.rule.ast.actions[index];
     if (!action || action.type === type) return;
     let target = action.target;
@@ -619,21 +619,36 @@ export default class ConfigurationExpressionEditor {
   }
 
   private buildActionRow(action: ConstraintAction, index: number): VBox {
-    const actionSelect = new Select({
-      width: "8rem",
-      selectedKey: action.type,
-      tooltip: tr("动作"),
-      items: actionItems.map((item) => new Item({ key: item.key, text: tr(item.label) })),
-      change: (event: Select$ChangeEvent) =>
-        this.changeActionType(index, event.getSource().getSelectedKey() as ConstraintActionType)
-    });
+    const actionTypeControl: Control =
+      action.type === "DEFAULT"
+        ? new ObjectStatus({
+            text: tr("cmConstraintLegacyDefaultAction"),
+            state: "Warning"
+          })
+        : new Select({
+            width: "8rem",
+            selectedKey: action.type,
+            tooltip: tr("动作"),
+            items: actionItems.map((item) => new Item({ key: item.key, text: tr(item.label) })),
+            change: (event: Select$ChangeEvent) =>
+              this.changeActionType(
+                index,
+                event.getSource().getSelectedKey() as ConstraintActionType
+              )
+          });
     const removeButton = new Button({
       icon: "sap-icon://delete",
       tooltip: tr("删除结果"),
       type: "Transparent",
       press: () => this.removeAction(index)
     });
-    const targetControl = action.derivation
+    const targetControl = action.type === "DEFAULT"
+      ? new MessageStrip({
+          text: tr("cmConstraintLegacyDefaultMigration"),
+          type: "Warning",
+          showIcon: true
+        })
+      : action.derivation
       ? new VBox({
           items: [
             new Text({
@@ -667,7 +682,7 @@ export default class ConfigurationExpressionEditor {
         new HBox({
           width: "100%",
           alignItems: "Center",
-          items: [actionSelect, new ToolbarSpacer(), removeButton]
+          items: [actionTypeControl, new ToolbarSpacer(), removeButton]
         }).addStyleClass("cmConstraintActionHeader"),
         targetControl
       ]
@@ -806,7 +821,7 @@ export default class ConfigurationExpressionEditor {
     const multiAssignment =
       feature.dataType === "Multi Enumeration" &&
       !!actionType &&
-      ["SET", "DEFAULT", "RECOMMEND"].includes(actionType);
+      ["SET", "RECOMMEND"].includes(actionType);
     const allowMultiSelection =
       predicate.type === "IN" || predicate.type === "NOT_IN" || multiAssignment;
     if (allowMultiSelection && options.length > 0) {

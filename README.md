@@ -32,9 +32,14 @@
 ## 配置约束原型
 
 - 规则只能引用当前 Configuration Context 的活动 Feature 和值域；组件加入/移除通过布尔或多选 Feature 表示，不修改真实 BOM。
-- 可视化编辑支持条件、要求、互斥、范围与步长、数量限制、设置、默认值、推荐值，以及计算、映射和数值/允许范围联动。表达式、蓝图和本地存储使用同一份规则 AST。
-- 配置模式及预览中的自动动作仅模拟临时值，不保存配置结果；默认值不覆盖用户指定的值，推荐值需用户选择采用。冲突时不自动选择，并显示关联规则。
+- 可视化编辑支持条件、要求、互斥、范围与步长、数量限制、设置、推荐值，以及计算、映射和数值/允许范围联动。默认值只在 Feature Model 中配置，不属于约束动作。表达式、蓝图和本地存储使用同一份规则 AST。
+- 配置模式及预览中的自动动作仅模拟临时值，不保存配置结果；Feature Model 默认值仅在用户未指定时生效，推荐值需用户选择采用。旧版默认值约束会提示迁移并停止执行。冲突时不自动选择，并显示关联规则。
 - 公式按从左到右计算，单位换算使用明确输入的系数，之后进行可选舍入。映射支持数值区间及离散值；区间包含上下边界且不能重叠，来源值不能重复。无匹配、除零及超出目标值域会提示。
+
+## 配置管理数据访问
+
+- 配置管理 Controller 通过 [`ConfigurationApi`](./webapp/service/configurationApi.ts) 读取和保存 `ConfigurationStore`；当前由 [`MockConfigurationApi`](./webapp/mock/mockConfigurationApi.ts) 提供异步 API 形态，并以本地存储模拟后端持久化。
+- 配置上下文、产品族、Feature Model 与迁移用示例数据集中在 [`configurationMockData.ts`](./webapp/mock/configurationMockData.ts)；约束样例位于 [`constraintRuleSamples.ts`](./webapp/mock/constraintRuleSamples.ts)。接入后端时替换 `createConfigurationApi()` 的实现，不需要让 Controller 直接读取 mock 数据或 localStorage。
 
 ## 启动
 

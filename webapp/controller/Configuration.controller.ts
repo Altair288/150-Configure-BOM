@@ -34,15 +34,14 @@ import ConfigurationFeatureWorkspaceView from "./configuration/ConfigurationFeat
 import ConfigurationPreviewDialog from "./configuration/ConfigurationPreviewDialog";
 import ConfigurationRuleWorkspaceView from "./configuration/ConfigurationRuleWorkspaceView";
 import { ConstraintRuleRepository } from "../service/constraintRuleRepository";
+import { createConfigurationApi } from "../service/configurationApi";
+import type { ConfigurationApiMessage } from "../service/configurationApi";
 import type { ConstraintRule } from "../model/constraintRules";
 import ConfigurationScopeView from "./configuration/ConfigurationScopeView";
 import { buildContextTreeRows } from "./configuration/ConfigurationViewModel";
 import type { Field, Selection, Values } from "./configuration/types";
 import { button, form, select, setI18nBundle, tr, trFormat, txt } from "../util/configurationUi";
 import {
-  createSeed,
-  ensureLoadTestContexts,
-  storageKey,
   uid,
   today,
   dataTypes,
@@ -56,9 +55,7 @@ import {
   contextReferences,
   copyContext,
   publishDefinition,
-  normalizeFeatureModelStore,
-  ensureConstraintSampleFeatures,
-  ensureChineseSUVMockData
+  normalizeFeatureModelStore
 } from "../model/configuration";
 import type {
   ConfigurationStore,
@@ -77,6 +74,7 @@ let activeI18nModel: ResourceModel | undefined;
 
 export default class ConfigurationController extends BaseController {
   private store!: ConfigurationStore;
+  private readonly configurationApi = createConfigurationApi();
   private readonly viewModel = new JSONModel({
     libraryMode: false,
     layout: "TwoColumnsMidExpanded",
@@ -145,36 +143,61 @@ export default class ConfigurationController extends BaseController {
       setI18nBundle(
         bundle as { getText?: (resourceKey: string) => string | undefined } | undefined
       );
-    this.store = ensureChineseSUVMockData(ensureConstraintSampleFeatures(createSeed()));
-    const saved = localStorage.getItem(storageKey);
-    if (saved) {
-      try {
-        const parsed = normalizeFeatureModelStore(JSON.parse(saved));
-        if (validateStore(parsed).length) throw new Error();
-        const featureCompleteStore = ensureChineseSUVMockData(
-          ensureConstraintSampleFeatures(parsed)
-        );
-        const beforeLoadTestData = featureCompleteStore.contexts.length;
-        this.store = ensureLoadTestContexts(featureCompleteStore);
-        localStorage.setItem(storageKey, JSON.stringify(this.store));
-        if (this.store.contexts.length > beforeLoadTestData)
-          MessageToast.show(
-            `已补充测试数据，当前共有 ${this.store.contexts.length} 个配置上下文。`
-          );
-      } catch {
-        MessageBox.warning(
-          "本地建模数据无法读取，已打开示例工作区。原始数据未覆盖；可通过导入恢复有效备份。"
-        );
-      }
-    }
-    this.initializeXmlView();
-    this.render();
     this.getRouter().getRoute("configuration")?.attachPatternMatched(this.openContext, this);
     this.getRouter().getRoute("rules")?.attachPatternMatched(this.openRules, this);
     this.getRouter().getRoute("featureLibrary")?.attachPatternMatched(this.openLibrary, this);
+    void this.loadConfigurationData();
     // ResourceModel may finish its locale bundle just after the controller is created.
     window.setTimeout(() => this.onLocalizationChanged(), 300);
   }
+
+  private async loadConfigurationData(): Promise<void> {
+    this.getView()?.setBusy(true);
+    try {
+      const result = await this.configurationApi.getConfigurationStore();
+      this.store = result.store;
+      result.messages?.forEach((message) => this.showConfigurationApiMessage(message));
+      this.initializeXmlView();
+      this.render();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      MessageBox.error(
+        trFormat("cmConfigurationLoadFailed", [detail], `配置数据加载失败：${detail}`)
+      );
+    } finally {
+      this.getView()?.setBusy(false);
+    }
+  }
+
+  private showConfigurationApiMessage(message: ConfigurationApiMessage): void {
+    if (message.type === "example-data-fallback") {
+      const detail = message.detail ? ` ${message.detail}` : "";
+      MessageBox.warning(
+        trFormat(
+          "cmConfigurationExampleFallback",
+          [detail],
+          `本地建模数据无法读取，已打开示例工作区。原始数据未覆盖；可通过导入恢复有效备份。${detail}`
+        )
+      );
+    } else if (message.type === "migration-save-failed") {
+      MessageBox.warning(
+        trFormat(
+          "cmConfigurationMigrationSaveFailed",
+          [message.detail],
+          `配置数据已载入，但迁移后的模拟数据未能写回本地存储：${message.detail}`
+        )
+      );
+    } else {
+      MessageToast.show(
+        trFormat(
+          "cmConfigurationTestContextsAdded",
+          [message.count],
+          `已补充测试数据，当前共有 ${message.count} 个配置上下文。`
+        )
+      );
+    }
+  }
+
   public onExit(): void {
     Localization.detachChange(this.onLocalizationChangedBound);
     this.getRouter().getRoute("configuration")?.detachPatternMatched(this.openContext, this);
@@ -228,6 +251,7 @@ export default class ConfigurationController extends BaseController {
     message = "已保存到本地建模工作区"
   ): boolean {
     try {
+      const previous = this.store;
       const next = structuredClone(this.store);
       change(next);
       const errors = validateStore(next);
@@ -237,10 +261,23 @@ export default class ConfigurationController extends BaseController {
       }
       const context = next.contexts.find((c) => c.id === this.contextId);
       if (context && !this.libraryMode) context.modified = today();
-      localStorage.setItem(storageKey, JSON.stringify(next));
       this.store = next;
       this.render();
-      MessageToast.show(message);
+      void this.configurationApi
+        .saveConfigurationStore(next)
+        .then(() => {
+          if (this.store === next) MessageToast.show(message);
+        })
+        .catch((error: unknown) => {
+          if (this.store === next) {
+            this.store = previous;
+            this.render();
+          }
+          const detail = error instanceof Error ? error.message : String(error);
+          MessageBox.error(
+            trFormat("cmConfigurationSaveFailed", [detail], `保存失败：${detail}`)
+          );
+        });
       return true;
     } catch (error) {
       MessageBox.error(

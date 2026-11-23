@@ -46,6 +46,7 @@ import {
   constraintOperatorsFor,
   createConstraintRule,
   formatConstraintExpression,
+  hasLegacyDefaultConstraintAction,
   validateConstraintRule
 } from "../../model/constraintRules";
 import type {
@@ -303,12 +304,19 @@ export default class ConfigurationRuleWorkspaceView {
     this.ruleByListItemId.clear();
     this.rulesList.destroyItems();
     this.rules.forEach((rule) => {
+      const hasLegacyDefault = hasLegacyDefaultConstraintAction(rule);
       const item = new StandardListItem({
         title: rule.name,
         description: this.ruleSummary(rule),
-        info: this.previewConflictRuleIds.has(rule.id) ? tr("cmConstraintConflict") : rule.status,
+        info: this.previewConflictRuleIds.has(rule.id)
+          ? tr("cmConstraintConflict")
+          : hasLegacyDefault
+            ? tr("cmConstraintLegacyDefaultStatus")
+            : rule.status,
         infoState:
-          this.previewConflictRuleIds.has(rule.id) || rule.status === "Invalid"
+          this.previewConflictRuleIds.has(rule.id) ||
+          hasLegacyDefault ||
+          rule.status === "Invalid"
             ? "Error"
             : rule.status === "Valid"
               ? "Success"
@@ -1406,6 +1414,16 @@ export default class ConfigurationRuleWorkspaceView {
     }
     const feature = this.features.find((item) => item.code === selection.predicate.feature);
     if (!feature) return;
+    if (selection.actionType === "DEFAULT") {
+      this.blueprintInspectorFields.addItem(
+        new MessageStrip({
+          text: tr("cmConstraintLegacyDefaultMigration"),
+          type: "Warning",
+          showIcon: true
+        })
+      );
+      return;
+    }
     if (selection.isDerived || selection.predicate.type === "STEP") {
       this.blueprintInspectorFields.addItem(
         new MessageStrip({
@@ -1517,7 +1535,7 @@ export default class ConfigurationRuleWorkspaceView {
     if (
       feature.dataType === "Multi Enumeration" &&
       selection.actionType &&
-      ["SET", "DEFAULT", "RECOMMEND"].includes(selection.actionType)
+      ["SET", "RECOMMEND"].includes(selection.actionType)
     )
       return new MultiComboBox({
         width: "100%",

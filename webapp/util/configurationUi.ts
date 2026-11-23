@@ -47,7 +47,7 @@ export const constraintActionLabels: Record<ConstraintActionType, string> = {
   SET: "设置",
   RESTRICT: "限制",
   DERIVE: "cmConstraintDeriveMenu",
-  DEFAULT: "cmConstraintDefaultAction",
+  DEFAULT: "cmConstraintLegacyDefaultAction",
   RECOMMEND: "cmConstraintRecommendAction",
   ADD: "cmConstraintAddComponent",
   REMOVE: "cmConstraintRemoveComponent"
@@ -354,6 +354,7 @@ export function tr(text: string): string {
 
 export function constraintIssueText(issue: { code: string; message: string }): string {
   const keys: Record<string, string> = {
+    DEFAULT_ACTION_DEPRECATED: "cmConstraintDefaultFeatureOnly",
     DERIVATION_SOURCE_REQUIRED: "cmConstraintChooseSource",
     DERIVATION_REQUIRES_NUMBER: "cmConstraintNumericSourceRequired",
     INVALID_DERIVATION_TARGET: "cmConstraintInvalidTarget",

@@ -6,6 +6,21 @@
 
 开始任务前，先读取相关 View/Fragment、Controller、Model、Service 和附近测试。不要只根据截图或需求描述推断现有行为；从页面入口跟到实际拥有状态和行为的模块。
 
+## Codegraph 检索与影响分析
+
+- 查找符号定义、调用链、类型关系、现有行为或修改影响范围时，优先使用 Codegraph Explore，再决定是否需要手工搜索代码。不要为了确认已经由 Codegraph 返回的源码而重复读取同一文件。
+- 查询时将 `projectPath` 设为当前仓库根目录绝对路径；用 `query` 提供入口符号和关键协作符号，或简短描述要追踪的流程。例如：
+
+  ```text
+  projectPath: D:\Github\150-Configure-BOM
+  query: ConstraintRuleAst previewConstraintRules ConfigurationRuleDesignerView
+  ```
+
+- 查询内容应围绕实际任务选择：单点查询聚焦待修改符号；跨模块流程同时列出入口、状态拥有者、被调用逻辑和测试相关符号。需要分散查看更多源码时可设置 `maxFiles`，但优先保持查询具体。
+- 返回结果可能包含源码片段、调用关系、影响范围和测试引用。源码片段可作为已读取内容；若结果出现 `gap`、裁剪或没有包含所需实现，再用被列出的确切符号追问，或只读取缺失部分。不要根据被省略的片段推断实现细节。
+- Codegraph 用于导航和缩小检查范围，不替代需求文档、完整验证、测试或运行时检查。代码修改后仍按本指南运行相应测试、lint、构建和 UI 验证。
+- 若当前仓库未建立 Codegraph 索引、查询失败或结果不足，及时回退到可用的语义搜索、LSP、`rg`、`glob` 和定向文件读取；不要反复执行宽泛查询。
+
 ## 目录与职责
 
 - `webapp/Component.ts` 注册应用模型、i18n ResourceModel 并初始化 Router；不要把业务规则放进 Component。

@@ -2,7 +2,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  createSeed,
   validateStore,
   validateDefinition,
   validateValue,
@@ -10,9 +9,7 @@ import {
   publishDefinition,
   copyContext,
   contextReferences,
-  definitionUsage,
-  ensureConstraintSampleFeatures,
-  ensureChineseSUVMockData
+  definitionUsage
 } from "../webapp/model/configuration.ts";
 import {
   appendConstraintPredicate,
@@ -22,10 +19,11 @@ import {
   constraintRelationshipsForRule,
   reconcileConstrainedSelection,
   createConstraintRule,
-  createConstraintRuleSamples,
   constraintOperatorsFor,
+  buildConstraintRuleSamples,
   detectConstraintConflicts,
   formatConstraintExpression,
+  hasLegacyDefaultConstraintAction,
   isConstraintRuleAst,
   normalizeConstraintConditionForDesigner,
   removeConstraintExpressionAtPath,
@@ -35,7 +33,22 @@ import {
   parseConstraintExpression,
   validateConstraintRule
 } from "../webapp/model/constraintRules.ts";
+import {
+  createSeed as createConfigurationSeed,
+  ensureConstraintSampleFeatures as ensureMockConstraintSampleFeatures,
+  ensureChineseSUVMockData as ensureMockChineseSUVData
+} from "../webapp/mock/configurationMockData.ts";
+import { constraintRuleSamples } from "../webapp/mock/constraintRuleSamples.ts";
 import { assignConstraintRelationshipLanes } from "../webapp/controller/configuration/ConstraintRelationshipOverlay.ts";
+
+const configurationMockHelpers = { validateStore, resolveDefinition };
+const createSeed = () => createConfigurationSeed(configurationMockHelpers);
+const ensureConstraintSampleFeatures = (store) =>
+  ensureMockConstraintSampleFeatures(store, configurationMockHelpers);
+const ensureChineseSUVMockData = (store) =>
+  ensureMockChineseSUVData(store, configurationMockHelpers);
+const createConstraintRuleSamples = (features) =>
+  buildConstraintRuleSamples(constraintRuleSamples, features);
 
 test("seed vocabulary has valid links and all ten data types", () => {
   const store = createSeed();
@@ -1023,7 +1036,7 @@ test("extended validation checks referenced features, overlapping mappings and q
   );
 });
 
-test("local simulation applies automatic actions and defaults but leaves recommendations optional", () => {
+test("local simulation applies automatic actions but leaves recommendations optional", () => {
   const features = [
     scenarioFeature("FLOORS", "Integer"),
     scenarioFeature("SPEED", "Decimal"),
@@ -1033,7 +1046,6 @@ test("local simulation applies automatic actions and defaults but leaves recomme
   const condition = { type: "GREATER_THAN", feature: "FLOORS", value: 20 };
   const rules = [
     scenarioRule("AUTO", condition, [
-      { type: "DEFAULT", target: { type: "EQUALS", feature: "SPEED", value: 1.75 } },
       { type: "ADD", target: { type: "EQUALS", feature: "PACKS", value: "BRAKE" } },
       { type: "RECOMMEND", target: { type: "EQUALS", feature: "MOTOR", value: "B" } }
     ])
@@ -1043,8 +1055,8 @@ test("local simulation applies automatic actions and defaults but leaves recomme
     ["PACKS", ["AUDIO"]],
     ["MOTOR", "A"]
   ]);
-  const result = simulateConstraintActions(rules, features, input, new Set());
-  assert.equal(result.values.get("SPEED"), 1.75);
+  const result = simulateConstraintActions(rules, features, input);
+  assert.equal(result.values.has("SPEED"), false);
   assert.deepEqual(result.values.get("PACKS"), ["AUDIO", "BRAKE"]);
   assert.equal(result.values.get("MOTOR"), "A");
   assert.deepEqual(
@@ -1054,8 +1066,6 @@ test("local simulation applies automatic actions and defaults but leaves recomme
   assert.ok(result.changes.every((change) => change.ruleId === "AUTO"));
   assert.equal(input.has("SPEED"), false);
   assert.deepEqual(input.get("PACKS"), ["AUDIO"]);
-  const touched = simulateConstraintActions(rules, features, input, new Set(["SPEED"]));
-  assert.equal(touched.values.has("SPEED"), false);
   const setPacks = scenarioRule("SET_PACKS", condition, [
     { type: "SET", target: { type: "EQUALS", feature: "PACKS", value: ["BRAKE", "AUDIO"] } }
   ]);
@@ -1065,14 +1075,14 @@ test("local simulation applies automatic actions and defaults but leaves recomme
     setPacks.ast
   );
   assert.deepEqual(
-    simulateConstraintActions([setPacks], features, input, new Set()).values.get("PACKS"),
+    simulateConstraintActions([setPacks], features, input).values.get("PACKS"),
     ["BRAKE", "AUDIO"]
   );
   const forced = scenarioRule("FORCED", condition, [
     { type: "SET", target: { type: "EQUALS", feature: "SPEED", value: 2 } }
   ]);
   assert.equal(
-    simulateConstraintActions([...rules, forced], features, input, new Set()).values.get("SPEED"),
+    simulateConstraintActions([...rules, forced], features, input).values.get("SPEED"),
     2
   );
   const conflicting = scenarioRule("OTHER", condition, [
@@ -1081,15 +1091,14 @@ test("local simulation applies automatic actions and defaults but leaves recomme
   const conflictResult = simulateConstraintActions(
     [forced, conflicting],
     features,
-    input,
-    new Set()
+    input
   );
   assert.equal(conflictResult.values.has("SPEED"), false);
   assert.deepEqual(new Set(conflictResult.conflicts[0].ruleIds), new Set(["FORCED", "OTHER"]));
   const delayedConflict = scenarioRule("DELAYED", { type: "EQUALS", feature: "SPEED", value: 2 }, [
     { type: "SET", target: { type: "EQUALS", feature: "SPEED", value: 2.5 } }
   ]);
-  const unstable = simulateConstraintActions([forced, delayedConflict], features, input, new Set());
+  const unstable = simulateConstraintActions([forced, delayedConflict], features, input);
   assert.equal(unstable.values.has("SPEED"), false);
   assert.ok(unstable.issues.some((issue) => issue.code === "AUTOMATIC_CYCLE"));
   assert.ok(
@@ -1097,6 +1106,25 @@ test("local simulation applies automatic actions and defaults but leaves recomme
       (issue) => issue.code === "CIRCULAR_DEPENDENCY"
     )
   );
+});
+
+test("legacy default constraint actions remain readable but are rejected and never executed", () => {
+  const features = [scenarioFeature("FLOORS", "Integer"), scenarioFeature("SPEED", "Decimal")];
+  const rule = scenarioRule("LEGACY_DEFAULT", { type: "ALWAYS", feature: "FLOORS", value: true }, [
+    { type: "DEFAULT", target: { type: "EQUALS", feature: "SPEED", value: 1.75 } }
+  ]);
+  assert.equal(hasLegacyDefaultConstraintAction(rule), true);
+  assert.equal(isConstraintRuleAst(rule.ast), true);
+  assert.deepEqual(parseConstraintExpression(formatConstraintExpression(rule.ast)), rule.ast);
+  assert.ok(
+    validateConstraintRule(rule, [], features).some(
+      (issue) => issue.code === "DEFAULT_ACTION_DEPRECATED"
+    )
+  );
+  const input = new Map([["FLOORS", 25]]);
+  const result = simulateConstraintActions([rule], features, input);
+  assert.equal(result.values.has("SPEED"), false);
+  assert.equal(previewConstraintRules([rule], features, input)[0].actions[0].status, "not-applied");
 });
 
 test("local simulation evaluates formulas and maps, and does not apply conflicting values", () => {
@@ -1144,7 +1172,7 @@ test("local simulation evaluates formulas and maps, and does not apply conflicti
     ["SPEED", 2],
     ["EFFICIENCY", 0.8]
   ]);
-  const result = simulateConstraintActions(rules, features, input, new Set());
+  const result = simulateConstraintActions(rules, features, input);
   assert.equal(result.values.get("POWER"), 1500);
   assert.equal(result.values.get("MOTOR"), "B");
   const linkedRange = scenarioRule("LINK_RANGE", condition, [
@@ -1182,22 +1210,20 @@ test("local simulation evaluates formulas and maps, and does not apply conflicti
     }
   ]);
   assert.equal(
-    simulateConstraintActions([rounded], features, input, new Set()).values.get("POWER"),
+    simulateConstraintActions([rounded], features, input).values.get("POWER"),
     -2
   );
   const divideByZero = simulateConstraintActions(
     rules,
     features,
-    new Map([...input, ["EFFICIENCY", 0]]),
-    new Set()
+    new Map([...input, ["EFFICIENCY", 0]])
   );
   assert.equal(divideByZero.values.has("POWER"), false);
   assert.ok(divideByZero.issues.some((issue) => issue.code === "DIVISION_BY_ZERO"));
   const noMapping = simulateConstraintActions(
     rules,
     features,
-    new Map([...input, ["LOAD", 2000]]),
-    new Set()
+    new Map([...input, ["LOAD", 2000]])
   );
   assert.equal(noMapping.values.has("MOTOR"), false);
   assert.ok(noMapping.issues.some((issue) => issue.code === "MAP_NO_MATCH"));
@@ -1250,8 +1276,7 @@ test("multi-select requirements preserve other choices and identify only conflic
     new Map([
       ["FLOORS", 20],
       ["PACKS", []]
-    ]),
-    new Set()
+    ])
   );
   assert.deepEqual(partial.values.get("PACKS"), ["BRAKE"]);
   assert.deepEqual(partial.conflicts, []);
@@ -1313,7 +1338,7 @@ test("value mappings support active enumeration values without overlapping match
     { source: "REGION", target: "STEERING", type: "DERIVE" }
   ]);
   assert.equal(
-    simulateConstraintActions([rule], features, new Map([["REGION", "JP"]]), new Set()).values.get(
+    simulateConstraintActions([rule], features, new Map([["REGION", "JP"]])).values.get(
       "STEERING"
     ),
     "RIGHT"
@@ -1322,7 +1347,7 @@ test("value mappings support active enumeration values without overlapping match
     feature.code === "REGION" ? { ...feature, active: false } : feature
   );
   assert.equal(
-    simulateConstraintActions([rule], inactive, new Map([["REGION", "JP"]]), new Set()).values.has(
+    simulateConstraintActions([rule], inactive, new Map([["REGION", "JP"]])).values.has(
       "STEERING"
     ),
     false

@@ -7,6 +7,7 @@ export type ConstraintActionType =
   | "SET"
   | "RESTRICT"
   | "DERIVE"
+  /** Accepted only to read existing persisted rule ASTs; new rules use FeatureDefinition.defaultValue. */
   | "DEFAULT"
   | "RECOMMEND"
   | "ADD"
@@ -121,6 +122,10 @@ export interface ConstraintRule {
   createdBy: string;
   modifiedAt: string;
   version: number;
+}
+
+export function hasLegacyDefaultConstraintAction(rule: Pick<ConstraintRule, "ast">): boolean {
+  return rule.ast.actions.some((action) => action.type === "DEFAULT");
 }
 
 export interface LegacyConstraintRule extends Omit<ConstraintRule, "ast"> {
@@ -959,6 +964,8 @@ export function createConstraintRule(input: {
   };
 }
 
+export type ConstraintRuleInput = Parameters<typeof createConstraintRule>[0];
+
 export function collectConstraintPredicates(
   expression: ConstraintExpression
 ): ConstraintPredicate[] {
@@ -1011,7 +1018,6 @@ export function constraintOperatorsFor(
   if (
     actionType === "SET" ||
     actionType === "DERIVE" ||
-    actionType === "DEFAULT" ||
     actionType === "RECOMMEND" ||
     actionType === "ADD" ||
     actionType === "REMOVE"
@@ -1207,7 +1213,7 @@ function validateExpression(
     const multiAssignment =
       feature.dataType === "Multi Enumeration" &&
       predicate.type === "EQUALS" &&
-      (actionType === "SET" || actionType === "DEFAULT" || actionType === "RECOMMEND");
+      (actionType === "SET" || actionType === "RECOMMEND");
     if (
       Array.isArray(predicate.value) &&
       predicate.type !== "IN" &&
@@ -1480,6 +1486,13 @@ export function validateConstraintRule(
     });
   }
   for (const action of rule.ast.actions) {
+    if (action.type === "DEFAULT")
+      issues.push({
+        severity: "Error",
+        code: "DEFAULT_ACTION_DEPRECATED",
+        feature: "feature" in action.target ? action.target.feature : undefined,
+        message: "默认值由特征模型管理，不再作为约束规则动作"
+      });
     if (action.derivation) validateDerivation(action, featureByCode, issues);
     else validateExpression(action.target, featureByCode, issues, action.type);
     if (action.type === "ADD" || action.type === "REMOVE") {
@@ -2173,8 +2186,7 @@ function calculateDerivation(
 export function simulateConstraintActions(
   rules: ConstraintRule[],
   featureDefinitions: FeatureDefinition[],
-  inputValues: ReadonlyMap<string, unknown>,
-  explicitlySet: ReadonlySet<string>
+  inputValues: ReadonlyMap<string, unknown>
 ): ConstraintSimulation {
   const features = new Map(featureDefinitions.map((feature) => [feature.code, feature]));
   const values = new Map(inputValues);
@@ -2231,7 +2243,7 @@ export function simulateConstraintActions(
           continue;
         }
         if (
-          !["SET", "DERIVE", "DEFAULT", "RECOMMEND", "ADD", "REMOVE"].includes(action.type) ||
+          !["SET", "DERIVE", "RECOMMEND", "ADD", "REMOVE"].includes(action.type) ||
           (action.type === "RECOMMEND") !== includeRecommendations
         )
           continue;
@@ -2276,7 +2288,7 @@ export function simulateConstraintActions(
         if (
           Array.isArray(derived.value) &&
           (feature.dataType !== "Multi Enumeration" ||
-            !["SET", "DEFAULT", "RECOMMEND"].includes(action.type))
+            !["SET", "RECOMMEND"].includes(action.type))
         ) {
           issue(
             rule,
@@ -2342,12 +2354,7 @@ export function simulateConstraintActions(
     for (const [code, allEntries] of grouped) {
       if (constraintConflicts.some((entry) => entry.feature === code)) continue;
       const current = values.get(code);
-      const hasAutomaticAssignment = allEntries.some(({ action }) => action.type !== "DEFAULT");
-      const entries = allEntries.filter(
-        ({ action }) =>
-          action.type !== "DEFAULT" ||
-          (!hasAutomaticAssignment && !isPreviewValueSet(current) && !explicitlySet.has(code))
-      );
+      const entries = allEntries;
       if (!entries.length) continue;
       const feature = entries[0].feature;
       const assignments = entries.filter(({ action }) => !["ADD", "REMOVE"].includes(action.type));
@@ -2590,97 +2597,11 @@ export function previewConstraintRules(
   });
 }
 
-function predicate(
-  type: ConstraintOperator,
-  feature: string,
-  value: ConstraintLiteral | ConstraintLiteral[]
-): ConstraintPredicate {
-  return { type, feature, value };
-}
-
-export function createConstraintRuleSamples(features: FeatureDefinition[]): ConstraintRule[] {
+export function buildConstraintRuleSamples(
+  samples: ConstraintRuleInput[],
+  features: FeatureDefinition[]
+): ConstraintRule[] {
   const codes = new Set(features.map((feature) => feature.code));
-  const samples: Array<Parameters<typeof createConstraintRule>[0]> = [
-    {
-      id: "rule-sunroof-interior",
-      code: "CR-001",
-      name: "全景天窗内饰约束",
-      description: "选择全景天窗时必须使用高级内饰。",
-      ast: {
-        condition: predicate("EQUALS", "SUNROOF_TYPE", "PANORAMIC"),
-        actions: [{ type: "REQUIRE", target: predicate("EQUALS", "INTERIOR_PACKAGE", "PREMIUM") }]
-      }
-    },
-    {
-      id: "rule-sunroof-roof-rack",
-      code: "CR-002",
-      name: "天窗与行李架互斥",
-      description: "全景天窗不能搭配 B 型车顶行李架。",
-      ast: {
-        condition: predicate("EQUALS", "SUNROOF_TYPE", "PANORAMIC"),
-        actions: [{ type: "EXCLUDE", target: predicate("EQUALS", "ROOF_RACK", "TYPE_B") }]
-      }
-    },
-    {
-      id: "rule-awd-battery",
-      code: "CR-003",
-      name: "四驱电池容量要求",
-      description: "全轮驱动车型至少需要 80 kWh 电池容量。",
-      ast: {
-        condition: predicate("EQUALS", "DRIVE_TYPE", "AWD"),
-        actions: [
-          { type: "RESTRICT", target: predicate("GREATER_THAN_OR_EQUAL", "BATTERY_CAPACITY", 80) }
-        ]
-      }
-    },
-    {
-      id: "rule-winter-kit",
-      code: "CR-004",
-      name: "冬季套件",
-      description: "选择冬季套件时需要加热方向盘和加热座椅。",
-      ast: {
-        condition: predicate("EQUALS", "WINTER_PACKAGE", true),
-        actions: [
-          { type: "REQUIRE", target: predicate("EQUALS", "HEATED_STEERING", true) },
-          { type: "REQUIRE", target: predicate("EQUALS", "HEATED_SEAT", true) }
-        ]
-      }
-    },
-    {
-      id: "rule-complex-market",
-      code: "CR-005",
-      name: "高配市场组合约束",
-      description: "Premium 车型在非日本市场可使用 AWD 或 4WD。",
-      ast: {
-        condition: {
-          type: "AND",
-          expressions: [
-            predicate("EQUALS", "TRIM_LEVEL", "PREMIUM"),
-            {
-              type: "NOT",
-              expression: {
-                type: "OR",
-                expressions: [
-                  predicate("EQUALS", "VEHICLE_REGION", "JAPAN"),
-                  predicate("EQUALS", "ROOF_RACK", "TYPE_B")
-                ]
-              }
-            }
-          ]
-        },
-        actions: [
-          {
-            type: "REQUIRE",
-            target: {
-              type: "IN",
-              feature: "DRIVE_TYPE",
-              value: ["AWD", "4WD"]
-            }
-          }
-        ]
-      }
-    }
-  ];
   const rules = samples
     .filter((sample) => {
       const referenced = [

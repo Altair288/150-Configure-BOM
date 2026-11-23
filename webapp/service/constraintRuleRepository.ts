@@ -1,6 +1,7 @@
 import {
-  createConstraintRuleSamples,
+  buildConstraintRuleSamples,
   formatConstraintExpression,
+  hasLegacyDefaultConstraintAction,
   isConstraintRuleAst,
   isLegacyConstraintRuleAst,
   migrateLegacyConstraintRuleAst,
@@ -12,6 +13,7 @@ import type {
   ConstraintRuleStatus
 } from "../model/constraintRules";
 import type { FeatureDefinition } from "../model/configuration";
+import { constraintRuleSamples } from "../mock/constraintRuleSamples";
 
 interface PersistedConstraintRules {
   schemaVersion: 2;
@@ -53,8 +55,11 @@ function normalizeRule(value: unknown): ConstraintRule {
     typeof value.name !== "string"
   )
     throw new Error("本地约束规则缺少 ID、编码或名称");
-  const status: ConstraintRuleStatus =
-    value.status === "Valid" || value.status === "Invalid" ? value.status : "Draft";
+  const status: ConstraintRuleStatus = hasLegacyDefaultConstraintAction({ ast })
+    ? "Invalid"
+    : value.status === "Valid" || value.status === "Invalid"
+      ? value.status
+      : "Draft";
   const rawSource = isRecord(value.source) ? value.source : {};
   const sourceType: ConstraintRuleSource =
     rawSource.type === "AI" || rawSource.type === "BLUEPRINT" ? rawSource.type : "MANUAL";
@@ -120,7 +125,7 @@ export class ConstraintRuleRepository {
   public list(contextId: string, features: FeatureDefinition[]): ConstraintRule[] {
     const stored = this.read().contexts[contextId];
     if (stored) return structuredClone(stored);
-    return createConstraintRuleSamples(features);
+    return buildConstraintRuleSamples(constraintRuleSamples, features);
   }
 
   public save(
