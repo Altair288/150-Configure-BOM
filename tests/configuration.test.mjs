@@ -39,6 +39,7 @@ import {
   ensureChineseSUVMockData as ensureMockChineseSUVData
 } from "../webapp/mock/configurationMockData.ts";
 import { constraintRuleSamples } from "../webapp/mock/constraintRuleSamples.ts";
+import { createComplexConstraintAIResponseSamples } from "../webapp/mock/constraintAIResponseSamples.ts";
 import { assignConstraintRelationshipLanes } from "../webapp/controller/configuration/ConstraintRelationshipOverlay.ts";
 
 const configurationMockHelpers = { validateStore, resolveDefinition };
@@ -483,6 +484,35 @@ test("constraint seeds use current context features and respect value domains", 
   assert.match(rules[0].expression, /INTERIOR_PACKAGE == "PREMIUM"/);
 });
 
+test("mock AI returns two complex validated constraint samples for any prompt", () => {
+  const store = createSeed();
+  const features = contextReferences(store, "ctx-SUV").map((reference) =>
+    resolveDefinition(store, reference)
+  );
+  const existingRules = createConstraintRuleSamples(features);
+
+  for (const prompt of ["1", "今天天气怎么样？", "请帮我优化轮毂配置"]) {
+    const samples = createComplexConstraintAIResponseSamples(prompt);
+    assert.equal(samples.length, 2);
+
+    const generatedRules = samples.map((sample) => createConstraintRule(sample.rule));
+    assert.deepEqual(
+      samples.map((sample) => sample.rule.source.prompt),
+      [prompt, prompt]
+    );
+    assert.ok(generatedRules.every((rule) => rule.ast.condition.type === "AND"));
+    assert.ok(generatedRules.every((rule) => rule.ast.actions.length === 2));
+    assert.deepEqual(
+      generatedRules.flatMap((rule) =>
+        validateConstraintRule(rule, [...existingRules, ...generatedRules], features).filter(
+          (issue) => issue.severity === "Error"
+        )
+      ),
+      []
+    );
+  }
+});
+
 test("constraint relationships project condition features to action features without self-links", () => {
   const relationships = constraintRelationshipsForRule({
     ast: {
@@ -920,10 +950,7 @@ test("single-select equality conditions conflict under AND but remain valid unde
     "independent-and-conditions",
     {
       type: "AND",
-      expressions: [
-        wheelSize("18"),
-        { type: "EQUALS", feature: "PAINT", value: "RED" }
-      ]
+      expressions: [wheelSize("18"), { type: "EQUALS", feature: "PAINT", value: "RED" }]
     },
     [action]
   );
@@ -982,25 +1009,28 @@ test("single-select trigger values cannot contradict result actions", () => {
     )
   );
 
-  const conflictingActions = scenarioRule("wheel-material-actions", {
-    type: "EQUALS",
-    feature: "WHEEL_SIZE",
-    value: "18"
-  }, [
+  const conflictingActions = scenarioRule(
+    "wheel-material-actions",
     {
-      type: "REQUIRE",
-      target: { type: "EQUALS", feature: "WHEEL_MATERIAL", value: "WHEEL_AL" }
+      type: "EQUALS",
+      feature: "WHEEL_SIZE",
+      value: "18"
     },
-    {
-      type: "RESTRICT",
-      target: { type: "EQUALS", feature: "WHEEL_MATERIAL", value: "WHEEL_STEEL" }
-    }
-  ]);
+    [
+      {
+        type: "REQUIRE",
+        target: { type: "EQUALS", feature: "WHEEL_MATERIAL", value: "WHEEL_AL" }
+      },
+      {
+        type: "RESTRICT",
+        target: { type: "EQUALS", feature: "WHEEL_MATERIAL", value: "WHEEL_STEEL" }
+      }
+    ]
+  );
   assert.ok(
     validateConstraintRule(conflictingActions, [], features).some(
       (issue) =>
-        issue.code === "CONTRADICTORY_SINGLE_SELECT_ACTIONS" &&
-        issue.feature === "WHEEL_MATERIAL"
+        issue.code === "CONTRADICTORY_SINGLE_SELECT_ACTIONS" && issue.feature === "WHEEL_MATERIAL"
     )
   );
 });
@@ -1195,10 +1225,10 @@ test("local simulation applies automatic actions but leaves recommendations opti
     parseConstraintExpression(formatConstraintExpression(setPacks.ast)),
     setPacks.ast
   );
-  assert.deepEqual(
-    simulateConstraintActions([setPacks], features, input).values.get("PACKS"),
-    ["BRAKE", "AUDIO"]
-  );
+  assert.deepEqual(simulateConstraintActions([setPacks], features, input).values.get("PACKS"), [
+    "BRAKE",
+    "AUDIO"
+  ]);
   const forced = scenarioRule("FORCED", condition, [
     { type: "SET", target: { type: "EQUALS", feature: "SPEED", value: 2 } }
   ]);
@@ -1209,11 +1239,7 @@ test("local simulation applies automatic actions but leaves recommendations opti
   const conflicting = scenarioRule("OTHER", condition, [
     { type: "SET", target: { type: "EQUALS", feature: "SPEED", value: 2.5 } }
   ]);
-  const conflictResult = simulateConstraintActions(
-    [forced, conflicting],
-    features,
-    input
-  );
+  const conflictResult = simulateConstraintActions([forced, conflicting], features, input);
   assert.equal(conflictResult.values.has("SPEED"), false);
   assert.deepEqual(new Set(conflictResult.conflicts[0].ruleIds), new Set(["FORCED", "OTHER"]));
   const delayedConflict = scenarioRule("DELAYED", { type: "EQUALS", feature: "SPEED", value: 2 }, [
@@ -1330,10 +1356,7 @@ test("local simulation evaluates formulas and maps, and does not apply conflicti
       }
     }
   ]);
-  assert.equal(
-    simulateConstraintActions([rounded], features, input).values.get("POWER"),
-    -2
-  );
+  assert.equal(simulateConstraintActions([rounded], features, input).values.get("POWER"), -2);
   const divideByZero = simulateConstraintActions(
     rules,
     features,
@@ -1341,11 +1364,7 @@ test("local simulation evaluates formulas and maps, and does not apply conflicti
   );
   assert.equal(divideByZero.values.has("POWER"), false);
   assert.ok(divideByZero.issues.some((issue) => issue.code === "DIVISION_BY_ZERO"));
-  const noMapping = simulateConstraintActions(
-    rules,
-    features,
-    new Map([...input, ["LOAD", 2000]])
-  );
+  const noMapping = simulateConstraintActions(rules, features, new Map([...input, ["LOAD", 2000]]));
   assert.equal(noMapping.values.has("MOTOR"), false);
   assert.ok(noMapping.issues.some((issue) => issue.code === "MAP_NO_MATCH"));
 
@@ -1459,18 +1478,14 @@ test("value mappings support active enumeration values without overlapping match
     { source: "REGION", target: "STEERING", type: "DERIVE" }
   ]);
   assert.equal(
-    simulateConstraintActions([rule], features, new Map([["REGION", "JP"]])).values.get(
-      "STEERING"
-    ),
+    simulateConstraintActions([rule], features, new Map([["REGION", "JP"]])).values.get("STEERING"),
     "RIGHT"
   );
   const inactive = features.map((feature) =>
     feature.code === "REGION" ? { ...feature, active: false } : feature
   );
   assert.equal(
-    simulateConstraintActions([rule], inactive, new Map([["REGION", "JP"]])).values.has(
-      "STEERING"
-    ),
+    simulateConstraintActions([rule], inactive, new Map([["REGION", "JP"]])).values.has("STEERING"),
     false
   );
   const duplicate = structuredClone(rule);

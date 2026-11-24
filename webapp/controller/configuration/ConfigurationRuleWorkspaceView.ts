@@ -1,5 +1,4 @@
 import Button from "sap/m/Button";
-import CheckBox from "sap/m/CheckBox";
 import FlexItemData from "sap/m/FlexItemData";
 import HBox from "sap/m/HBox";
 import IconTabBar from "sap/m/IconTabBar";
@@ -14,8 +13,6 @@ import MultiComboBox from "sap/m/MultiComboBox";
 import ObjectStatus from "sap/m/ObjectStatus";
 import OverflowToolbar from "sap/m/OverflowToolbar";
 import OverflowToolbarLayoutData from "sap/m/OverflowToolbarLayoutData";
-import SegmentedButton from "sap/m/SegmentedButton";
-import SegmentedButtonItem from "sap/m/SegmentedButtonItem";
 import Select from "sap/m/Select";
 import StandardListItem from "sap/m/StandardListItem";
 import type { Select$ChangeEvent } from "sap/m/Select";
@@ -23,8 +20,6 @@ import type { IconTabBar$SelectEvent } from "sap/m/IconTabBar";
 import type { ListBase$ItemPressEvent } from "sap/m/ListBase";
 import type { InputBase$ChangeEvent } from "sap/m/InputBase";
 import type { MultiComboBox$SelectionFinishEvent } from "sap/m/MultiComboBox";
-import type { SegmentedButton$SelectionChangeEvent } from "sap/m/SegmentedButton";
-import TextArea from "sap/m/TextArea";
 import Text from "sap/m/Text";
 import Title from "sap/m/Title";
 import ToolbarSpacer from "sap/m/ToolbarSpacer";
@@ -49,12 +44,7 @@ import {
   hasLegacyDefaultConstraintAction,
   validateConstraintRule
 } from "../../model/constraintRules";
-import type {
-  ConstraintAIResponse,
-  ConstraintAISuggestion,
-  ConstraintAIStage
-} from "../../service/mockConstraintAIService";
-import { MockConstraintAIService } from "../../service/mockConstraintAIService";
+import type { ConstraintAISuggestion } from "../../service/mockConstraintAIService";
 import { ConstraintRuleRepository } from "../../service/constraintRuleRepository";
 import type {
   ConstraintAction,
@@ -77,7 +67,7 @@ import ConfigurationRuleDesignerView from "./ConfigurationRuleDesignerView";
 
 type NodeKind = "source" | "condition" | "logic" | "action";
 type WorkspaceMode = "designer" | "advanced";
-type AdvancedWorkspaceMode = "expression" | "blueprint" | "assistant";
+type AdvancedWorkspaceMode = "expression" | "blueprint";
 
 let blueprintBundleLoading: Promise<void> | undefined;
 
@@ -141,12 +131,12 @@ export default class ConfigurationRuleWorkspaceView {
   private readonly repository: ConstraintRuleRepository;
   private readonly canEdit: () => boolean;
   private readonly onToggleFullscreen: () => void;
-  private readonly aiService = new MockConstraintAIService();
   private rules: ConstraintRule[];
   private currentRule: ConstraintRule;
   private currentRuleDirty = false;
   private currentRuleIsNew = false;
   private readonly unsavedRuleIds = new Set<string>();
+  private readonly newRuleDraftIds = new Set<string>();
   private mode: WorkspaceMode = "designer";
   private advancedMode: AdvancedWorkspaceMode = "expression";
   private rulesList?: List;
@@ -155,23 +145,11 @@ export default class ConfigurationRuleWorkspaceView {
   private expressionEditor?: ConfigurationExpressionEditor;
   private expressionHost?: VBox;
   private blueprintHost?: VBox;
-  private assistantHost?: VBox;
   private designerHost?: VBox;
   private advancedHost?: VBox;
-  private assistantPrompt?: TextArea;
-  private assistantStatus?: ObjectStatus;
-  private assistantGenerateButton?: Button;
-  private assistantApplyButton?: Button;
-  private assistantResults?: VBox;
-  private assistantAmbiguity?: VBox;
-  private assistantSuggestions: ConstraintAISuggestion[] = [];
-  private assistantClarification?: string;
-  private assistantAmbiguityChoice?: string;
-  private assistantRunId = 0;
-  private pendingAmbiguity?: ConstraintAIResponse["ambiguity"];
   private readonly ruleByListItemId = new Map<string, string>();
   private readonly previewConflictRuleIds = new Set<string>();
-  private modeSelector?: SegmentedButton;
+  private moreToolsButton?: Button;
   private advancedModeSelector?: IconTabBar;
   private mainFullscreenButton?: Button;
   private deleteRuleButton?: Button;
@@ -180,6 +158,7 @@ export default class ConfigurationRuleWorkspaceView {
   private ruleContextMenuHandler?: EventListener;
   private designerView?: ConfigurationRuleDesignerView;
   private designerToolbarItems: Control[] = [];
+  private designerHistoryToolbarItems: Control[] = [];
   private ruleNameInput?: Input;
   private blueprintNeedsLoad = true;
   private blueprintSelection?: BlueprintPredicateSelection;
@@ -196,8 +175,9 @@ export default class ConfigurationRuleWorkspaceView {
     this.canEdit = options.canEdit;
     this.onToggleFullscreen = options.onToggleFullscreen;
     this.rules = this.repository.list(this.context.id, this.features);
-    this.currentRuleIsNew = this.rules.length === 0;
     this.currentRule = this.rules[0] ?? this.createNewRule();
+    this.currentRuleIsNew = this.rules.length === 0;
+    if (this.currentRuleIsNew) this.newRuleDraftIds.add(this.currentRule.id);
     this.rulesModel = new JSONModel({ currentRule: this.currentRule });
     this.graphHost = new VBox({
       width: "100%",
@@ -251,7 +231,6 @@ export default class ConfigurationRuleWorkspaceView {
     this.blueprintNeedsLoad = true;
     if (this.mode === "advanced" && this.advancedMode === "blueprint")
       void this.loadBlueprintRule();
-    this.renderAssistantSuggestions();
   }
 
   private disposeEditor(): void {
@@ -314,9 +293,7 @@ export default class ConfigurationRuleWorkspaceView {
             ? tr("cmConstraintLegacyDefaultStatus")
             : rule.status,
         infoState:
-          this.previewConflictRuleIds.has(rule.id) ||
-          hasLegacyDefault ||
-          rule.status === "Invalid"
+          this.previewConflictRuleIds.has(rule.id) || hasLegacyDefault || rule.status === "Invalid"
             ? "Error"
             : rule.status === "Valid"
               ? "Success"
@@ -449,7 +426,7 @@ export default class ConfigurationRuleWorkspaceView {
 
   private buildRuleDetail(): VBox {
     this.ruleNameInput = new Input({
-      width: "13rem",
+      width: "11rem",
       value: this.currentRule.name,
       change: (event: InputBase$ChangeEvent) => {
         this.updateWorkingRule(
@@ -458,7 +435,9 @@ export default class ConfigurationRuleWorkspaceView {
         );
       }
     }).addStyleClass("cmConstraintRuleNameInput");
+    this.ruleNameInput.setLayoutData(new OverflowToolbarLayoutData({ priority: "High" }));
     this.detailsStatus = new ObjectStatus({ text: this.currentRule.status, state: "Information" });
+    this.detailsStatus.setLayoutData(new OverflowToolbarLayoutData({ priority: "Low" }));
     this.ruleMetaStatus = new ObjectStatus({
       text: this.ruleMetadata(this.currentRule),
       state: "None"
@@ -484,7 +463,6 @@ export default class ConfigurationRuleWorkspaceView {
       visible: false,
       items: [this.buildEditorColumn()]
     }).addStyleClass("cmConstraintModeHost cmConstraintBlueprintHost");
-    this.assistantHost = this.buildAssistantWorkspace();
     this.designerView = new ConfigurationRuleDesignerView({
       store: this.store,
       context: this.context,
@@ -495,6 +473,7 @@ export default class ConfigurationRuleWorkspaceView {
       isNewDraft: () => this.currentRuleIsNew,
       canEdit: this.canEdit,
       onRuleChange: (rule) => this.updateWorkingRule(rule, "designer"),
+      onApplyAISuggestion: (suggestion, prompt) => this.stageAISuggestion(suggestion, prompt),
       onPreviewConflicts: (conflicts) => this.setPreviewConflicts(conflicts),
       onOpenRule: (ruleId) => this.selectRule(ruleId)
     });
@@ -508,6 +487,7 @@ export default class ConfigurationRuleWorkspaceView {
       new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
     );
     this.designerToolbarItems = this.designerView.buildToolbarItems();
+    this.designerHistoryToolbarItems = this.designerView.buildHistoryToolbarItems();
     this.advancedModeSelector = new IconTabBar({
       expandable: false,
       stretchContentHeight: true,
@@ -516,10 +496,9 @@ export default class ConfigurationRuleWorkspaceView {
       selectedKey: this.advancedMode,
       items: [
         new IconTabFilter({ key: "expression", text: tr("表达式"), icon: "sap-icon://syntax" }),
-        new IconTabFilter({ key: "blueprint", text: tr("蓝图"), icon: "sap-icon://process" }),
-        new IconTabFilter({ key: "assistant", text: tr("AI 助手"), icon: "sap-icon://da" })
+        new IconTabFilter({ key: "blueprint", text: tr("蓝图"), icon: "sap-icon://process" })
       ],
-      content: [this.expressionHost, this.blueprintHost, this.assistantHost],
+      content: [this.expressionHost, this.blueprintHost],
       select: (event: IconTabBar$SelectEvent) =>
         this.setAdvancedMode(event.getParameter("key") as AdvancedWorkspaceMode)
     }).addStyleClass("cmConstraintAdvancedTools");
@@ -535,22 +514,15 @@ export default class ConfigurationRuleWorkspaceView {
     this.advancedHost.setLayoutData(
       new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
     );
-    this.modeSelector = new SegmentedButton({
-      width: "15rem",
-      selectedKey: this.mode,
-      items: [
-        new SegmentedButtonItem({
-          key: "designer",
-          text: tr("cmConstraintWysiwygDesigner")
-        }),
-        new SegmentedButtonItem({
-          key: "advanced",
-          text: tr("cmConstraintAdvancedTools")
-        })
-      ],
-      selectionChange: (event: SegmentedButton$SelectionChangeEvent) =>
-        this.setMode(event.getParameter("selectedKey") as WorkspaceMode)
-    }).addStyleClass("cmConstraintWorkspaceModeSelector");
+    this.moreToolsButton = new Button({
+      text: tr("cmConstraintAdvancedTools"),
+      icon: "sap-icon://action-settings",
+      type: "Transparent",
+      press: () => this.setMode(this.mode === "designer" ? "advanced" : "designer")
+    });
+    this.moreToolsButton.setLayoutData(
+      new OverflowToolbarLayoutData({ priority: "AlwaysOverflow" })
+    );
     this.setMode(this.mode);
     this.setAdvancedMode(this.advancedMode);
 
@@ -579,16 +551,21 @@ export default class ConfigurationRuleWorkspaceView {
       press: () => this.saveCurrentRule()
     });
     saveButton.setLayoutData(new OverflowToolbarLayoutData({ priority: "NeverOverflow" }));
+    const ruleCodeText = new Text({ text: "{rules>/currentRule/code}" }).addStyleClass(
+      "cmConstraintRuleCode"
+    );
+    ruleCodeText.setLayoutData(new OverflowToolbarLayoutData({ priority: "Low" }));
     const toolbar = new OverflowToolbar({
       content: [
         this.ruleNameInput,
-        new Text({ text: "{rules>/currentRule/code}" }).addStyleClass("cmConstraintRuleCode"),
+        ruleCodeText,
         this.ruleMetaStatus,
         this.detailsStatus,
-        this.modeSelector,
         ...this.designerToolbarItems,
         new ToolbarSpacer(),
+        ...this.designerHistoryToolbarItems,
         mainFullscreenButton,
+        this.moreToolsButton,
         deleteRuleButton,
         saveButton
       ]
@@ -613,7 +590,12 @@ export default class ConfigurationRuleWorkspaceView {
   private setMode(mode: WorkspaceMode): void {
     const shouldRefreshDesigner = mode === "designer" && this.mode !== "designer";
     this.mode = mode;
-    this.modeSelector?.setSelectedKey(mode);
+    this.moreToolsButton?.setText(
+      tr(mode === "designer" ? "cmConstraintAdvancedTools" : "cmConstraintWysiwygDesigner")
+    );
+    this.moreToolsButton?.setIcon(
+      mode === "designer" ? "sap-icon://action-settings" : "sap-icon://arrow-left"
+    );
     this.designerHost?.setVisible(mode === "designer");
     this.advancedHost?.setVisible(mode === "advanced");
     this.designerView?.setToolbarVisible(mode === "designer");
@@ -626,7 +608,6 @@ export default class ConfigurationRuleWorkspaceView {
     this.advancedModeSelector?.setSelectedKey(mode);
     this.expressionHost?.setVisible(mode === "expression");
     this.blueprintHost?.setVisible(mode === "blueprint");
-    this.assistantHost?.setVisible(mode === "assistant");
     if (mode === "blueprint") void this.loadBlueprintRule();
   }
 
@@ -634,8 +615,8 @@ export default class ConfigurationRuleWorkspaceView {
     const rule = this.rules.find((item) => item.id === ruleId);
     if (!rule) return;
     this.currentRule = structuredClone(rule);
-    this.currentRuleIsNew = this.unsavedRuleIds.has(ruleId);
-    this.currentRuleDirty = this.currentRuleIsNew;
+    this.currentRuleIsNew = this.newRuleDraftIds.has(ruleId);
+    this.currentRuleDirty = this.unsavedRuleIds.has(ruleId);
     this.blueprintNeedsLoad = true;
     this.rulesModel.setProperty("/currentRule", this.currentRule);
     this.ruleNameInput?.setValue(this.currentRule.name);
@@ -675,6 +656,7 @@ export default class ConfigurationRuleWorkspaceView {
     });
     this.rules.push(rule);
     this.unsavedRuleIds.add(rule.id);
+    this.newRuleDraftIds.add(rule.id);
     this.currentRule = rule;
     this.currentRuleDirty = true;
     this.currentRuleIsNew = true;
@@ -685,8 +667,37 @@ export default class ConfigurationRuleWorkspaceView {
     this.expressionEditor?.setRule(rule);
     this.expressionEditor?.setRules(this.rules);
     this.designerView?.setRule(rule, true);
+    this.designerView?.setDesignMode();
     this.renderRuleList();
     this.setMode("designer");
+  }
+
+  private stageAISuggestion(suggestion: ConstraintAISuggestion, prompt: string): boolean {
+    if (!this.canEdit() || this.rules.some((rule) => rule.id === suggestion.rule.id)) return false;
+    const rule: ConstraintRule = {
+      ...structuredClone(suggestion.rule),
+      code: this.nextRuleCode(),
+      status: "Draft",
+      source: { type: "AI", prompt }
+    };
+    this.rules = [...this.rules, rule];
+    this.unsavedRuleIds.add(rule.id);
+    this.currentRule = structuredClone(rule);
+    this.currentRuleDirty = true;
+    this.currentRuleIsNew = false;
+    this.blueprintNeedsLoad = true;
+    this.rulesModel.setProperty("/currentRule", this.currentRule);
+    this.ruleNameInput?.setValue(rule.name);
+    this.ruleMetaStatus?.setText(this.ruleMetadata(rule));
+    this.detailsStatus?.setText(tr("cmDesignerAIStagedStatus"));
+    this.detailsStatus?.setState("Warning");
+    this.expressionEditor?.setRules(this.rules);
+    this.expressionEditor?.setRule(this.currentRule);
+    this.designerView?.setRule(this.currentRule, false);
+    this.setMode("designer");
+    this.designerView?.setDesignMode();
+    this.renderRuleList();
+    return true;
   }
 
   private updateWorkingRule(
@@ -738,6 +749,7 @@ export default class ConfigurationRuleWorkspaceView {
     try {
       const saved = this.repository.save(this.context.id, this.currentRule, this.features);
       this.unsavedRuleIds.delete(saved.id);
+      this.newRuleDraftIds.delete(saved.id);
       this.rules = this.rules.some((rule) => rule.id === saved.id)
         ? this.rules.map((rule) => (rule.id === saved.id ? saved : rule))
         : [...this.rules, saved];
@@ -747,10 +759,6 @@ export default class ConfigurationRuleWorkspaceView {
       this.currentRuleIsNew = false;
       this.ruleMetaStatus?.setText(this.ruleMetadata(saved));
       this.designerView?.setRule(saved, false);
-      this.assistantSuggestions = this.assistantSuggestions.filter(
-        (suggestion) => suggestion.id !== saved.id
-      );
-      this.renderAssistantSuggestions();
       this.detailsStatus?.setText(
         trFormat("cmConstraintValidatedVersion", [saved.version], `已验证 · V${saved.version}`)
       );
@@ -796,6 +804,7 @@ export default class ConfigurationRuleWorkspaceView {
     }
 
     this.unsavedRuleIds.delete(ruleId);
+    this.newRuleDraftIds.delete(ruleId);
     this.rules = this.rules.filter((rule) => rule.id !== ruleId);
     if (this.currentRule.id === ruleId) {
       const nextRule = this.rules[0];
@@ -813,6 +822,7 @@ export default class ConfigurationRuleWorkspaceView {
 
   private startEmptyDraft(): void {
     const rule = this.createNewRule();
+    this.newRuleDraftIds.add(rule.id);
     this.currentRule = rule;
     this.currentRuleDirty = false;
     this.currentRuleIsNew = true;
@@ -827,284 +837,6 @@ export default class ConfigurationRuleWorkspaceView {
     this.designerView?.setRule(rule, true);
     this.renderRuleList();
     this.setMode("designer");
-  }
-
-  private buildAssistantWorkspace(): VBox {
-    this.assistantPrompt = new TextArea({
-      width: "100%",
-      rows: 4,
-      value: "全景天窗必须配高级内饰，并且不能选择车顶行李架B。",
-      valueLiveUpdate: true,
-      liveChange: () => {
-        this.assistantClarification = undefined;
-        this.assistantAmbiguityChoice = undefined;
-        this.pendingAmbiguity = undefined;
-        this.assistantRunId += 1;
-        this.assistantSuggestions = [];
-        this.assistantAmbiguity?.setVisible(false);
-        this.assistantResults?.destroyItems();
-        this.assistantGenerateButton?.setEnabled(true);
-        this.assistantApplyButton?.setEnabled(false);
-        this.assistantStatus?.setText(tr("等待需求"));
-        this.assistantStatus?.setState("None");
-      }
-    });
-    this.assistantStatus = new ObjectStatus({ text: tr("等待需求"), state: "None" });
-    this.assistantGenerateButton = new Button({
-      text: tr("生成约束"),
-      icon: "sap-icon://create",
-      type: "Emphasized",
-      press: () => void this.generateAI()
-    });
-    this.assistantApplyButton = new Button({
-      text: trFormat("cmConstraintApplySelectedCount", [0], "应用选中 (0)"),
-      icon: "sap-icon://accept",
-      type: "Emphasized",
-      enabled: false,
-      press: () => this.applySelectedAISuggestions()
-    });
-    this.assistantResults = new VBox({ width: "100%" }).addStyleClass("cmConstraintAIResults");
-    this.assistantAmbiguity = new VBox({ width: "100%", visible: false }).addStyleClass(
-      "cmConstraintAIAmbiguity"
-    );
-    return new VBox({
-      width: "100%",
-      height: "100%",
-      fitContainer: true,
-      items: [
-        new OverflowToolbar({
-          content: [
-            new Title({ text: tr("Configuration Engineering Assistant"), level: "H5" }),
-            new ToolbarSpacer(),
-            this.assistantApplyButton,
-            this.assistantStatus,
-            new Button({
-              text: tr("重新生成"),
-              icon: "sap-icon://refresh",
-              type: "Transparent",
-              press: () => void this.generateAI()
-            })
-          ]
-        }).addStyleClass("cmConstraintAIToolbar"),
-        new VBox({
-          width: "100%",
-          items: [
-            new Label({ text: tr("自然语言需求") }),
-            this.assistantPrompt,
-            new Text({
-              text: tr("Mock Assistant · 生成结果需经人工审核后才会写入当前规则集。")
-            }).addStyleClass("cmConstraintAIHint"),
-            this.assistantGenerateButton
-          ]
-        }).addStyleClass("cmConstraintAIInput"),
-        this.assistantAmbiguity,
-        this.assistantResults
-      ]
-    }).addStyleClass("cmConstraintAssistant");
-  }
-
-  private async generateAI(): Promise<void> {
-    if (!this.canEdit()) return;
-    const prompt = this.assistantPrompt?.getValue().trim() ?? "";
-    if (!prompt) {
-      this.assistantStatus?.setText(tr("请输入需求"));
-      this.assistantStatus?.setState("Warning");
-      return;
-    }
-    const runId = ++this.assistantRunId;
-    this.assistantSuggestions = [];
-    this.pendingAmbiguity = undefined;
-    this.assistantAmbiguityChoice = undefined;
-    this.assistantAmbiguity?.setVisible(false);
-    this.assistantResults?.destroyItems();
-    this.assistantApplyButton?.setEnabled(false);
-    this.assistantGenerateButton?.setEnabled(false);
-    this.assistantStatus?.setState("Information");
-    const stageLabels: Record<ConstraintAIStage, string> = {
-      ANALYZING_REQUEST: tr("分析需求…"),
-      IDENTIFYING_FEATURES: tr("识别 Feature…"),
-      IDENTIFYING_VALUES: tr("识别 Value…"),
-      ANALYZING_RELATIONSHIPS: tr("分析逻辑关系…"),
-      GENERATING_RULES: tr("生成约束…"),
-      VALIDATING_RULES: tr("验证约束…")
-    };
-    try {
-      const response = await this.aiService.generate(
-        {
-          prompt,
-          features: this.features,
-          rules: this.rules,
-          clarification: this.assistantClarification
-        },
-        (stage) => {
-          if (runId === this.assistantRunId) this.assistantStatus?.setText(stageLabels[stage]);
-        }
-      );
-      if (runId !== this.assistantRunId) return;
-      if (!response.ambiguity) this.assistantClarification = undefined;
-      this.assistantSuggestions = response.suggestions;
-      this.pendingAmbiguity = response.ambiguity;
-      if (response.ambiguity) this.renderAmbiguity(response.ambiguity);
-      this.renderAssistantSuggestions();
-      this.assistantStatus?.setText(
-        response.ambiguity
-          ? tr("需要人工确认")
-          : trFormat(
-              "cmConstraintGeneratedCount",
-              [response.suggestions.length],
-              `已生成 ${response.suggestions.length} 条待审核规则`
-            )
-      );
-      this.assistantStatus?.setState(response.ambiguity ? "Warning" : "Success");
-    } catch (error) {
-      this.assistantStatus?.setText(error instanceof Error ? error.message : String(error));
-      this.assistantStatus?.setState("Error");
-    } finally {
-      if (runId === this.assistantRunId) this.assistantGenerateButton?.setEnabled(true);
-    }
-  }
-
-  private renderAmbiguity(ambiguity: NonNullable<ConstraintAIResponse["ambiguity"]>): void {
-    if (!this.assistantAmbiguity) return;
-    this.assistantAmbiguity.destroyItems();
-    const choice = new Select({
-      width: "100%",
-      selectedKey: this.assistantAmbiguityChoice ?? "",
-      items: [
-        new Item({ key: "", text: tr("请选择引用对象") }),
-        ...ambiguity.options.map(
-          (option) => new Item({ key: option.key, text: `${option.label} · ${option.detail}` })
-        )
-      ],
-      change: (event: Select$ChangeEvent) => {
-        this.assistantAmbiguityChoice = event.getSource().getSelectedKey();
-      }
-    });
-    this.assistantAmbiguity.addItem(
-      new MessageStrip({
-        text: ambiguity.prompt,
-        type: "Warning",
-        showIcon: true,
-        showCloseButton: false
-      })
-    );
-    this.assistantAmbiguity.addItem(choice);
-    this.assistantAmbiguity.addItem(
-      new Button({
-        text: tr("确认选择并重新生成"),
-        icon: "sap-icon://accept",
-        press: () => {
-          if (!this.assistantAmbiguityChoice) {
-            MessageToast.show(tr("请先选择一个引用对象。"));
-            return;
-          }
-          this.assistantClarification = [this.assistantClarification, this.assistantAmbiguityChoice]
-            .filter(Boolean)
-            .join("|");
-          void this.generateAI();
-        }
-      })
-    );
-    this.assistantAmbiguity.setVisible(true);
-  }
-
-  private renderAssistantSuggestions(): void {
-    if (!this.assistantResults) return;
-    this.assistantResults.destroyItems();
-    this.assistantSuggestions.forEach((suggestion) => {
-      const relation = this.actionLabel(suggestion.rule.ast.actions[0]?.type ?? "REQUIRE");
-      this.assistantResults?.addItem(
-        new VBox({
-          width: "100%",
-          items: [
-            new HBox({
-              width: "100%",
-              alignItems: "Center",
-              items: [
-                new CheckBox({
-                  selected: suggestion.selected,
-                  text: relation,
-                  select: (event) =>
-                    this.setSuggestionSelected(suggestion.id, event.getSource().getSelected())
-                }),
-                new ToolbarSpacer(),
-                new ObjectStatus({ text: tr("待审核"), state: "Warning" })
-              ]
-            }),
-            new Title({ text: suggestion.rule.name, level: "H6" }),
-            new Text({ text: suggestion.explanation, wrapping: true }),
-            new Text({ text: suggestion.rule.expression, wrapping: true }).addStyleClass(
-              "cmConstraintAISuggestionExpression"
-            ),
-            new Text({
-              text: this.structuredPreview(suggestion.rule),
-              wrapping: true
-            }).addStyleClass("cmConstraintAISuggestionPreview"),
-            new HBox({
-              wrap: "Wrap",
-              items: [
-                new Button({
-                  text: tr("应用"),
-                  icon: "sap-icon://accept",
-                  press: () => this.applyAISuggestion(suggestion.id)
-                }),
-                new Button({
-                  text: tr("编辑表达式"),
-                  icon: "sap-icon://edit",
-                  press: () => this.editAISuggestion(suggestion, "expression")
-                }),
-                new Button({
-                  text: tr("在蓝图中编辑"),
-                  icon: "sap-icon://process",
-                  press: () => this.editAISuggestion(suggestion, "blueprint")
-                }),
-                new Button({
-                  text: tr("忽略"),
-                  icon: "sap-icon://decline",
-                  type: "Transparent",
-                  press: () => this.ignoreAISuggestion(suggestion.id)
-                })
-              ]
-            })
-          ]
-        }).addStyleClass("cmConstraintAISuggestion")
-      );
-    });
-    this.updateAssistantApplyButton();
-  }
-
-  private setSuggestionSelected(id: string, selected: boolean): void {
-    this.assistantSuggestions = this.assistantSuggestions.map((suggestion) =>
-      suggestion.id === id ? { ...suggestion, selected } : suggestion
-    );
-    this.updateAssistantApplyButton();
-  }
-
-  private updateAssistantApplyButton(): void {
-    const selectedCount = this.assistantSuggestions.filter(
-      (suggestion) => suggestion.selected
-    ).length;
-    this.assistantApplyButton?.setText(
-      trFormat("cmConstraintApplySelectedCount", [selectedCount], `应用选中 (${selectedCount})`)
-    );
-    this.assistantApplyButton?.setEnabled(selectedCount > 0);
-  }
-
-  private blueprintPreview(rule: ConstraintRule): string {
-    const condition = this.describeExpression(rule.ast.condition);
-    const actions = rule.ast.actions.map((action) => this.describeAction(action)).join("; ");
-    return `${condition} → ${actions}`;
-  }
-
-  private structuredPreview(rule: ConstraintRule): string {
-    const when = this.describeExpression(rule.ast.condition);
-    const then = rule.ast.actions.map((action) => this.describeAction(action)).join("; ");
-    const blueprint = this.blueprintPreview(rule);
-    return trFormat(
-      "cmConstraintStructuredPreview",
-      [when, then, blueprint],
-      `结构化条件：当 ${when}，则 ${then} · 蓝图预览 ${blueprint}`
-    );
   }
 
   private describeExpression(
@@ -1136,110 +868,6 @@ export default class ConfigurationRuleWorkspaceView {
       .map((child) => this.describeExpression(child, expression.type))
       .join(` ${tr(expression.type === "AND" ? "且" : "或")} `);
     return parentOperator && parentOperator !== expression.type ? `(${text})` : text;
-  }
-
-  private applyAISuggestion(id: string): void {
-    if (!this.canEdit()) return;
-    const suggestion = this.assistantSuggestions.find((item) => item.id === id);
-    if (!suggestion) return;
-    this.applyAISuggestions([suggestion]);
-  }
-
-  private applySelectedAISuggestions(): void {
-    const selected = this.assistantSuggestions.filter((suggestion) => suggestion.selected);
-    if (selected.length) this.applyAISuggestions(selected);
-  }
-
-  private applyAISuggestions(suggestions: ConstraintAISuggestion[]): void {
-    if (!this.canEdit()) return;
-    const stagedRules = [...this.rules];
-    const rulesToSave = suggestions.map((suggestion) => {
-      const rule = {
-        ...structuredClone(suggestion.rule),
-        code: this.nextRuleCode(stagedRules),
-        source: { type: "AI" as const, prompt: this.assistantPrompt?.getValue() ?? "" }
-      };
-      stagedRules.push(rule);
-      return rule;
-    });
-    try {
-      const saved = this.repository.saveMany(this.context.id, rulesToSave, this.features);
-      const savedIds = new Set(saved.map((rule) => rule.id));
-      savedIds.forEach((id) => this.unsavedRuleIds.delete(id));
-      this.rules = [...this.rules.filter((rule) => !savedIds.has(rule.id)), ...saved];
-      this.expressionEditor?.setRules(this.rules);
-      this.assistantSuggestions = this.assistantSuggestions.filter(
-        (suggestion) => !savedIds.has(suggestion.id)
-      );
-      const current = saved[saved.length - 1];
-      if (!current) return;
-      this.currentRule = structuredClone(current);
-      this.currentRuleDirty = false;
-      this.blueprintNeedsLoad = true;
-      this.rulesModel.setProperty("/currentRule", current);
-      this.ruleNameInput?.setValue(current.name);
-      this.ruleMetaStatus?.setText(this.ruleMetadata(current));
-      this.expressionEditor?.setRule(current);
-      this.renderRuleList();
-      this.renderAssistantSuggestions();
-      this.assistantStatus?.setText(
-        trFormat(
-          "cmConstraintPendingSuggestionCount",
-          [this.assistantSuggestions.length],
-          `${this.assistantSuggestions.length} 条待审核规则`
-        )
-      );
-      this.detailsStatus?.setText(
-        trFormat("cmConstraintValidatedVersion", [current.version], `已验证 · V${current.version}`)
-      );
-      this.detailsStatus?.setState("Success");
-      MessageToast.show(
-        trFormat(
-          "cmConstraintAIAppliedCount",
-          [saved.length],
-          `已应用 ${saved.length} 条 AI 规则到当前规则集。`
-        )
-      );
-    } catch (error) {
-      MessageToast.show(error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  private editAISuggestion(suggestion: ConstraintAISuggestion, mode: AdvancedWorkspaceMode): void {
-    if (!this.rules.some((rule) => rule.id === suggestion.rule.id))
-      this.unsavedRuleIds.add(suggestion.rule.id);
-    this.currentRule = structuredClone(suggestion.rule);
-    this.currentRuleDirty = true;
-    this.currentRuleIsNew = false;
-    this.rules = this.rules.some((rule) => rule.id === suggestion.rule.id)
-      ? this.rules.map((rule) =>
-          rule.id === suggestion.rule.id ? structuredClone(suggestion.rule) : rule
-        )
-      : [...this.rules, structuredClone(suggestion.rule)];
-    this.expressionEditor?.setRules(this.rules);
-    this.rulesModel.setProperty("/currentRule", this.currentRule);
-    this.ruleNameInput?.setValue(this.currentRule.name);
-    this.ruleMetaStatus?.setText(this.ruleMetadata(this.currentRule));
-    this.expressionEditor?.setRule(this.currentRule);
-    this.designerView?.setRule(this.currentRule, false);
-    this.detailsStatus?.setText(tr("AI 草稿 · 尚未应用"));
-    this.detailsStatus?.setState("Warning");
-    this.blueprintNeedsLoad = true;
-    this.renderRuleList();
-    this.setAdvancedMode(mode);
-    this.setMode("advanced");
-  }
-
-  private ignoreAISuggestion(id: string): void {
-    this.assistantSuggestions = this.assistantSuggestions.filter((item) => item.id !== id);
-    this.renderAssistantSuggestions();
-    this.assistantStatus?.setText(
-      trFormat(
-        "cmConstraintPendingSuggestionCount",
-        [this.assistantSuggestions.length],
-        `${this.assistantSuggestions.length} 条待审核规则`
-      )
-    );
   }
 
   private nextRuleCode(rules: ConstraintRule[] = this.rules): string {

@@ -12,10 +12,15 @@
     <f:title>
       <f:DynamicPageTitle>
         <f:heading>
-          <VBox>
-            <Title text="{view>/context/name}" level="H2" />
-            <Text text="{view>/contextSummary}" />
-          </VBox>
+          <HBox alignItems="Baseline" class="cmContextPageTitleHeading">
+            <Title text="{view>/context/name}" level="H2" class="cmContextPageTitleName" />
+            <Text
+              text="{view>/contextSummary}"
+              wrapping="false"
+              tooltip="{view>/contextSummary}"
+              class="cmContextPageTitleSummary"
+            />
+          </HBox>
         </f:heading>
         <f:actions>
           <Button text="编辑" icon="sap-icon://edit" press=".onEditCurrentContext" />

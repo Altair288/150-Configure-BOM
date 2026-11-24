@@ -7,6 +7,7 @@ import MessageStrip from "sap/m/MessageStrip";
 import MessageToast from "sap/m/MessageToast";
 import MultiComboBox from "sap/m/MultiComboBox";
 import ObjectStatus from "sap/m/ObjectStatus";
+import OverflowToolbarLayoutData from "sap/m/OverflowToolbarLayoutData";
 import Popover from "sap/m/Popover";
 import RadioButton from "sap/m/RadioButton";
 import RadioButtonGroup from "sap/m/RadioButtonGroup";
@@ -79,6 +80,9 @@ import {
   buildConstraintDerivationEditor,
   createConstraintDerivation
 } from "./ConfigurationConstraintDerivationEditor";
+import ConfigurationRuleDesignerAssistant from "./ConfigurationRuleDesignerAssistant";
+import type { RuleConstraintRelationship } from "./ConstraintRelationshipOverlay";
+import type { ConstraintAISuggestion } from "../../service/mockConstraintAIService";
 import {
   constraintActionLabels as actionLabels,
   constraintIssueText,
@@ -168,6 +172,7 @@ interface ConfigurationRuleDesignerOptions {
   isNewDraft: () => boolean;
   canEdit: () => boolean;
   onRuleChange: (rule: ConstraintRule) => void;
+  onApplyAISuggestion: (suggestion: ConstraintAISuggestion, prompt: string) => boolean;
   onPreviewConflicts: (conflicts: ConstraintConflict[]) => void;
   onOpenRule: (ruleId: string) => void;
 }
@@ -315,6 +320,7 @@ export default class ConfigurationRuleDesignerView {
   }).addStyleClass("cmConstraintDesignerMessageOverlay");
   private readonly modelReadiness: string[];
   private readonly modeSelector: SegmentedButton;
+  private readonly aiAssistant: ConfigurationRuleDesignerAssistant;
   private readonly undoButton: Button;
   private readonly redoButton: Button;
   private readonly undoStack: DesignerHistoryState[] = [];
@@ -340,6 +346,13 @@ export default class ConfigurationRuleDesignerView {
     this.modelReadiness = validateContext(options.store, options.context.id);
     this.mode = options.context.status === "Draft" ? "design" : "configure";
     this.relationshipOverlay = new ConstraintRelationshipOverlay(this.objectPage);
+    this.aiAssistant = new ConfigurationRuleDesignerAssistant({
+      features: () => this.options.features,
+      rules: () => this.options.rules(),
+      canEdit: () => this.options.canEdit(),
+      onApplySuggestion: (suggestion, prompt) =>
+        this.options.onApplyAISuggestion(suggestion, prompt)
+    });
     this.objectPage.addEventDelegate({
       onBeforeRendering: () => this.relationshipOverlay.beforeRendering(),
       onAfterRendering: () => {
@@ -364,7 +377,7 @@ export default class ConfigurationRuleDesignerView {
     }).addStyleClass("cmConstraintDesignerInteractionPopover");
     this.objectPage.addDependent(this.interactionPopover);
     this.modeSelector = new SegmentedButton({
-      width: "10rem",
+      width: "12rem",
       selectedKey: this.mode,
       items: [
         new SegmentedButtonItem({ key: "design", text: tr("cmConstraintDesignMode") }),
@@ -374,14 +387,14 @@ export default class ConfigurationRuleDesignerView {
         this.setMode(event.getParameter("selectedKey") as DesignerMode)
     }).addStyleClass("cmConstraintDesignerModeSelector");
     this.undoButton = new Button({
-      text: tr("cmConstraintUndo"),
       icon: "sap-icon://undo",
+      tooltip: tr("cmConstraintUndo"),
       enabled: false,
       press: () => this.undo()
     });
     this.redoButton = new Button({
-      text: tr("cmConstraintRedo"),
       icon: "sap-icon://redo",
+      tooltip: tr("cmConstraintRedo"),
       enabled: false,
       press: () => this.redo()
     });
@@ -392,7 +405,16 @@ export default class ConfigurationRuleDesignerView {
 
   public buildToolbarItems(): Control[] {
     this.updateToolbarState();
-    return [this.modeSelector, this.undoButton, this.redoButton];
+    this.modeSelector.setLayoutData(new OverflowToolbarLayoutData({ priority: "NeverOverflow" }));
+    const assistantToggle = this.aiAssistant.getToggleButton();
+    assistantToggle.setLayoutData(new OverflowToolbarLayoutData({ priority: "NeverOverflow" }));
+    return [this.modeSelector, assistantToggle];
+  }
+
+  public buildHistoryToolbarItems(): Control[] {
+    this.undoButton.setLayoutData(new OverflowToolbarLayoutData({ priority: "NeverOverflow" }));
+    this.redoButton.setLayoutData(new OverflowToolbarLayoutData({ priority: "NeverOverflow" }));
+    return [this.undoButton, this.redoButton];
   }
 
   public setToolbarVisible(visible: boolean): void {
@@ -401,9 +423,7 @@ export default class ConfigurationRuleDesignerView {
     this.updateToolbarState();
   }
 
-  private updateRelationshipSections(
-    relationships: ReturnType<typeof constraintRelationshipsForRule>
-  ): void {
+  private updateRelationshipSections(relationships: readonly RuleConstraintRelationship[]): void {
     const relatedFeatures = new Set(
       relationships.flatMap(({ source, target }) => [source, target])
     );
@@ -420,16 +440,39 @@ export default class ConfigurationRuleDesignerView {
     }
   }
 
-  public build(): VBox {
-    const scrollContent = new VBox({
+  public build(): HBox {
+    const mainContent = new VBox({
       width: "100%",
+      height: "100%",
       fitContainer: true,
       items: [this.objectPage, this.messageOverlay]
-    }).addStyleClass("cmConstraintDesignerContent");
-    this.objectPage.setLayoutData(
-      new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
+    }).addStyleClass("cmConstraintDesignerMain");
+    mainContent.setLayoutData(
+      new FlexItemData({
+        growFactor: 1,
+        shrinkFactor: 1,
+        baseSize: "0%",
+        minWidth: "0",
+        minHeight: "0"
+      })
     );
-    return scrollContent.addStyleClass("cmConstraintDesigner");
+    this.objectPage.setLayoutData(
+      new FlexItemData({
+        growFactor: 1,
+        shrinkFactor: 1,
+        baseSize: "0%",
+        minWidth: "0",
+        minHeight: "0"
+      })
+    );
+    return new HBox({
+      width: "100%",
+      height: "100%",
+      fitContainer: true,
+      items: [mainContent, this.aiAssistant.getPanel()]
+    })
+      .addStyleClass("cmConstraintDesignerContent")
+      .addStyleClass("cmConstraintDesigner");
   }
 
   public setRule(rule: ConstraintRule, isNewDraft: boolean): void {
@@ -439,9 +482,7 @@ export default class ConfigurationRuleDesignerView {
     this.currentRule = structuredClone(rule);
     this.isNewDraft = isNewDraft;
     if (changedRule || changedDraftState) {
-      this.draftConditionPlaceholder = isNewDraft
-        ? structuredClone(rule.ast.condition)
-        : undefined;
+      this.draftConditionPlaceholder = isNewDraft ? structuredClone(rule.ast.condition) : undefined;
       this.newDraftHasCondition = !isNewDraft;
       this.newDraftHasAction = !isNewDraft;
       this.clearHistory();
@@ -466,12 +507,17 @@ export default class ConfigurationRuleDesignerView {
   public dispose(): void {
     this.dismissInteractionPopover();
     this.detachPreviewContextMenu();
+    this.aiAssistant.dispose();
     this.relationshipOverlay.dispose();
     this.clearLazyFormSections();
   }
 
   public setConfigureMode(): void {
     this.setMode("configure");
+  }
+
+  public setDesignMode(): void {
+    this.setMode("design");
   }
 
   public refreshLayout(): void {
@@ -722,8 +768,7 @@ export default class ConfigurationRuleDesignerView {
     if (!root || root === this.previewContextMenuRoot) return;
     this.detachPreviewContextMenu();
     this.previewContextMenuRoot = root;
-    this.previewContextMenuHandler = (event) =>
-      this.openPreviewContextMenu(event as MouseEvent);
+    this.previewContextMenuHandler = (event) => this.openPreviewContextMenu(event as MouseEvent);
     root.addEventListener("contextmenu", this.previewContextMenuHandler);
   }
 
@@ -777,14 +822,7 @@ export default class ConfigurationRuleDesignerView {
     this.objectPage.addDependent(menu);
     const rootBounds = root.getBoundingClientRect();
     const offset = `${Math.round(event.clientX - rootBounds.left)} ${Math.round(event.clientY - rootBounds.top)}`;
-    menu.open(
-      false,
-      target,
-      Popup.Dock.LeftTop,
-      Popup.Dock.LeftTop,
-      root,
-      offset
-    );
+    menu.open(false, target, Popup.Dock.LeftTop, Popup.Dock.LeftTop, root, offset);
   }
 
   private clearAllSelectedInputs(): void {
@@ -1360,9 +1398,7 @@ export default class ConfigurationRuleDesignerView {
         ? undefined
         : removeConstraintExpressionAtPath(this.currentRule.ast.condition, draft.editPath);
     const canResetNewDraftCondition =
-      this.isNewDraft &&
-      this.newDraftHasCondition &&
-      this.draftConditionPlaceholder !== undefined;
+      this.isNewDraft && this.newDraftHasCondition && this.draftConditionPlaceholder !== undefined;
     const canRemoveExistingCondition =
       conditionAfterEdit !== undefined || canResetNewDraftCondition;
     this.updateInteractionPopover(anchor, () => {
@@ -2081,11 +2117,14 @@ export default class ConfigurationRuleDesignerView {
 
     const previousState = this.captureHistoryState();
     if (draft.actionIndex !== undefined) {
-      this.commitAst({
-        ...this.currentRule.ast,
-        condition: conditionForValidation,
-        actions
-      }, previousState);
+      this.commitAst(
+        {
+          ...this.currentRule.ast,
+          condition: conditionForValidation,
+          actions
+        },
+        previousState
+      );
       this.dismissInteractionPopover();
       MessageToast.show(tr("cmConstraintUnsavedChanges"));
       return;
@@ -2231,8 +2270,19 @@ export default class ConfigurationRuleDesignerView {
   }
 
   private renderRelations(): void {
-    const relationships = constraintRelationshipsForRule(this.currentRule);
-    this.relationshipOverlay.setRelationships(relationships);
+    const rulesById = new Map(this.options.rules().map((rule) => [rule.id, rule]));
+    rulesById.set(this.currentRule.id, this.currentRule);
+    const relationships: RuleConstraintRelationship[] = [...rulesById.values()].flatMap((rule) =>
+      constraintRelationshipsForRule(rule).map((relationship) => ({
+        ...relationship,
+        ruleId: rule.id,
+        ruleName: rule.name,
+        sourceName: this.featuresByCode.get(relationship.source)?.name ?? relationship.source,
+        targetName: this.featuresByCode.get(relationship.target)?.name ?? relationship.target,
+        typeLabel: this.actionLabel(relationship.type)
+      }))
+    );
+    this.relationshipOverlay.setRelationships(relationships, this.currentRule.id);
     this.updateRelationshipSections(relationships);
     const projectedCondition = this.hasConfiguredCondition()
       ? normalizeConstraintConditionForDesigner(this.currentRule.ast.condition)
@@ -2244,6 +2294,7 @@ export default class ConfigurationRuleDesignerView {
 
   private updateToolbarState(): void {
     this.modeSelector.setVisible(this.toolbarVisible);
+    this.aiAssistant.setVisible(this.toolbarVisible && this.mode === "design");
     const showHistory = this.toolbarVisible && this.mode === "design";
     this.undoButton.setVisible(showHistory);
     this.redoButton.setVisible(showHistory);
@@ -2331,11 +2382,7 @@ export default class ConfigurationRuleDesignerView {
       const previous = JSON.stringify([...this.values]);
       simulation =
         this.mode === "configure" && applyAutomaticActions
-          ? simulateConstraintActions(
-              rules,
-              this.options.features,
-              this.values
-            )
+          ? simulateConstraintActions(rules, this.options.features, this.values)
           : undefined;
       if (simulation) {
         simulation.changes.forEach((change) =>

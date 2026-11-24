@@ -1,6 +1,14 @@
 import type { ConstraintRelationship } from "../../model/constraintRules";
 import type ObjectPageLayout from "sap/uxap/ObjectPageLayout";
 
+export interface RuleConstraintRelationship extends ConstraintRelationship {
+  ruleId: string;
+  ruleName: string;
+  sourceName: string;
+  targetName: string;
+  typeLabel: string;
+}
+
 interface RelationshipAnchor {
   element: HTMLElement;
   form: HTMLElement;
@@ -14,10 +22,18 @@ export interface ConstraintRelationshipSpan {
 }
 
 interface RelationshipLayout extends ConstraintRelationshipSpan {
-  relation: ConstraintRelationship;
+  relation: AggregatedRelationship;
   upperX: number;
   lowerX: number;
   formRight: number;
+}
+
+interface AggregatedRelationship extends ConstraintRelationship {
+  ruleIds: Set<string>;
+  ruleNames: Set<string>;
+  sourceName: string;
+  targetName: string;
+  typeLabel: string;
 }
 
 const svgNamespace = "http://www.w3.org/2000/svg";
@@ -51,7 +67,8 @@ export function assignConstraintRelationshipLanes(spans: ConstraintRelationshipS
 }
 
 export default class ConstraintRelationshipOverlay {
-  private relationships: ConstraintRelationship[] = [];
+  private relationships: AggregatedRelationship[] = [];
+  private selectedRuleId?: string;
   private scrollRoot?: HTMLElement;
   private svg?: SVGSVGElement;
   private scrollDelegate?: ReturnType<ObjectPageLayout["getScrollDelegate"]>;
@@ -59,11 +76,12 @@ export default class ConstraintRelationshipOverlay {
   private resizeObserver?: ResizeObserver;
   private readonly resizeTargets = new Set<Element>();
   private readonly paths = new Map<string, SVGPathElement>();
-  private readonly relationshipsByKey = new Map<string, ConstraintRelationship>();
+  private readonly hitPaths = new Map<string, SVGPathElement>();
+  private readonly relationshipsByKey = new Map<string, AggregatedRelationship>();
   private readonly stickyHeaders = new Set<HTMLElement>();
   private animationFrame?: number;
-  private hoveredFeature?: string;
-  private focusedFeature?: string;
+  private relationshipTooltip?: HTMLDivElement;
+  private hoveredRelationshipKey?: string;
   private disposed = false;
   private readonly objectPage: ObjectPageLayout;
 
@@ -71,24 +89,68 @@ export default class ConstraintRelationshipOverlay {
     this.objectPage = objectPage;
   }
 
-  public setRelationships(relationships: readonly ConstraintRelationship[]): void {
-    const next = [
-      ...new Map(
-        relationships.map((relation) => [relationshipKey(relation), { ...relation }])
-      ).values()
-    ];
+  public setRelationships(
+    relationships: readonly RuleConstraintRelationship[],
+    selectedRuleId: string
+  ): void {
+    const grouped = new Map<string, AggregatedRelationship>();
+    for (const {
+      ruleId,
+      ruleName,
+      sourceName,
+      targetName,
+      typeLabel,
+      ...relation
+    } of relationships) {
+      const key = relationshipKey(relation);
+      const existing = grouped.get(key);
+      if (existing) {
+        existing.ruleIds.add(ruleId);
+        existing.ruleNames.add(ruleName);
+      } else {
+        grouped.set(key, {
+          ...relation,
+          ruleIds: new Set([ruleId]),
+          ruleNames: new Set([ruleName]),
+          sourceName,
+          targetName,
+          typeLabel
+        });
+      }
+    }
+    const next = [...grouped.values()];
     if (
+      selectedRuleId === this.selectedRuleId &&
       next.length === this.relationships.length &&
       next.every(
-        (relation, index) =>
-          relationshipKey(relation) === relationshipKey(this.relationships[index])
+        (relation, index) => {
+          const previous = this.relationships[index];
+          return (
+            previous !== undefined &&
+            relationshipKey(relation) === relationshipKey(previous) &&
+            relation.ruleIds.size === previous.ruleIds.size &&
+            [...relation.ruleIds].every((ruleId) => previous.ruleIds.has(ruleId)) &&
+            relation.ruleNames.size === previous.ruleNames.size &&
+            [...relation.ruleNames].every((ruleName) => previous.ruleNames.has(ruleName)) &&
+            relation.sourceName === previous.sourceName &&
+            relation.targetName === previous.targetName &&
+            relation.typeLabel === previous.typeLabel
+          );
+        }
       )
     )
       return;
 
     this.relationships = next;
+    this.selectedRuleId = selectedRuleId;
     this.relationshipsByKey.clear();
     next.forEach((relation) => this.relationshipsByKey.set(relationshipKey(relation), relation));
+    const hoveredRelationship = this.hoveredRelationshipKey
+      ? this.relationshipsByKey.get(this.hoveredRelationshipKey)
+      : undefined;
+    if (!hoveredRelationship) this.hideRelationshipTooltip();
+    else if (this.relationshipTooltip)
+      this.relationshipTooltip.textContent = this.relationshipTooltipText(hoveredRelationship);
     this.scheduleLayout();
   }
 
@@ -115,11 +177,15 @@ export default class ConstraintRelationshipOverlay {
     svg.setAttribute("focusable", "false");
     this.svg = svg;
     scrollRoot.appendChild(svg);
+    this.relationshipTooltip = document.createElement("div");
+    this.relationshipTooltip.className = "cmConstraintRelationshipTooltip";
+    this.relationshipTooltip.setAttribute("role", "tooltip");
+    this.relationshipTooltip.hidden = true;
+    document.body.appendChild(this.relationshipTooltip);
+    svg.addEventListener("pointerover", this.handleRelationshipPointerOver);
+    svg.addEventListener("pointermove", this.handleRelationshipPointerMove);
+    svg.addEventListener("pointerout", this.handleRelationshipPointerOut);
     scrollRoot.addEventListener("scroll", this.handleScroll, { passive: true });
-    scrollRoot.addEventListener("pointerover", this.handlePointerOver);
-    scrollRoot.addEventListener("pointerout", this.handlePointerOut);
-    scrollRoot.addEventListener("focusin", this.handleFocusIn);
-    scrollRoot.addEventListener("focusout", this.handleFocusOut);
 
     if (typeof ResizeObserver !== "undefined")
       this.resizeObserver = new ResizeObserver(this.handleResize);
@@ -144,37 +210,42 @@ export default class ConstraintRelationshipOverlay {
     this.detachDom();
   }
 
-  private readonly handleScroll: EventListener = () => this.scheduleLayout();
-  private readonly handleResize: ResizeObserverCallback = () => this.scheduleLayout();
-  private readonly handlePointerOver: EventListener = (event) => {
+  private readonly handleScroll: EventListener = () => {
+    this.hideRelationshipTooltip();
+    this.scheduleLayout();
+  };
+  private readonly handleResize: ResizeObserverCallback = () => {
+    this.hideRelationshipTooltip();
+    this.scheduleLayout();
+  };
+  private readonly handleRelationshipPointerOver: EventListener = (event) => {
+    if (!(event instanceof PointerEvent) || event.pointerType === "touch") return;
+    const key = this.relationshipKeyFromTarget(event.target);
+    const relation = key ? this.relationshipsByKey.get(key) : undefined;
+    if (!key || !relation) return;
+    this.showRelationshipTooltip(key, relation, event);
+  };
+  private readonly handleRelationshipPointerMove: EventListener = (event) => {
+    if (!(event instanceof PointerEvent) || event.pointerType === "touch") return;
+    const key = this.relationshipKeyFromTarget(event.target);
+    if (!key) {
+      this.hideRelationshipTooltip();
+      return;
+    }
+    const relation = this.relationshipsByKey.get(key);
+    if (!relation) {
+      this.hideRelationshipTooltip();
+      return;
+    }
+    this.showRelationshipTooltip(key, relation, event);
+  };
+  private readonly handleRelationshipPointerOut: EventListener = (event) => {
     if (!(event instanceof PointerEvent)) return;
-    const feature = this.featureCodeFromTarget(event.target);
-    if (!feature || feature === this.hoveredFeature) return;
-    this.hoveredFeature = feature;
-    this.updatePathHighlighting();
-  };
-  private readonly handlePointerOut: EventListener = (event) => {
-    if (!(event instanceof PointerEvent)) return;
-    const feature = this.featureCodeFromTarget(event.target);
-    if (!feature || feature !== this.hoveredFeature) return;
-    const nextFeature = this.featureCodeFromTarget(event.relatedTarget);
-    if (nextFeature === feature) return;
-    this.hoveredFeature = nextFeature;
-    this.updatePathHighlighting();
-  };
-  private readonly handleFocusIn: EventListener = (event) => {
-    if (!(event instanceof FocusEvent)) return;
-    const feature = this.featureCodeFromTarget(event.target);
-    if (!feature || feature === this.focusedFeature) return;
-    this.focusedFeature = feature;
-    this.updatePathHighlighting();
-  };
-  private readonly handleFocusOut: EventListener = (event) => {
-    if (!(event instanceof FocusEvent)) return;
-    const feature = this.featureCodeFromTarget(event.target);
-    if (!feature || feature !== this.focusedFeature) return;
-    this.focusedFeature = this.featureCodeFromTarget(event.relatedTarget);
-    this.updatePathHighlighting();
+    const key = this.relationshipKeyFromTarget(event.target);
+    if (!key) return;
+    const nextKey = this.relationshipKeyFromTarget(event.relatedTarget);
+    if (nextKey === key) return;
+    this.hideRelationshipTooltip();
   };
   private readonly handleMutations: MutationCallback = (records) => {
     if (records.every(({ target }) => this.svg?.contains(target))) return;
@@ -298,6 +369,17 @@ export default class ConstraintRelationshipOverlay {
     const activeKeys = new Set<string>();
     for (const layout of layouts) {
       activeKeys.add(layout.key);
+      let hitPath = this.hitPaths.get(layout.key);
+      if (!hitPath) {
+        hitPath = document.createElementNS(svgNamespace, "path");
+        hitPath.classList.add("cmConstraintRelationshipOverlayHitArea");
+        hitPath.setAttribute("data-relationship-key", layout.key);
+        hitPath.setAttribute("aria-hidden", "true");
+        hitPath.setAttribute("focusable", "false");
+        svg.appendChild(hitPath);
+        this.hitPaths.set(layout.key, hitPath);
+      }
+
       let path = this.paths.get(layout.key);
       if (!path) {
         path = document.createElementNS(svgNamespace, "path");
@@ -305,15 +387,27 @@ export default class ConstraintRelationshipOverlay {
           "cmConstraintRelationshipOverlayPath",
           `cmConstraintRelationshipOverlayPath--${layout.relation.type.toLowerCase()}`
         );
+        path.setAttribute("data-relationship-key", layout.key);
+        path.setAttribute("aria-label", this.relationshipTooltipText(layout.relation));
         svg.appendChild(path);
         this.paths.set(layout.key, path);
       }
+      const tooltipText = this.relationshipTooltipText(layout.relation);
+      if (path.getAttribute("aria-label") !== tooltipText)
+        path.setAttribute("aria-label", tooltipText);
       const pathData = this.pathForLayout(layout);
+      if (hitPath.getAttribute("d") !== pathData) hitPath.setAttribute("d", pathData);
       if (path.getAttribute("d") !== pathData) path.setAttribute("d", pathData);
     }
 
+    for (const [key, hitPath] of this.hitPaths) {
+      if (activeKeys.has(key)) continue;
+      hitPath.remove();
+      this.hitPaths.delete(key);
+    }
     for (const [key, path] of this.paths) {
       if (activeKeys.has(key)) continue;
+      if (this.hoveredRelationshipKey === key) this.hideRelationshipTooltip();
       path.remove();
       this.paths.delete(key);
     }
@@ -341,28 +435,65 @@ export default class ConstraintRelationshipOverlay {
     ].join(" ");
   }
 
-  private featureCodeFromTarget(target: EventTarget | null): string | undefined {
-    if (!(target instanceof Element)) return undefined;
-    return (
-      target
-        .closest<HTMLElement>("[data-constraint-feature]")
-        ?.getAttribute("data-constraint-feature") ?? undefined
-    );
-  }
-
   private updatePathHighlighting(): void {
-    const activeFeatures = new Set(
-      [this.hoveredFeature, this.focusedFeature].filter(
-        (feature): feature is string => feature !== undefined
-      )
-    );
     for (const [key, path] of this.paths) {
       const relation = this.relationshipsByKey.get(key);
-      const highlighted =
-        relation !== undefined &&
-        (activeFeatures.has(relation.source) || activeFeatures.has(relation.target));
-      path.classList.toggle("cmConstraintRelationshipOverlayPath--highlighted", highlighted);
+      const selected =
+        relation !== undefined && relation.ruleIds.has(this.selectedRuleId ?? "");
+      path.classList.toggle("cmConstraintRelationshipOverlayPath--selected", selected);
     }
+  }
+
+  private relationshipKeyFromTarget(target: EventTarget | null): string | undefined {
+    if (!(target instanceof Element)) return undefined;
+    const path = target.closest<SVGPathElement>("path[data-relationship-key]");
+    if (!path || path.ownerSVGElement !== this.svg) return undefined;
+    return path.getAttribute("data-relationship-key") ?? undefined;
+  }
+
+  private relationshipTooltipText(relation: AggregatedRelationship): string {
+    const ruleNames = [...relation.ruleNames].join(" · ");
+    const description = `${relation.sourceName} → ${relation.typeLabel} → ${relation.targetName}`;
+    return ruleNames ? `${ruleNames}\n${description}` : description;
+  }
+
+  private showRelationshipTooltip(
+    key: string,
+    relation: AggregatedRelationship,
+    event: PointerEvent
+  ): void {
+    const tooltip = this.relationshipTooltip;
+    if (!tooltip) return;
+    tooltip.textContent = this.relationshipTooltipText(relation);
+    this.setHoveredRelationship(key);
+    tooltip.hidden = false;
+    tooltip.style.left = `${event.clientX + 14}px`;
+    tooltip.style.top = `${event.clientY + 14}px`;
+    const bounds = tooltip.getBoundingClientRect();
+    tooltip.style.left = `${Math.max(
+      8,
+      Math.min(event.clientX + 14, window.innerWidth - bounds.width - 8)
+    )}px`;
+    tooltip.style.top = `${Math.max(
+      8,
+      Math.min(event.clientY + 14, window.innerHeight - bounds.height - 8)
+    )}px`;
+  }
+
+  private setHoveredRelationship(key?: string): void {
+    if (this.hoveredRelationshipKey === key) return;
+    if (this.hoveredRelationshipKey)
+      this.paths
+        .get(this.hoveredRelationshipKey)
+        ?.classList.remove("cmConstraintRelationshipOverlayPath--hovered");
+    this.hoveredRelationshipKey = key;
+    if (key)
+      this.paths.get(key)?.classList.add("cmConstraintRelationshipOverlayPath--hovered");
+  }
+
+  private hideRelationshipTooltip(): void {
+    if (this.relationshipTooltip) this.relationshipTooltip.hidden = true;
+    this.setHoveredRelationship();
   }
 
   private getContentHeight(scrollRoot: HTMLElement): number {
@@ -408,11 +539,10 @@ export default class ConstraintRelationshipOverlay {
   private detachDom(): void {
     if (this.animationFrame !== undefined) cancelAnimationFrame(this.animationFrame);
     this.animationFrame = undefined;
+    this.svg?.removeEventListener("pointerover", this.handleRelationshipPointerOver);
+    this.svg?.removeEventListener("pointermove", this.handleRelationshipPointerMove);
+    this.svg?.removeEventListener("pointerout", this.handleRelationshipPointerOut);
     this.scrollRoot?.removeEventListener("scroll", this.handleScroll);
-    this.scrollRoot?.removeEventListener("pointerover", this.handlePointerOver);
-    this.scrollRoot?.removeEventListener("pointerout", this.handlePointerOut);
-    this.scrollRoot?.removeEventListener("focusin", this.handleFocusIn);
-    this.scrollRoot?.removeEventListener("focusout", this.handleFocusOut);
     this.mutationObserver?.disconnect();
     this.mutationObserver = undefined;
     this.resizeObserver?.disconnect();
@@ -422,10 +552,12 @@ export default class ConstraintRelationshipOverlay {
     this.stickyHeaders.clear();
     this.svg?.remove();
     this.svg = undefined;
+    this.relationshipTooltip?.remove();
+    this.relationshipTooltip = undefined;
     this.paths.clear();
+    this.hitPaths.clear();
     this.scrollRoot = undefined;
     this.scrollDelegate = undefined;
-    this.hoveredFeature = undefined;
-    this.focusedFeature = undefined;
+    this.hoveredRelationshipKey = undefined;
   }
 }
