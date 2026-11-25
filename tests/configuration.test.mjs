@@ -26,6 +26,7 @@ import {
   hasLegacyDefaultConstraintAction,
   isConstraintRuleAst,
   normalizeConstraintConditionForDesigner,
+  UNCATEGORIZED_BUSINESS_GROUP_ID,
   removeConstraintExpressionAtPath,
   previewConstraintRules,
   simulateConstraintActions,
@@ -50,6 +51,33 @@ const ensureChineseSUVMockData = (store) =>
   ensureMockChineseSUVData(store, configurationMockHelpers);
 const createConstraintRuleSamples = (features) =>
   buildConstraintRuleSamples(constraintRuleSamples, features);
+
+test("constraint rules keep business group separate from their AST", () => {
+  const ast = {
+    condition: { type: "EQUALS", feature: "DRIVE_TYPE", value: "AWD" },
+    actions: []
+  };
+  const unclassified = createConstraintRule({
+    id: "rule-unclassified",
+    code: "CR-UNCLASSIFIED",
+    name: "Unclassified rule",
+    ast
+  });
+  assert.equal(unclassified.businessGroupId, UNCATEGORIZED_BUSINESS_GROUP_ID);
+  assert.equal(unclassified.ruleType, undefined);
+
+  const classified = createConstraintRule({
+    id: "rule-classified",
+    code: "CR-CLASSIFIED",
+    name: "Powertrain rule",
+    businessGroupId: "group-powertrain",
+    ruleType: "RESTRICT",
+    ast
+  });
+  assert.equal(classified.businessGroupId, "group-powertrain");
+  assert.equal(classified.ruleType, "RESTRICT");
+  assert.equal(classified.status, "Draft");
+});
 
 test("seed vocabulary has valid links and all ten data types", () => {
   const store = createSeed();

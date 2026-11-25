@@ -104,6 +104,7 @@ interface ValueControl {
 interface DesignerField {
   definition: FeatureDefinition;
   control: Control;
+  interactionButton?: Button;
   getValue: () => unknown;
   setValue: (value: unknown) => void;
   setAvailableValues: (codes: Set<string> | undefined, maximum?: number) => void;
@@ -575,12 +576,18 @@ export default class ConfigurationRuleDesignerView {
             new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minWidth: "0" })
           );
           field.relationStatus.setLayoutData(new FlexItemData({ shrinkFactor: 0 }));
+          const fieldControls: Control[] = [field.control];
+          if (field.interactionButton) {
+            field.interactionButton.setLayoutData(new FlexItemData({ shrinkFactor: 0 }));
+            fieldControls.push(field.interactionButton);
+          }
+          fieldControls.push(field.relationStatus);
           featureItems.push(
             new HBox({
               width: "100%",
               alignItems: "Center",
               justifyContent: "SpaceBetween",
-              items: [field.control, field.relationStatus]
+              items: fieldControls
             })
               .addCustomData(
                 new CustomData({
@@ -1032,9 +1039,9 @@ export default class ConfigurationRuleDesignerView {
             ? `${tr("cmConstraintMaxLength")} ${definition.domain.maxLength ?? "∞"}`
             : tr("cmConstraintEnterValue"),
       liveChange: (event: Input$LiveChangeEvent) =>
-        onChange(event.getParameter("value") ?? "", event.getSource(), false),
+        onChange(event.getParameter("value") ?? "", undefined, false),
       change: (event: InputBase$ChangeEvent) =>
-        onChange(event.getSource().getValue(), event.getSource())
+        onChange(event.getSource().getValue(), undefined, false)
     });
     readValue = () => input.getValue();
     setValue = (value) => {
@@ -1053,6 +1060,13 @@ export default class ConfigurationRuleDesignerView {
       setAvailableValues,
       setValueState
     );
+    const interactionButton = new Button({
+      icon: "sap-icon://add",
+      type: "Transparent",
+      tooltip: tr("cmConstraintOpenRuleMenu"),
+      press: () => this.showFieldInteractionMenu(definition.code, interactionButton)
+    }).addStyleClass("cmConstraintInputRuleMenuButton");
+    field.interactionButton = interactionButton;
     this.values.set(definition.code, readValue());
     this.inputValues.set(definition.code, readValue());
     return field;
@@ -2262,7 +2276,7 @@ export default class ConfigurationRuleDesignerView {
       ...this.currentRule,
       ast: structuredClone(ast),
       expression: formatConstraintExpression(ast),
-      status: "Draft"
+      status: this.currentRule.status === "Disabled" ? "Disabled" : "Draft"
     };
     this.options.onRuleChange(structuredClone(this.currentRule));
     this.renderRelations();
@@ -2295,6 +2309,9 @@ export default class ConfigurationRuleDesignerView {
   private updateToolbarState(): void {
     this.modeSelector.setVisible(this.toolbarVisible);
     this.aiAssistant.setVisible(this.toolbarVisible && this.mode === "design");
+    const showInputRuleButtons =
+      this.toolbarVisible && this.mode === "design" && this.options.canEdit();
+    this.fields.forEach((field) => field.interactionButton?.setVisible(showInputRuleButtons));
     const showHistory = this.toolbarVisible && this.mode === "design";
     this.undoButton.setVisible(showHistory);
     this.redoButton.setVisible(showHistory);

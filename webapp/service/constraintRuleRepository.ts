@@ -3,8 +3,10 @@ import {
   formatConstraintExpression,
   hasLegacyDefaultConstraintAction,
   isConstraintRuleAst,
+  isConstraintActionType,
   isLegacyConstraintRuleAst,
   migrateLegacyConstraintRuleAst,
+  UNCATEGORIZED_BUSINESS_GROUP_ID,
   validateConstraintRule
 } from "../model/constraintRules";
 import type {
@@ -55,11 +57,24 @@ function normalizeRule(value: unknown): ConstraintRule {
     typeof value.name !== "string"
   )
     throw new Error("本地约束规则缺少 ID、编码或名称");
-  const status: ConstraintRuleStatus = hasLegacyDefaultConstraintAction({ ast })
-    ? "Invalid"
-    : value.status === "Valid" || value.status === "Invalid"
-      ? value.status
-      : "Draft";
+  const status: ConstraintRuleStatus =
+    value.status === "Disabled"
+      ? "Disabled"
+      : hasLegacyDefaultConstraintAction({ ast })
+        ? "Invalid"
+        : value.status === "Valid" || value.status === "Conflict" || value.status === "Invalid"
+          ? value.status
+          : "Draft";
+  const disabledStatus =
+    status === "Disabled" &&
+    (value.disabledStatus === "Draft" ||
+      value.disabledStatus === "Valid" ||
+      value.disabledStatus === "Conflict" ||
+      value.disabledStatus === "Invalid")
+      ? value.disabledStatus
+      : status === "Disabled"
+        ? "Draft"
+        : undefined;
   const rawSource = isRecord(value.source) ? value.source : {};
   const sourceType: ConstraintRuleSource =
     rawSource.type === "AI" || rawSource.type === "BLUEPRINT" ? rawSource.type : "MANUAL";
@@ -72,7 +87,13 @@ function normalizeRule(value: unknown): ConstraintRule {
     code: value.code,
     name: value.name,
     description: typeof value.description === "string" ? value.description : "",
+    businessGroupId:
+      typeof value.businessGroupId === "string" && value.businessGroupId.trim()
+        ? value.businessGroupId
+        : UNCATEGORIZED_BUSINESS_GROUP_ID,
+    ...(isConstraintActionType(value.ruleType) ? { ruleType: value.ruleType } : {}),
     status,
+    ...(disabledStatus ? { disabledStatus } : {}),
     expression: formatConstraintExpression(ast),
     ast,
     blueprint: { positions },
@@ -153,7 +174,8 @@ export class ConstraintRuleRepository {
       return {
         ...structuredClone(rule),
         expression: formatConstraintExpression(rule.ast),
-        status: "Draft",
+        status: rule.status === "Disabled" ? "Disabled" : "Draft",
+        ...(rule.status === "Disabled" ? { disabledStatus: rule.disabledStatus ?? "Draft" } : {}),
         version: existing ? existing.version + 1 : Math.max(1, rule.version),
         modifiedAt: new Date().toISOString()
       };
@@ -171,11 +193,63 @@ export class ConstraintRuleRepository {
         (issue) => issue.severity === "Error"
       );
       if (errors.length) throw new Error(errors.map((issue) => issue.message).join("\n"));
-      rule.status = "Valid";
+      if (rule.status !== "Disabled") rule.status = "Valid";
     }
 
     this.writeContext(contextId, rules);
     return structuredClone(normalized);
+  }
+
+  public updateMetadata(
+    contextId: string,
+    ruleId: string,
+    metadata: {
+      name: string;
+      businessGroupId: string;
+      ruleType?: ConstraintRule["ruleType"];
+    },
+    features: FeatureDefinition[]
+  ): ConstraintRule {
+    const rules = this.list(contextId, features);
+    const index = rules.findIndex((rule) => rule.id === ruleId);
+    if (index < 0) throw new Error(`Constraint rule ${ruleId} was not found`);
+    const updated = structuredClone(rules[index]);
+    updated.name = metadata.name;
+    updated.businessGroupId = metadata.businessGroupId;
+    if (metadata.ruleType) updated.ruleType = metadata.ruleType;
+    else delete updated.ruleType;
+    updated.version += 1;
+    updated.modifiedAt = new Date().toISOString();
+    rules[index] = updated;
+    this.writeContext(contextId, rules);
+    return structuredClone(updated);
+  }
+
+  public setEnabled(
+    contextId: string,
+    ruleId: string,
+    enabled: boolean,
+    features: FeatureDefinition[]
+  ): ConstraintRule {
+    const rules = this.list(contextId, features);
+    const index = rules.findIndex((rule) => rule.id === ruleId);
+    if (index < 0) throw new Error(`Constraint rule ${ruleId} was not found`);
+    const existing = rules[index];
+    const updated = structuredClone(existing);
+    if (enabled) {
+      updated.status =
+        existing.status === "Disabled" ? (existing.disabledStatus ?? "Draft") : existing.status;
+      delete updated.disabledStatus;
+    } else {
+      if (existing.status !== "Disabled") updated.disabledStatus = existing.status;
+      else updated.disabledStatus ??= "Draft";
+      updated.status = "Disabled";
+    }
+    updated.version += 1;
+    updated.modifiedAt = new Date().toISOString();
+    rules[index] = updated;
+    this.writeContext(contextId, rules);
+    return structuredClone(updated);
   }
 
   public remove(contextId: string, ruleId: string, features: FeatureDefinition[]): void {

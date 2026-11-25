@@ -1,11 +1,11 @@
 import Button from "sap/m/Button";
+import CustomTreeItem from "sap/m/CustomTreeItem";
 import FlexItemData from "sap/m/FlexItemData";
 import HBox from "sap/m/HBox";
 import IconTabBar from "sap/m/IconTabBar";
 import IconTabFilter from "sap/m/IconTabFilter";
 import Input from "sap/m/Input";
 import Label from "sap/m/Label";
-import List from "sap/m/List";
 import MessageBox from "sap/m/MessageBox";
 import MessageStrip from "sap/m/MessageStrip";
 import MessageToast from "sap/m/MessageToast";
@@ -13,18 +13,26 @@ import MultiComboBox from "sap/m/MultiComboBox";
 import ObjectStatus from "sap/m/ObjectStatus";
 import OverflowToolbar from "sap/m/OverflowToolbar";
 import OverflowToolbarLayoutData from "sap/m/OverflowToolbarLayoutData";
+import SearchField from "sap/m/SearchField";
 import Select from "sap/m/Select";
-import StandardListItem from "sap/m/StandardListItem";
+import SegmentedButton from "sap/m/SegmentedButton";
+import SegmentedButtonItem from "sap/m/SegmentedButtonItem";
+import StandardTreeItem from "sap/m/StandardTreeItem";
+import Tree from "sap/m/Tree";
 import type { Select$ChangeEvent } from "sap/m/Select";
 import type { IconTabBar$SelectEvent } from "sap/m/IconTabBar";
-import type { ListBase$ItemPressEvent } from "sap/m/ListBase";
+import type { ListBase$SelectionChangeEvent } from "sap/m/ListBase";
 import type { InputBase$ChangeEvent } from "sap/m/InputBase";
 import type { MultiComboBox$SelectionFinishEvent } from "sap/m/MultiComboBox";
+import type { SearchField$LiveChangeEvent } from "sap/m/SearchField";
+import type { SegmentedButton$SelectionChangeEvent } from "sap/m/SegmentedButton";
 import Text from "sap/m/Text";
 import Title from "sap/m/Title";
 import ToolbarSpacer from "sap/m/ToolbarSpacer";
 import Item from "sap/ui/core/Item";
 import Event from "sap/ui/base/Event";
+import type Context from "sap/ui/model/Context";
+import TreeItemBase from "sap/m/TreeItemBase";
 import Popup from "sap/ui/core/Popup";
 import VBox from "sap/m/VBox";
 import JSONModel from "sap/ui/model/json/JSONModel";
@@ -42,6 +50,9 @@ import {
   createConstraintRule,
   formatConstraintExpression,
   hasLegacyDefaultConstraintAction,
+  collectConstraintPredicates,
+  isConstraintActionType,
+  UNCATEGORIZED_BUSINESS_GROUP_ID,
   validateConstraintRule
 } from "../../model/constraintRules";
 import type { ConstraintAISuggestion } from "../../service/mockConstraintAIService";
@@ -56,18 +67,88 @@ import type {
   ConstraintRule
 } from "../../model/constraintRules";
 import type { BlueprintPredicateSelection } from "../../blueprint/constraint-blueprint";
+import type { Field, Values } from "./types";
 import {
   constraintActionLabels,
   constraintOperatorLabels,
   tr,
   trFormat
 } from "../../util/configurationUi";
+import ConfigurationDialogService from "./ConfigurationDialogService";
 import ConfigurationExpressionEditor from "./ConfigurationExpressionEditor";
 import ConfigurationRuleDesignerView from "./ConfigurationRuleDesignerView";
 
 type NodeKind = "source" | "condition" | "logic" | "action";
 type WorkspaceMode = "designer" | "advanced";
 type AdvancedWorkspaceMode = "expression" | "blueprint";
+type RuleGroupingMode = "domain" | "type" | "status" | "trigger" | "recent";
+type RuleStatusFilter = "all" | "valid" | "conflict" | "draft" | "disabled";
+type RuleSortMode = "modified" | "name" | "status";
+type RuleMetadata = {
+  name: string;
+  businessGroupId: string;
+  ruleType?: ConstraintActionType;
+};
+type RuleNavigationRuleNode = {
+  kind: "rule";
+  ruleId: string;
+  title: string;
+  summary: string;
+  info: string;
+  statusState: "Error" | "Information" | "Success" | "None";
+  tooltip: string;
+  selected: boolean;
+  children: [];
+};
+type RuleNavigationGroupNode = {
+  kind: "group";
+  key: string;
+  title: string;
+  children: RuleNavigationRuleNode[];
+};
+type RuleNavigationNode = RuleNavigationGroupNode | RuleNavigationRuleNode;
+
+const actionSummarySymbols: Record<ConstraintActionType, string> = {
+  REQUIRE: "→",
+  EXCLUDE: "×",
+  SET: "=",
+  RESTRICT: "→",
+  DERIVE: "ƒ",
+  DEFAULT: "↳",
+  RECOMMEND: "↗",
+  ADD: "+",
+  REMOVE: "−"
+};
+
+const groupActionOrder: ConstraintActionType[] = [
+  "REQUIRE",
+  "EXCLUDE",
+  "RESTRICT",
+  "SET",
+  "DERIVE",
+  "RECOMMEND",
+  "ADD",
+  "REMOVE",
+  "DEFAULT"
+];
+
+const operatorSummarySymbols: Partial<Record<ConstraintOperator, string>> = {
+  EQUALS: "=",
+  NOT_EQUALS: "≠",
+  GREATER_THAN: ">",
+  GREATER_THAN_OR_EQUAL: "≥",
+  LESS_THAN: "<",
+  LESS_THAN_OR_EQUAL: "≤",
+  IN: "∈",
+  NOT_IN: "∉"
+};
+
+interface RuleListGroup {
+  key: string;
+  title: string;
+  order: number;
+  rules: ConstraintRule[];
+}
 
 let blueprintBundleLoading: Promise<void> | undefined;
 
@@ -124,9 +205,9 @@ interface ConfigurationRuleWorkspaceOptions {
 export default class ConfigurationRuleWorkspaceView {
   private readonly graphHost: VBox;
   private readonly rulesModel: JSONModel;
-  private readonly store: ConfigurationStore;
-  private readonly context: ConfigurationContext;
-  private readonly profile: ConfigurationProfile;
+  private store: ConfigurationStore;
+  private context: ConfigurationContext;
+  private profile: ConfigurationProfile;
   private features: FeatureDefinition[];
   private readonly repository: ConstraintRuleRepository;
   private readonly canEdit: () => boolean;
@@ -139,7 +220,7 @@ export default class ConfigurationRuleWorkspaceView {
   private readonly newRuleDraftIds = new Set<string>();
   private mode: WorkspaceMode = "designer";
   private advancedMode: AdvancedWorkspaceMode = "expression";
-  private rulesList?: List;
+  private rulesTree?: Tree;
   private detailsStatus?: ObjectStatus;
   private ruleMetaStatus?: ObjectStatus;
   private expressionEditor?: ConfigurationExpressionEditor;
@@ -147,8 +228,16 @@ export default class ConfigurationRuleWorkspaceView {
   private blueprintHost?: VBox;
   private designerHost?: VBox;
   private advancedHost?: VBox;
-  private readonly ruleByListItemId = new Map<string, string>();
   private readonly previewConflictRuleIds = new Set<string>();
+  private readonly collapsedRuleGroups = new Set<string>();
+  private searchField?: SearchField;
+  private statusFilterSelector?: SegmentedButton;
+  private groupSelector?: Select;
+  private sortSelector?: Select;
+  private searchQuery = "";
+  private statusFilter: RuleStatusFilter = "all";
+  private groupMode: RuleGroupingMode = "status";
+  private sortMode: RuleSortMode = "modified";
   private moreToolsButton?: Button;
   private advancedModeSelector?: IconTabBar;
   private mainFullscreenButton?: Button;
@@ -177,8 +266,7 @@ export default class ConfigurationRuleWorkspaceView {
     this.rules = this.repository.list(this.context.id, this.features);
     this.currentRule = this.rules[0] ?? this.createNewRule();
     this.currentRuleIsNew = this.rules.length === 0;
-    if (this.currentRuleIsNew) this.newRuleDraftIds.add(this.currentRule.id);
-    this.rulesModel = new JSONModel({ currentRule: this.currentRule });
+    this.rulesModel = new JSONModel({ currentRule: this.currentRule, navigationGroups: [] });
     this.graphHost = new VBox({
       width: "100%",
       height: "100%",
@@ -223,14 +311,25 @@ export default class ConfigurationRuleWorkspaceView {
     this.mainFullscreenButton?.setTooltip(isFullscreen ? "退出主体内容全屏" : "全屏主体内容");
   }
 
-  public setFeatures(features: FeatureDefinition[]): void {
-    if (JSON.stringify(this.features) === JSON.stringify(features)) return;
+  public setConfigurationData(
+    store: ConfigurationStore,
+    context: ConfigurationContext,
+    profile: ConfigurationProfile,
+    features: FeatureDefinition[]
+  ): void {
+    const featuresChanged = JSON.stringify(this.features) !== JSON.stringify(features);
+    this.store = store;
+    this.context = context;
+    this.profile = profile;
     this.features = features;
-    this.expressionEditor?.setFeatures(features);
-    this.designerView?.setFeatures(features);
+    if (featuresChanged) {
+      this.expressionEditor?.setFeatures(features);
+      this.designerView?.setFeatures(features);
+    }
     this.blueprintNeedsLoad = true;
     if (this.mode === "advanced" && this.advancedMode === "blueprint")
       void this.loadBlueprintRule();
+    this.renderRuleList();
   }
 
   private disposeEditor(): void {
@@ -239,23 +338,183 @@ export default class ConfigurationRuleWorkspaceView {
   }
 
   private buildRuleNavigation(): VBox {
-    this.rulesList = new List({
+    this.rulesTree = new Tree({
       width: "100%",
       mode: "SingleSelectMaster",
       includeItemInSelection: true,
       noDataText: tr("暂无约束规则"),
-      itemPress: (event: ListBase$ItemPressEvent) => {
+      selectionChange: (event: ListBase$SelectionChangeEvent) => {
         const item = event.getParameter("listItem");
-        const ruleId = item && this.ruleByListItemId.get(item.getId());
-        if (ruleId) this.selectRule(ruleId);
+        const node = item?.getBindingContext("rules")?.getObject() as
+          RuleNavigationNode | undefined;
+        if (!item || !node) return;
+        if (node.kind === "group") {
+          this.rulesTree?.setSelectedItem(item, false);
+          const currentRuleItem = this.rulesTree?.getItems().find((candidate) => {
+            const candidateNode = candidate.getBindingContext("rules")?.getObject() as
+              RuleNavigationNode | undefined;
+            return candidateNode?.kind === "rule" && candidateNode.ruleId === this.currentRule.id;
+          });
+          if (currentRuleItem) this.rulesTree?.setSelectedItem(currentRuleItem, true);
+          return;
+        }
+        if (event.getParameter("selected")) this.selectRule(node.ruleId);
+      },
+      toggleOpenState: (event: Event) => {
+        const parameters = event.getParameters() as {
+          itemContext?: Context;
+          expanded?: boolean;
+        };
+        const itemContext = parameters.itemContext;
+        const expanded = Boolean(parameters.expanded);
+        const node = itemContext?.getObject() as RuleNavigationNode | undefined;
+        if (node?.kind !== "group") return;
+        if (expanded) this.collapsedRuleGroups.delete(node.key);
+        else this.collapsedRuleGroups.add(node.key);
       }
-    }).addStyleClass("cmConstraintRuleList");
-    this.rulesList.addEventDelegate({
-      onAfterRendering: () => this.attachRuleContextMenu()
+    }).addStyleClass("cmConstraintRuleTree");
+    this.rulesTree.setModel(this.rulesModel, "rules");
+    this.rulesTree.bindItems({
+      path: "rules>/navigationGroups",
+      parameters: { arrayNames: ["children"], numberOfExpandedLevels: 2 },
+      factory: (id, context) => {
+        const node = context.getObject() as RuleNavigationNode;
+        if (node.kind === "group") {
+          return new StandardTreeItem(id, {
+            title: node.title,
+            icon: "sap-icon://folder-blank",
+            type: "Active"
+          }).addStyleClass("cmConstraintRuleGroupTreeItem");
+        }
+
+        const textContent = new VBox({
+          width: "100%",
+          items: [
+            new Text({ text: node.title, wrapping: false, tooltip: node.title }).addStyleClass(
+              "cmConstraintRuleTreeTitle"
+            ),
+            new Text({ text: node.summary, wrapping: true }).addStyleClass(
+              "cmConstraintRuleTreeSummary"
+            )
+          ]
+        }).addStyleClass("cmConstraintRuleTreeText");
+        textContent.setLayoutData(
+          new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minWidth: "0" })
+        );
+        const item = new CustomTreeItem(id, {
+          type: "Active",
+          selected: node.selected,
+          content: [
+            new HBox({
+              width: "100%",
+              alignItems: "Center",
+              items: [
+                textContent,
+                new ObjectStatus({
+                  text: node.info,
+                  state: node.statusState,
+                  tooltip: node.tooltip
+                }).addStyleClass("cmConstraintRuleTreeStatus")
+              ]
+            }).addStyleClass("cmConstraintRuleTreeItemContent")
+          ]
+        }).addStyleClass("cmConstraintRuleTreeItem");
+        return item;
+      }
     });
-    this.rulesList.setLayoutData(
+    this.rulesTree.addEventDelegate({
+      onAfterRendering: () => {
+        this.attachRuleContextMenu();
+        this.restoreCollapsedRuleGroups();
+      }
+    });
+    this.rulesTree.setLayoutData(
       new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minHeight: "0" })
     );
+
+    this.searchField = new SearchField({
+      width: "100%",
+      placeholder: tr("cmConstraintSearchPlaceholder"),
+      liveChange: (event: SearchField$LiveChangeEvent) => {
+        this.searchQuery = event.getParameter("newValue") ?? "";
+        this.renderRuleList();
+      }
+    }).addStyleClass("cmConstraintRuleSearch");
+    this.statusFilterSelector = new SegmentedButton({
+      width: "100%",
+      selectedKey: this.statusFilter,
+      items: [
+        new SegmentedButtonItem({ key: "all", text: tr("cmConstraintFilterAll") }),
+        new SegmentedButtonItem({ key: "valid", text: tr("cmConstraintFilterValid") }),
+        new SegmentedButtonItem({ key: "conflict", text: tr("cmConstraintFilterConflict") }),
+        new SegmentedButtonItem({ key: "draft", text: tr("cmConstraintFilterDraft") }),
+        new SegmentedButtonItem({ key: "disabled", text: tr("cmConstraintFilterDisabled") })
+      ],
+      selectionChange: (event: SegmentedButton$SelectionChangeEvent) => {
+        this.statusFilter = event.getParameter("selectedKey") as RuleStatusFilter;
+        this.renderRuleList();
+      }
+    }).addStyleClass("cmConstraintRuleStatusFilter");
+    this.statusFilterSelector.setLayoutData(
+      new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minWidth: "0" })
+    );
+    const statusFilterRow = new HBox({
+      width: "100%",
+      items: [this.statusFilterSelector]
+    }).addStyleClass("cmConstraintRuleStatusFilterRow");
+    this.groupSelector = new Select({
+      width: "100%",
+      selectedKey: this.groupMode,
+      items: [
+        new Item({ key: "domain", text: tr("cmConstraintGroupByDomain") }),
+        new Item({ key: "type", text: tr("cmConstraintGroupByType") }),
+        new Item({ key: "status", text: tr("cmConstraintGroupByStatus") }),
+        new Item({ key: "trigger", text: tr("cmConstraintGroupByTrigger") }),
+        new Item({ key: "recent", text: tr("cmConstraintGroupByRecent") })
+      ],
+      change: (event: Select$ChangeEvent) => {
+        this.groupMode = event.getSource().getSelectedKey() as RuleGroupingMode;
+        this.renderRuleList();
+      }
+    }).addStyleClass("cmConstraintRuleNavigatorSelect");
+    this.sortSelector = new Select({
+      width: "100%",
+      selectedKey: this.sortMode,
+      items: [
+        new Item({ key: "modified", text: tr("cmConstraintSortByModified") }),
+        new Item({ key: "name", text: tr("cmConstraintSortByName") }),
+        new Item({ key: "status", text: tr("cmConstraintSortByStatus") })
+      ],
+      change: (event: Select$ChangeEvent) => {
+        this.sortMode = event.getSource().getSelectedKey() as RuleSortMode;
+        this.renderRuleList();
+      }
+    }).addStyleClass("cmConstraintRuleNavigatorSelect");
+    [this.groupSelector, this.sortSelector].forEach((selector) =>
+      selector.setLayoutData(
+        new FlexItemData({ growFactor: 1, shrinkFactor: 1, baseSize: "0%", minWidth: "0" })
+      )
+    );
+    const groupRow = new HBox({
+      width: "100%",
+      alignItems: "Center",
+      items: [
+        new Label({ text: tr("cmConstraintGroupBy"), labelFor: this.groupSelector }).addStyleClass(
+          "cmConstraintNavigatorLabel"
+        ),
+        this.groupSelector
+      ]
+    }).addStyleClass("cmConstraintNavigatorSelectRow");
+    const sortRow = new HBox({
+      width: "100%",
+      alignItems: "Center",
+      items: [
+        new Label({ text: tr("cmConstraintSortBy"), labelFor: this.sortSelector }).addStyleClass(
+          "cmConstraintNavigatorLabel"
+        ),
+        this.sortSelector
+      ]
+    }).addStyleClass("cmConstraintNavigatorSelectRow");
     const navigation = new VBox({
       height: "100%",
       fitContainer: true,
@@ -271,41 +530,292 @@ export default class ConfigurationRuleWorkspaceView {
               press: () => this.createRule()
             })
           ]
-        }),
-        this.rulesList
+        }).addStyleClass("cmConstraintRuleNavigationToolbar"),
+        this.searchField,
+        statusFilterRow,
+        groupRow,
+        sortRow,
+        this.rulesTree
       ]
     }).addStyleClass("cmConstraintRuleNavigation");
     return navigation;
   }
 
   private renderRuleList(): void {
-    if (!this.rulesList) return;
-    this.ruleByListItemId.clear();
-    this.rulesList.destroyItems();
-    this.rules.forEach((rule) => {
-      const hasLegacyDefault = hasLegacyDefaultConstraintAction(rule);
-      const item = new StandardListItem({
-        title: rule.name,
-        description: this.ruleSummary(rule),
-        info: this.previewConflictRuleIds.has(rule.id)
-          ? tr("cmConstraintConflict")
-          : hasLegacyDefault
-            ? tr("cmConstraintLegacyDefaultStatus")
-            : rule.status,
-        infoState:
-          this.previewConflictRuleIds.has(rule.id) || hasLegacyDefault || rule.status === "Invalid"
-            ? "Error"
-            : rule.status === "Valid"
-              ? "Success"
-              : "Information",
-        type: "Active",
-        wrapping: true
-      });
-      this.ruleByListItemId.set(item.getId(), rule.id);
-      this.rulesList?.addItem(item);
-      if (rule.id === this.currentRule.id) this.rulesList?.setSelectedItem(item, true);
-    });
+    if (!this.rulesTree) return;
+    const featureCodesByRule = new Map(
+      this.rules.map((rule) => [rule.id, this.ruleFeatureCodes(rule)])
+    );
+    const groups = this.groupRules(
+      this.rules.filter((rule) => this.matchesStatusFilter(rule) && this.matchesSearch(rule))
+    );
+    const navigationGroups: RuleNavigationGroupNode[] = groups.map((group) => ({
+      kind: "group",
+      key: group.key,
+      title: `${group.title} (${group.rules.length})`,
+      children: group.rules.map((rule) => {
+        const status = this.ruleNavigatorStatus(rule);
+        const relatedCount = this.relatedRuleCount(rule, featureCodesByRule);
+        return {
+          kind: "rule",
+          ruleId: rule.id,
+          title: rule.name,
+          summary: this.ruleSummary(rule),
+          info: `●${relatedCount ? ` ↗${relatedCount}` : ""}`,
+          statusState: status.state,
+          tooltip: `${status.label}${
+            relatedCount
+              ? ` · ${trFormat("cmConstraintRelatedRulesCount", [relatedCount], `${relatedCount} related rules`)}`
+              : ""
+          }`,
+          selected: rule.id === this.currentRule.id,
+          children: []
+        };
+      })
+    }));
+    this.rulesModel.setProperty("/navigationGroups", navigationGroups);
     this.updateDeleteRuleButtonState();
+  }
+
+  private matchesStatusFilter(rule: ConstraintRule): boolean {
+    if (this.statusFilter === "all") return true;
+    return this.ruleNavigatorStatus(rule).key === this.statusFilter;
+  }
+
+  private matchesSearch(rule: ConstraintRule): boolean {
+    const terms = this.searchQuery.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    if (!terms.length) return true;
+    const predicates = [
+      ...collectConstraintPredicates(rule.ast.condition),
+      ...rule.ast.actions.flatMap((action) => collectConstraintPredicates(action.target))
+    ];
+    const featureText = [...this.ruleFeatureCodes(rule)].flatMap((code) => {
+      const feature = this.features.find((item) => item.code === code);
+      return feature ? [feature.code, feature.name] : [code];
+    });
+    const valueText = predicates.flatMap((predicate) => {
+      const feature = this.features.find((item) => item.code === predicate.feature);
+      const values = Array.isArray(predicate.value) ? predicate.value : [predicate.value];
+      return values.flatMap((value) => {
+        const literal = String(value);
+        if (typeof value !== "string") return [literal];
+        const displayValue = feature?.domain.values.find((item) => item.code === value)?.value;
+        return displayValue && displayValue !== value ? [literal, displayValue] : [literal];
+      });
+    });
+    const searchable = [
+      rule.name,
+      rule.code,
+      rule.description,
+      rule.expression,
+      this.ruleSummary(rule),
+      rule.status,
+      this.businessGroupName(rule),
+      rule.ruleType ? constraintActionLabels[rule.ruleType] : "",
+      ...featureText,
+      ...valueText
+    ]
+      .join(" ")
+      .toLocaleLowerCase();
+    return terms.every((term) => searchable.includes(term));
+  }
+
+  private ruleNavigatorStatus(rule: ConstraintRule): {
+    key: Exclude<RuleStatusFilter, "all">;
+    label: string;
+    state: "Error" | "Information" | "Success" | "None";
+  } {
+    if (rule.status === "Disabled")
+      return { key: "disabled", label: tr("cmConstraintFilterDisabled"), state: "None" };
+    const conflict =
+      this.previewConflictRuleIds.has(rule.id) ||
+      rule.status === "Conflict" ||
+      rule.status === "Invalid" ||
+      hasLegacyDefaultConstraintAction(rule);
+    if (conflict)
+      return { key: "conflict", label: tr("cmConstraintFilterConflict"), state: "Error" };
+    if (rule.status === "Draft" || this.unsavedRuleIds.has(rule.id))
+      return { key: "draft", label: tr("cmConstraintFilterDraft"), state: "Information" };
+    return { key: "valid", label: tr("cmConstraintFilterValid"), state: "Success" };
+  }
+
+  private businessGroups() {
+    return this.store.groups
+      .filter((group) => group.contextId === this.context.id)
+      .sort((left, right) => left.sort - right.sort || left.name.localeCompare(right.name));
+  }
+
+  private businessGroupName(rule: ConstraintRule): string {
+    return (
+      this.store.groups.find(
+        (group) => group.contextId === this.context.id && group.id === rule.businessGroupId
+      )?.name ?? tr("cmConstraintUnclassified")
+    );
+  }
+
+  private ruleFeatureCodes(rule: ConstraintRule): Set<string> {
+    const codes = new Set([
+      ...collectConstraintPredicates(rule.ast.condition).map((predicate) => predicate.feature),
+      ...rule.ast.actions.flatMap((action) =>
+        collectConstraintPredicates(action.target).map((predicate) => predicate.feature)
+      )
+    ]);
+    for (const action of rule.ast.actions) {
+      if (action.derivation?.kind === "MAP") codes.add(action.derivation.source);
+      else if (action.derivation)
+        action.derivation.formula.operands.forEach((operand) => {
+          if (operand.kind === "FEATURE") codes.add(operand.feature);
+        });
+    }
+    return codes;
+  }
+
+  private ruleGroupDescriptor(rule: ConstraintRule): Omit<RuleListGroup, "rules"> {
+    if (this.groupMode === "domain") {
+      const businessGroup = this.store.groups.find(
+        (group) => group.contextId === this.context.id && group.id === rule.businessGroupId
+      );
+      return {
+        key: `domain:${businessGroup?.id ?? UNCATEGORIZED_BUSINESS_GROUP_ID}`,
+        title: businessGroup?.name ?? tr("cmConstraintUnclassified"),
+        order: businessGroup?.sort ?? Number.MAX_SAFE_INTEGER
+      };
+    }
+
+    if (this.groupMode === "type") {
+      const types = [...new Set(rule.ast.actions.map((action) => action.type))];
+      const type =
+        rule.ruleType ?? (types.length === 0 ? "none" : types.length === 1 ? types[0] : "mixed");
+      const title =
+        type === "none"
+          ? tr("cmConstraintNoResults")
+          : type === "mixed"
+            ? tr("cmConstraintMixedActions")
+            : tr(constraintActionLabels[type]);
+      const typeOrder = groupActionOrder.indexOf(type as ConstraintActionType);
+      return {
+        key: `type:${type}`,
+        title,
+        order: typeOrder < 0 ? groupActionOrder.length : typeOrder
+      };
+    }
+
+    if (this.groupMode === "status") {
+      const status = this.ruleNavigatorStatus(rule);
+      const order = { conflict: 0, draft: 1, valid: 2, disabled: 3 } satisfies Record<
+        Exclude<RuleStatusFilter, "all">,
+        number
+      >;
+      return {
+        key: `status:${status.key}`,
+        title: status.label,
+        order: order[status.key]
+      };
+    }
+
+    if (this.groupMode === "trigger") {
+      const triggers = [
+        ...new Set(
+          collectConstraintPredicates(rule.ast.condition)
+            .filter((predicate) => predicate.type !== "ALWAYS")
+            .map((predicate) => predicate.feature)
+        )
+      ];
+      const title =
+        triggers.length === 0
+          ? tr("cmConstraintNoTrigger")
+          : triggers.length > 1
+            ? tr("cmConstraintMultipleTriggers")
+            : (this.features.find((feature) => feature.code === triggers[0])?.name ??
+              triggers[0] ??
+              tr("cmConstraintNoTrigger"));
+      return { key: `trigger:${title}`, title, order: 0 };
+    }
+
+    const recentGroup = this.recentRuleGroup(rule);
+    return {
+      key: `recent:${recentGroup.key}`,
+      title: recentGroup.title,
+      order: recentGroup.order
+    };
+  }
+
+  private recentRuleGroup(rule: ConstraintRule): { key: string; title: string; order: number } {
+    const timestamp = Date.parse(rule.modifiedAt);
+    if (!Number.isFinite(timestamp))
+      return { key: "earlier", title: tr("cmConstraintGroupEarlier"), order: 2 };
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const modified = new Date(timestamp);
+    modified.setHours(0, 0, 0, 0);
+    const daysAgo = Math.floor((today.getTime() - modified.getTime()) / 86_400_000);
+    if (daysAgo <= 0) return { key: "today", title: tr("cmConstraintGroupToday"), order: 0 };
+    if (daysAgo === 1)
+      return { key: "yesterday", title: tr("cmConstraintGroupYesterday"), order: 1 };
+    return { key: "earlier", title: tr("cmConstraintGroupEarlier"), order: 2 };
+  }
+
+  private groupRules(rules: ConstraintRule[]): RuleListGroup[] {
+    const groups = new Map<string, RuleListGroup>();
+    for (const rule of rules) {
+      const descriptor = this.ruleGroupDescriptor(rule);
+      const group = groups.get(descriptor.key) ?? { ...descriptor, rules: [] };
+      group.rules.push(rule);
+      groups.set(descriptor.key, group);
+    }
+    return [...groups.values()]
+      .map((group) => ({ ...group, rules: this.sortRules(group.rules) }))
+      .sort((left, right) => {
+        if (left.order !== right.order) return left.order - right.order;
+        return left.title.localeCompare(right.title);
+      });
+  }
+
+  private sortRules(rules: ConstraintRule[]): ConstraintRule[] {
+    return [...rules].sort((left, right) => {
+      if (this.sortMode === "name") return left.name.localeCompare(right.name);
+      if (this.sortMode === "status") {
+        const statusOrder: Record<Exclude<RuleStatusFilter, "all">, number> = {
+          conflict: 0,
+          draft: 1,
+          valid: 2,
+          disabled: 3
+        };
+        const difference =
+          statusOrder[this.ruleNavigatorStatus(left).key] -
+          statusOrder[this.ruleNavigatorStatus(right).key];
+        if (difference) return difference;
+        return left.name.localeCompare(right.name);
+      }
+      return (Date.parse(right.modifiedAt) || 0) - (Date.parse(left.modifiedAt) || 0);
+    });
+  }
+
+  private restoreCollapsedRuleGroups(): void {
+    const tree = this.rulesTree;
+    if (!tree || !this.collapsedRuleGroups.size) return;
+    const indexes: number[] = [];
+    tree.getItems().forEach((item, index) => {
+      if (!(item instanceof TreeItemBase)) return;
+      const node = item.getBindingContext("rules")?.getObject() as RuleNavigationNode | undefined;
+      if (node?.kind === "group" && this.collapsedRuleGroups.has(node.key) && item.getExpanded()) {
+        indexes.push(index);
+      }
+    });
+    if (indexes.length) tree.collapse(indexes);
+  }
+
+  private relatedRuleCount(
+    rule: ConstraintRule,
+    featureCodesByRule: ReadonlyMap<string, Set<string>>
+  ): number {
+    const codes = featureCodesByRule.get(rule.id);
+    if (!codes?.size) return 0;
+    return this.rules.filter(
+      (candidate) =>
+        candidate.id !== rule.id &&
+        [...(featureCodesByRule.get(candidate.id) ?? [])].some((code) => codes.has(code))
+    ).length;
   }
 
   private updateDeleteRuleButtonState(): void {
@@ -315,7 +825,7 @@ export default class ConfigurationRuleWorkspaceView {
   }
 
   private attachRuleContextMenu(): void {
-    const root = this.rulesList?.getDomRef();
+    const root = this.rulesTree?.getDomRef();
     if (!root || root === this.ruleContextMenuRoot) return;
     this.detachRuleContextMenu();
     this.ruleContextMenuRoot = root;
@@ -333,35 +843,50 @@ export default class ConfigurationRuleWorkspaceView {
   }
 
   private openRuleContextMenu(event: MouseEvent): void {
-    const list = this.rulesList;
+    const tree = this.rulesTree;
     const root = this.ruleContextMenuRoot;
     const target = event.target instanceof Element ? event.target : undefined;
-    if (!list || !root || !target || !this.canEdit()) return;
-    const item = list.getItems().find((candidate) => candidate.getDomRef()?.contains(target));
-    const ruleId = item && this.ruleByListItemId.get(item.getId());
-    if (!ruleId) return;
+    if (!tree || !root || !target || !this.canEdit()) return;
+    const item = tree.getItems().find((candidate) => candidate.getDomRef()?.contains(target));
+    const node = item?.getBindingContext("rules")?.getObject() as RuleNavigationNode | undefined;
+    const ruleId = node?.kind === "rule" ? node.ruleId : undefined;
+    const rule = this.rules.find((candidate) => candidate.id === ruleId);
+    if (!ruleId || !rule) return;
 
     event.preventDefault();
     event.stopPropagation();
     this.ruleContextMenu?.destroy();
-    const menuItem = new UnifiedMenuItem({
+    const metadataMenuItem = new UnifiedMenuItem({
+      text: tr("cmConstraintEditRuleMetadata"),
+      icon: "sap-icon://edit"
+    });
+    const enableMenuItem = new UnifiedMenuItem({
+      text: tr(rule.status === "Disabled" ? "cmConstraintRuleEnable" : "cmConstraintRuleDisable"),
+      icon: rule.status === "Disabled" ? "sap-icon://accept" : "sap-icon://decline"
+    });
+    const deleteMenuItem = new UnifiedMenuItem({
       text: tr("cmConstraintDeleteRule"),
       icon: "sap-icon://delete"
     });
     const menu = new UnifiedMenu({
-      items: [menuItem],
+      items: [metadataMenuItem, enableMenuItem, deleteMenuItem],
       itemSelect: (menuEvent: Event) => {
         const selectedItem = (
           menuEvent as Event & {
             getParameter: (name: "item") => UnifiedMenuItem | undefined;
           }
         ).getParameter("item");
-        if (selectedItem?.getId() === menuItem.getId())
+        if (selectedItem?.getId() === metadataMenuItem.getId()) {
+          window.setTimeout(() => this.editRuleMetadata(ruleId), 0);
+        } else if (selectedItem?.getId() === enableMenuItem.getId()) {
+          window.setTimeout(() => this.toggleRuleEnabled(ruleId), 0);
+        } else if (selectedItem?.getId() === deleteMenuItem.getId()) {
           window.setTimeout(() => this.confirmDeleteRule(ruleId), 0);
+        }
       }
     });
     this.ruleContextMenu = menu;
-    list.addDependent(menu);
+    tree.addDependent(menu);
     const rootBounds = root.getBoundingClientRect();
     const offset = `${Math.round(event.clientX - rootBounds.left)} ${Math.round(event.clientY - rootBounds.top)}`;
     menu.open(false, target, Popup.Dock.LeftTop, Popup.Dock.LeftTop, root, offset);
@@ -373,13 +898,13 @@ export default class ConfigurationRuleWorkspaceView {
       this.currentRuleIsNew &&
       !this.designerView?.hasConfiguredCondition();
     const condition = isPendingNewRuleCondition ? "" : this.describeExpression(rule.ast.condition);
-    const actions = rule.ast.actions.map((action) => this.describeAction(action)).join("; ");
-    return [condition, actions].filter(Boolean).join(" → ");
+    const actions = rule.ast.actions.map((action) => this.describeAction(action)).join(" · ");
+    return [condition, actions].filter(Boolean).join(" ");
   }
 
   private describeAction(action: ConstraintAction): string {
     if (!action.derivation)
-      return `${this.actionLabel(action.type)} ${this.describeExpression(action.target)}`;
+      return `${actionSummarySymbols[action.type]} ${this.describeExpression(action.target)}`;
     const target = "feature" in action.target ? action.target.feature : "";
     const name = this.features.find((feature) => feature.code === target)?.name ?? target;
     const sources =
@@ -391,7 +916,7 @@ export default class ConfigurationRuleWorkspaceView {
     const sourceNames = sources.map(
       (code) => this.features.find((feature) => feature.code === code)?.name ?? code
     );
-    return `${tr(`cmConstraintDerivation${action.derivation.kind}`)} ${name} (${sourceNames.join(", ")})`;
+    return `${actionSummarySymbols[action.type]} ${sourceNames.join(" + ")} → ${name}`;
   }
 
   private setPreviewConflicts(conflicts: ConstraintConflict[]): void {
@@ -404,10 +929,6 @@ export default class ConfigurationRuleWorkspaceView {
     this.previewConflictRuleIds.clear();
     next.forEach((id) => this.previewConflictRuleIds.add(id));
     this.renderRuleList();
-  }
-
-  private actionLabel(type: ConstraintActionType): string {
-    return tr(constraintActionLabels[type]);
   }
 
   private ruleMetadata(rule: ConstraintRule): string {
@@ -436,7 +957,11 @@ export default class ConfigurationRuleWorkspaceView {
       }
     }).addStyleClass("cmConstraintRuleNameInput");
     this.ruleNameInput.setLayoutData(new OverflowToolbarLayoutData({ priority: "High" }));
-    this.detailsStatus = new ObjectStatus({ text: this.currentRule.status, state: "Information" });
+    const currentStatus = this.ruleNavigatorStatus(this.currentRule);
+    this.detailsStatus = new ObjectStatus({
+      text: currentStatus.label,
+      state: currentStatus.state
+    });
     this.detailsStatus.setLayoutData(new OverflowToolbarLayoutData({ priority: "Low" }));
     this.ruleMetaStatus = new ObjectStatus({
       text: this.ruleMetadata(this.currentRule),
@@ -621,7 +1146,9 @@ export default class ConfigurationRuleWorkspaceView {
     this.rulesModel.setProperty("/currentRule", this.currentRule);
     this.ruleNameInput?.setValue(this.currentRule.name);
     this.ruleMetaStatus?.setText(this.ruleMetadata(this.currentRule));
-    this.detailsStatus?.setText(this.currentRule.status);
+    const status = this.ruleNavigatorStatus(this.currentRule);
+    this.detailsStatus?.setText(status.label);
+    this.detailsStatus?.setState(status.state);
     this.expressionEditor?.setRule(this.currentRule);
     this.expressionEditor?.setRules(this.rules);
     this.designerView?.setRule(this.currentRule, this.currentRuleIsNew);
@@ -633,18 +1160,112 @@ export default class ConfigurationRuleWorkspaceView {
   private createRule(): void {
     if (!this.canEdit()) return;
     const activeFeatures = this.features.filter((feature) => feature.active);
+    if (!activeFeatures.length) {
+      MessageToast.show(tr("cmConstraintNoActiveFeatures"));
+      return;
+    }
+    const groups = this.businessGroups();
+    if (!groups.length) {
+      MessageToast.show(tr("cmConstraintNoBusinessGroups"));
+      return;
+    }
+    const ruleTypes = this.ruleTypeOptions();
+    new ConfigurationDialogService(() => this.rulesTree).openEditDialog(
+      tr("cmConstraintCreateDialogTitle"),
+      this.ruleMetadataFields("", "", undefined, groups, ruleTypes),
+      (values) => {
+        const metadata = this.readRuleMetadata(values, groups, ruleTypes);
+        if (!metadata) return false;
+        return this.createRuleInDesigner(metadata);
+      },
+      undefined,
+      { contentWidth: "32rem", draggable: false, resizable: false }
+    );
+  }
+
+  private ruleTypeOptions(): ConstraintActionType[] {
+    return groupActionOrder.filter((type) => type !== "DEFAULT");
+  }
+
+  private ruleMetadataFields(
+    name: string,
+    businessGroupId: string,
+    ruleType: ConstraintActionType | undefined,
+    groups: ConfigurationStore["groups"],
+    ruleTypes: ConstraintActionType[]
+  ): Field[] {
+    const groupLabels: Record<string, string> = {
+      "": tr("cmConstraintSelectBusinessGroup"),
+      ...Object.fromEntries(groups.map((group) => [group.id, group.name]))
+    };
+    const ruleTypeLabels: Record<string, string> = {
+      "": tr("cmConstraintSelectRuleType"),
+      ...Object.fromEntries(ruleTypes.map((type) => [type, tr(constraintActionLabels[type])]))
+    };
+    return [
+      { key: "name", label: "cmConstraintRuleName", value: name, required: true },
+      {
+        key: "businessGroupId",
+        label: "cmConstraintBusinessGroup",
+        value: businessGroupId,
+        options: ["", ...groups.map((group) => group.id)],
+        optionLabels: groupLabels,
+        required: true
+      },
+      {
+        key: "ruleType",
+        label: "cmConstraintRuleTypeField",
+        value: ruleType ?? "",
+        options: ["", ...ruleTypes],
+        optionLabels: ruleTypeLabels
+      }
+    ];
+  }
+
+  private readRuleMetadata(
+    values: Values,
+    groups: ConfigurationStore["groups"],
+    ruleTypes: ConstraintActionType[]
+  ): RuleMetadata | undefined {
+    const name = typeof values.name === "string" ? values.name.trim() : "";
+    if (!name) return undefined;
+    const businessGroupId =
+      typeof values.businessGroupId === "string" ? values.businessGroupId : "";
+    if (!groups.some((group) => group.id === businessGroupId)) {
+      MessageToast.show(tr("cmConstraintBusinessGroupRequired"));
+      return undefined;
+    }
+    const selectedType = typeof values.ruleType === "string" ? values.ruleType : "";
+    if (
+      selectedType &&
+      (!isConstraintActionType(selectedType) || !ruleTypes.includes(selectedType))
+    ) {
+      MessageToast.show(tr("cmConstraintRuleTypeInvalid"));
+      return undefined;
+    }
+    return {
+      name,
+      businessGroupId,
+      ...(selectedType ? { ruleType: selectedType as ConstraintActionType } : {})
+    };
+  }
+
+  private createRuleInDesigner(metadata: RuleMetadata): boolean {
+    if (!this.canEdit()) return false;
+    const activeFeatures = this.features.filter((feature) => feature.active);
     const sourceFeature =
       activeFeatures.find((feature) => feature.code === "SUNROOF_TYPE") ?? activeFeatures[0];
     if (!sourceFeature) {
-      MessageToast.show(tr("当前 Context 尚无可用于约束的 Feature。"));
-      return;
+      MessageToast.show(tr("cmConstraintNoActiveFeatures"));
+      return false;
     }
     const code = this.nextRuleCode();
-    const sequence = Number(code.slice("CR-".length));
     const rule = createConstraintRule({
       id: `rule-${globalThis.crypto.randomUUID()}`,
       code,
-      name: `新建约束 ${String(sequence).padStart(3, "0")}`,
+      name: metadata.name,
+      businessGroupId: metadata.businessGroupId,
+      ...(metadata.ruleType ? { ruleType: metadata.ruleType } : {}),
       ast: {
         condition: {
           type: "EQUALS",
@@ -664,12 +1285,120 @@ export default class ConfigurationRuleWorkspaceView {
     this.rulesModel.setProperty("/currentRule", rule);
     this.ruleNameInput?.setValue(rule.name);
     this.ruleMetaStatus?.setText(this.ruleMetadata(rule));
+    this.detailsStatus?.setText(this.ruleNavigatorStatus(rule).label);
+    this.detailsStatus?.setState(this.ruleNavigatorStatus(rule).state);
     this.expressionEditor?.setRule(rule);
     this.expressionEditor?.setRules(this.rules);
     this.designerView?.setRule(rule, true);
     this.designerView?.setDesignMode();
     this.renderRuleList();
     this.setMode("designer");
+    return true;
+  }
+
+  private editRuleMetadata(ruleId: string): void {
+    if (!this.canEdit()) return;
+    const rule = this.rules.find((item) => item.id === ruleId);
+    if (!rule) return;
+    const groups = this.businessGroups();
+    if (!groups.length) {
+      MessageToast.show(tr("cmConstraintNoBusinessGroups"));
+      return;
+    }
+    const ruleTypes = this.ruleTypeOptions();
+    new ConfigurationDialogService(() => this.rulesTree).openEditDialog(
+      tr("cmConstraintEditDialogTitle"),
+      this.ruleMetadataFields(rule.name, rule.businessGroupId, rule.ruleType, groups, ruleTypes),
+      (values) => {
+        const metadata = this.readRuleMetadata(values, groups, ruleTypes);
+        return metadata ? this.updateRuleMetadata(ruleId, metadata) : false;
+      },
+      undefined,
+      { contentWidth: "32rem", draggable: false, resizable: false }
+    );
+  }
+
+  private updateRuleMetadata(ruleId: string, metadata: RuleMetadata): boolean {
+    if (!this.canEdit()) return false;
+    const current = this.rules.find((rule) => rule.id === ruleId);
+    if (!current) return false;
+    try {
+      let updated: ConstraintRule;
+      if (this.unsavedRuleIds.has(ruleId)) {
+        updated = structuredClone(current);
+        updated.name = metadata.name;
+        updated.businessGroupId = metadata.businessGroupId;
+        if (metadata.ruleType) updated.ruleType = metadata.ruleType;
+        else delete updated.ruleType;
+        updated.modifiedAt = new Date().toISOString();
+      } else {
+        updated = this.repository.updateMetadata(this.context.id, ruleId, metadata, this.features);
+      }
+      this.rules = this.rules.map((rule) => (rule.id === ruleId ? updated : rule));
+      this.refreshCurrentRule(updated);
+      this.expressionEditor?.setRules(this.rules);
+      this.renderRuleList();
+      MessageToast.show(tr("cmConstraintMetadataUpdated"));
+      return true;
+    } catch (error) {
+      MessageToast.show(error instanceof Error ? error.message : String(error));
+      return false;
+    }
+  }
+
+  private toggleRuleEnabled(ruleId: string): void {
+    if (!this.canEdit()) return;
+    const current = this.rules.find((rule) => rule.id === ruleId);
+    if (!current) return;
+    const enabled = current.status === "Disabled";
+    try {
+      let updated: ConstraintRule;
+      if (this.unsavedRuleIds.has(ruleId)) {
+        if (enabled) {
+          const { disabledStatus, ...rule } = structuredClone(current);
+          updated = {
+            ...rule,
+            status: disabledStatus ?? "Draft",
+            modifiedAt: new Date().toISOString()
+          };
+        } else {
+          updated = {
+            ...structuredClone(current),
+            status: "Disabled",
+            disabledStatus:
+              current.status === "Disabled" ? (current.disabledStatus ?? "Draft") : current.status,
+            modifiedAt: new Date().toISOString()
+          };
+        }
+      } else {
+        updated = this.repository.setEnabled(this.context.id, ruleId, enabled, this.features);
+      }
+      this.rules = this.rules.map((rule) => (rule.id === ruleId ? updated : rule));
+      this.refreshCurrentRule(updated);
+      this.expressionEditor?.setRules(this.rules);
+      this.renderRuleList();
+      MessageToast.show(tr(enabled ? "cmConstraintRuleEnabled" : "cmConstraintRuleDisabled"));
+    } catch (error) {
+      MessageToast.show(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private refreshCurrentRule(rule: ConstraintRule): void {
+    if (this.currentRule.id !== rule.id) return;
+    this.currentRule = structuredClone(rule);
+    this.currentRuleDirty = this.unsavedRuleIds.has(rule.id);
+    this.currentRuleIsNew = this.newRuleDraftIds.has(rule.id);
+    this.blueprintNeedsLoad = true;
+    this.rulesModel.setProperty("/currentRule", this.currentRule);
+    this.ruleNameInput?.setValue(rule.name);
+    this.ruleMetaStatus?.setText(this.ruleMetadata(rule));
+    const status = this.ruleNavigatorStatus(rule);
+    this.detailsStatus?.setText(status.label);
+    this.detailsStatus?.setState(status.state);
+    this.expressionEditor?.setRule(this.currentRule);
+    this.designerView?.setRule(this.currentRule, this.currentRuleIsNew);
+    if (this.mode === "advanced" && this.advancedMode === "blueprint")
+      void this.loadBlueprintRule();
   }
 
   private stageAISuggestion(suggestion: ConstraintAISuggestion, prompt: string): boolean {
@@ -740,6 +1469,14 @@ export default class ConfigurationRuleWorkspaceView {
 
   private saveCurrentRule(): void {
     if (!this.canEdit()) return;
+    if (
+      this.currentRuleIsNew &&
+      this.currentRule.source.type === "MANUAL" &&
+      !this.businessGroups().some((group) => group.id === this.currentRule.businessGroupId)
+    ) {
+      MessageToast.show(tr("cmConstraintBusinessGroupRequired"));
+      return;
+    }
     if (!this.expressionEditor?.isExpressionValid()) {
       this.detailsStatus?.setText(tr("表达式语法无效"));
       this.detailsStatus?.setState("Error");
@@ -759,10 +1496,13 @@ export default class ConfigurationRuleWorkspaceView {
       this.currentRuleIsNew = false;
       this.ruleMetaStatus?.setText(this.ruleMetadata(saved));
       this.designerView?.setRule(saved, false);
+      const status = this.ruleNavigatorStatus(saved);
       this.detailsStatus?.setText(
-        trFormat("cmConstraintValidatedVersion", [saved.version], `已验证 · V${saved.version}`)
+        status.key === "disabled" || status.key === "conflict"
+          ? status.label
+          : trFormat("cmConstraintValidatedVersion", [saved.version], `已验证 · V${saved.version}`)
       );
-      this.detailsStatus?.setState("Success");
+      this.detailsStatus?.setState(status.key === "disabled" ? "None" : status.state);
       this.renderRuleList();
       MessageToast.show(tr("约束规则已保存到当前 Context。"));
     } catch (error) {
@@ -822,7 +1562,6 @@ export default class ConfigurationRuleWorkspaceView {
 
   private startEmptyDraft(): void {
     const rule = this.createNewRule();
-    this.newRuleDraftIds.add(rule.id);
     this.currentRule = rule;
     this.currentRuleDirty = false;
     this.currentRuleIsNew = true;
@@ -830,8 +1569,9 @@ export default class ConfigurationRuleWorkspaceView {
     this.rulesModel.setProperty("/currentRule", rule);
     this.ruleNameInput?.setValue(rule.name);
     this.ruleMetaStatus?.setText(this.ruleMetadata(rule));
-    this.detailsStatus?.setText(rule.status);
-    this.detailsStatus?.setState("Information");
+    const status = this.ruleNavigatorStatus(rule);
+    this.detailsStatus?.setText(status.label);
+    this.detailsStatus?.setState(status.state);
     this.expressionEditor?.setRules(this.rules);
     this.expressionEditor?.setRule(rule);
     this.designerView?.setRule(rule, true);
@@ -854,11 +1594,16 @@ export default class ConfigurationRuleWorkspaceView {
       const value = Array.isArray(expression.value)
         ? expression.value.map(describeValue).join(", ")
         : describeValue(expression.value);
-      const operator = tr(constraintOperatorLabels[expression.type]);
+      const operator =
+        operatorSummarySymbols[expression.type] ?? tr(constraintOperatorLabels[expression.type]);
+      const unit =
+        feature && ["Integer", "Decimal", "Range"].includes(feature.dataType) && feature.unit
+          ? ` ${feature.unit}`
+          : "";
       if (expression.type === "ALWAYS") return tr("cmConstraintAlways");
       return expression.type === "IS_UNSET"
         ? `${feature?.name ?? expression.feature} ${operator}`
-        : `${feature?.name ?? expression.feature} ${operator} ${value}`;
+        : `${feature?.name ?? expression.feature} ${operator} ${value}${unit}`;
     }
     if ("expression" in expression) {
       const negated = this.describeExpression(expression.expression);

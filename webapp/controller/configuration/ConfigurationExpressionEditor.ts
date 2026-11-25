@@ -84,16 +84,7 @@ const operatorItems: OperatorItem[] = [
 ];
 
 const actionItems: Array<{ key: ConstraintActionType; label: string }> = (
-  [
-    "REQUIRE",
-    "EXCLUDE",
-    "SET",
-    "RESTRICT",
-    "DERIVE",
-    "RECOMMEND",
-    "ADD",
-    "REMOVE"
-  ] as const
+  ["REQUIRE", "EXCLUDE", "SET", "RESTRICT", "DERIVE", "RECOMMEND", "ADD", "REMOVE"] as const
 ).map((key) => ({ key, label: constraintActionLabels[key] }));
 
 function isPredicate(expression: ConstraintExpression): expression is ConstraintPredicate {
@@ -508,7 +499,7 @@ export default class ConfigurationExpressionEditor {
       ...this.rule,
       ast: structuredClone(ast),
       expression: expression ?? formatConstraintExpression(ast),
-      status: "Draft"
+      status: this.rule.status === "Disabled" ? "Disabled" : "Draft"
     };
     this.refreshHistoryButtons();
     this.options.onRuleChange(structuredClone(this.rule));
@@ -659,40 +650,41 @@ export default class ConfigurationExpressionEditor {
       type: "Transparent",
       press: () => this.removeAction(index)
     });
-    const targetControl = action.type === "DEFAULT"
-      ? new MessageStrip({
-          text: tr("cmConstraintLegacyDefaultMigration"),
-          type: "Warning",
-          showIcon: true
-        })
-      : action.derivation
-      ? new VBox({
-          items: [
-            new Text({
-              text: `${this.options.features.find((item) => "feature" in action.target && item.code === action.target.feature)?.name ?? ("feature" in action.target ? action.target.feature : "")} · ${tr(`cmConstraintDerivation${action.derivation.kind}`)}`,
-              wrapping: true
-            }),
-            new Text({ text: tr("cmConstraintDerivedEditWysiwyg"), wrapping: true })
-          ]
-        }).addStyleClass("cmConstraintComplexAction")
-      : isPredicate(action.target)
-        ? this.buildPredicateControls(
-            action.target,
-            (target) => this.replaceActionTarget(index, target),
-            action.type
-          )
-        : new VBox({
-            width: "100%",
-            items: [
-              new Text({
-                text: formatConstraintCondition(action.target),
-                wrapping: true
-              }).addStyleClass("cmConstraintComplexActionExpression"),
-              new Text({
-                text: tr("复杂结果可在高级表达式模式中编辑。")
-              }).addStyleClass("cmConstraintExpressionHint")
-            ]
-          }).addStyleClass("cmConstraintComplexAction");
+    const targetControl =
+      action.type === "DEFAULT"
+        ? new MessageStrip({
+            text: tr("cmConstraintLegacyDefaultMigration"),
+            type: "Warning",
+            showIcon: true
+          })
+        : action.derivation
+          ? new VBox({
+              items: [
+                new Text({
+                  text: `${this.options.features.find((item) => "feature" in action.target && item.code === action.target.feature)?.name ?? ("feature" in action.target ? action.target.feature : "")} · ${tr(`cmConstraintDerivation${action.derivation.kind}`)}`,
+                  wrapping: true
+                }),
+                new Text({ text: tr("cmConstraintDerivedEditWysiwyg"), wrapping: true })
+              ]
+            }).addStyleClass("cmConstraintComplexAction")
+          : isPredicate(action.target)
+            ? this.buildPredicateControls(
+                action.target,
+                (target) => this.replaceActionTarget(index, target),
+                action.type
+              )
+            : new VBox({
+                width: "100%",
+                items: [
+                  new Text({
+                    text: formatConstraintCondition(action.target),
+                    wrapping: true
+                  }).addStyleClass("cmConstraintComplexActionExpression"),
+                  new Text({
+                    text: tr("复杂结果可在高级表达式模式中编辑。")
+                  }).addStyleClass("cmConstraintExpressionHint")
+                ]
+              }).addStyleClass("cmConstraintComplexAction");
     return new VBox({
       width: "100%",
       items: [

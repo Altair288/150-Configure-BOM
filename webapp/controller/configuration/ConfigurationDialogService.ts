@@ -15,6 +15,12 @@ type DialogHost = {
   addDependent(dependent: Control): void;
 };
 
+type EditDialogOptions = {
+  contentWidth?: string;
+  draggable?: boolean;
+  resizable?: boolean;
+};
+
 export default class ConfigurationDialogService {
   private readonly getHost: () => DialogHost | undefined;
 
@@ -26,7 +32,8 @@ export default class ConfigurationDialogService {
     name: string,
     fields: Field[],
     save: (values: Values) => boolean,
-    extra?: Control
+    extra?: Control,
+    options: EditDialogOptions = {}
   ): void {
     const getters = new Map<string, () => string | number | boolean>();
     const inputs: { field: Field; control: Input | TextArea }[] = [];
@@ -34,7 +41,7 @@ export default class ConfigurationDialogService {
     fields.forEach((field) => {
       let control: Control;
       if (field.options) {
-        const input = select(field.options, String(field.value));
+        const input = select(field.options, String(field.value), undefined, field.optionLabels);
         control = input;
         getters.set(field.key, () => input.getSelectedKey());
       } else if (typeof field.value === "boolean") {
@@ -72,9 +79,9 @@ export default class ConfigurationDialogService {
     });
     const dialog = new Dialog({
       title: name,
-      contentWidth: "46rem",
-      draggable: true,
-      resizable: true,
+      contentWidth: options.contentWidth ?? "46rem",
+      draggable: options.draggable ?? true,
+      resizable: options.resizable ?? true,
       content: [
         new SimpleForm({
           editable: true,
@@ -88,7 +95,7 @@ export default class ConfigurationDialogService {
         ...(extra ? [extra] : [])
       ],
       beginButton: new Button({
-        text: "保存",
+        text: tr("cmSave"),
         type: "Emphasized",
         press: () => {
           let valid = true;
@@ -101,7 +108,7 @@ export default class ConfigurationDialogService {
             if (invalid) valid = false;
           });
           if (!valid) {
-            MessageToast.show("请检查必填项与数字格式");
+            MessageToast.show(tr("cmFormValidationError"));
             return;
           }
           const values = Object.fromEntries([...getters].map(([key, get]) => [key, get()]));

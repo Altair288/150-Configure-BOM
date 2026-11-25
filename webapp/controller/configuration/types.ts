@@ -14,6 +14,7 @@ export type Field = {
   label: string;
   value: string | number | boolean;
   options?: string[];
+  optionLabels?: Record<string, string>;
   required?: boolean;
   multiline?: boolean;
   numeric?: boolean;
@@ -36,11 +37,7 @@ export type TreeNode = {
   children: TreeNode[];
 };
 
-export type ConfigurationSelectionRecord =
-  | FeatureGroup
-  | FeatureFamily
-  | FeatureDefinition
-  | Named;
+export type ConfigurationSelectionRecord = FeatureGroup | FeatureFamily | FeatureDefinition | Named;
 
 export type ConfigurationCommit = (
   change: (next: ConfigurationStore) => void,

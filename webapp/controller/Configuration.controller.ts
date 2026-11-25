@@ -274,9 +274,7 @@ export default class ConfigurationController extends BaseController {
             this.render();
           }
           const detail = error instanceof Error ? error.message : String(error);
-          MessageBox.error(
-            trFormat("cmConfigurationSaveFailed", [detail], `保存失败：${detail}`)
-          );
+          MessageBox.error(trFormat("cmConfigurationSaveFailed", [detail], `保存失败：${detail}`));
         });
       return true;
     } catch (error) {
@@ -386,7 +384,12 @@ export default class ConfigurationController extends BaseController {
       this.ruleWorkspaceContextId = undefined;
       this.ruleHost?.destroyItems();
     } else {
-      this.ruleWorkspaceView?.setFeatures(features);
+      this.ruleWorkspaceView?.setConfigurationData(
+        this.store,
+        context,
+        this.currentProfile(),
+        features
+      );
     }
     if (this.mode === "context") this.scopeHost?.addItem(this.buildScope());
     else if (this.mode === "features") this.featureHost?.addItem(this.buildFeatureWorkspace());

@@ -12,9 +12,10 @@ export type ConstraintActionType =
   | "RECOMMEND"
   | "ADD"
   | "REMOVE";
-export type ConstraintRuleStatus = "Draft" | "Valid" | "Invalid";
+export type ConstraintRuleStatus = "Draft" | "Valid" | "Conflict" | "Invalid" | "Disabled";
 export type ConstraintRuleSource = "MANUAL" | "BLUEPRINT" | "AI";
 export type ConstraintLiteral = string | number | boolean;
+export const UNCATEGORIZED_BUSINESS_GROUP_ID = "uncategorized";
 export type ConstraintOperator =
   | "EQUALS"
   | "NOT_EQUALS"
@@ -114,7 +115,10 @@ export interface ConstraintRule {
   code: string;
   name: string;
   description: string;
+  businessGroupId: string;
+  ruleType?: ConstraintActionType;
   status: ConstraintRuleStatus;
+  disabledStatus?: Exclude<ConstraintRuleStatus, "Disabled">;
   expression: string;
   ast: ConstraintRuleAst;
   blueprint: ConstraintBlueprintLayout;
@@ -128,7 +132,7 @@ export function hasLegacyDefaultConstraintAction(rule: Pick<ConstraintRule, "ast
   return rule.ast.actions.some((action) => action.type === "DEFAULT");
 }
 
-export interface LegacyConstraintRule extends Omit<ConstraintRule, "ast"> {
+export interface LegacyConstraintRule extends Omit<ConstraintRule, "ast" | "ruleType"> {
   ruleType?: ConstraintRuleType;
   ast: LegacyConstraintRuleAst;
 }
@@ -347,8 +351,7 @@ export function findConstraintRuleSemanticConflict(
               ? includesConditionValue
               : ["NOT_EQUALS", "NOT_IN"].includes(target.type) && !includesConditionValue
             : false;
-      if (conflicts)
-        return { code: "CONDITION_ACTION_CONFLICT", feature: feature.code };
+      if (conflicts) return { code: "CONDITION_ACTION_CONFLICT", feature: feature.code };
     }
   }
 
@@ -446,6 +449,10 @@ const actionTypes = new Set<ConstraintActionType>([
   "ADD",
   "REMOVE"
 ]);
+
+export function isConstraintActionType(value: unknown): value is ConstraintActionType {
+  return typeof value === "string" && actionTypes.has(value as ConstraintActionType);
+}
 
 const operators = new Set<ConstraintOperator>([
   "EQUALS",
@@ -1075,6 +1082,8 @@ export function createConstraintRule(input: {
   code: string;
   name: string;
   description?: string;
+  businessGroupId?: string;
+  ruleType?: ConstraintActionType;
   ast: ConstraintRuleAst;
   source?: ConstraintRule["source"];
   createdBy?: string;
@@ -1087,6 +1096,8 @@ export function createConstraintRule(input: {
     code: input.code,
     name: input.name,
     description: input.description ?? "",
+    businessGroupId: input.businessGroupId || UNCATEGORIZED_BUSINESS_GROUP_ID,
+    ...(input.ruleType ? { ruleType: input.ruleType } : {}),
     status: "Draft",
     expression: formatConstraintExpression(input.ast),
     ast: structuredClone(input.ast),
@@ -2433,8 +2444,7 @@ export function simulateConstraintActions(
         }
         if (
           Array.isArray(derived.value) &&
-          (feature.dataType !== "Multi Enumeration" ||
-            !["SET", "RECOMMEND"].includes(action.type))
+          (feature.dataType !== "Multi Enumeration" || !["SET", "RECOMMEND"].includes(action.type))
         ) {
           issue(
             rule,

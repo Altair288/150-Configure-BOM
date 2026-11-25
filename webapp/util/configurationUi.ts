@@ -452,12 +452,15 @@ export const grow = (control: Control): Control =>
 export const select = (
   options: string[],
   value: string,
-  change?: (value: string) => void
+  change?: (value: string) => void,
+  optionLabels?: Record<string, string>
 ): Select =>
   new Select({
     width: "100%",
     selectedKey: value,
-    items: options.map((option) => new Item({ key: option, text: tr(option) })),
+    items: options.map(
+      (option) => new Item({ key: option, text: optionLabels?.[option] ?? tr(option) })
+    ),
     change: (event) => change?.(event.getSource().getSelectedKey())
   });
 
