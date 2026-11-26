@@ -5,6 +5,7 @@ import Icon from "sap/ui/core/Icon";
 import JSONModel from "sap/ui/model/json/JSONModel";
 import VBox from "sap/m/VBox";
 import HBox from "sap/m/HBox";
+import FlexItemData from "sap/m/FlexItemData";
 import Button from "sap/m/Button";
 import Label from "sap/m/Label";
 import Input from "sap/m/Input";
@@ -39,12 +40,8 @@ import {
   dimensions,
   resolveDefinition
 } from "../../model/configuration";
-import type {
-  FeatureDefinition,
-  FeatureFamily,
-  FeatureGroup
-} from "../../model/configuration";
-import { button, form, grow, select, status, title, tr, txt } from "../../util/configurationUi";
+import type { FeatureDefinition, FeatureFamily, FeatureGroup } from "../../model/configuration";
+import { button, grow, select, status, title, tr, txt } from "../../util/configurationUi";
 import type { FeatureWorkspaceOptions, Field, Selection, TreeNode, Values } from "./types";
 import ConfigurationFeatureContentView from "./ConfigurationFeatureContentView";
 
@@ -203,10 +200,7 @@ export default class ConfigurationFeatureWorkspaceView {
           new HBox({
             height: "100%",
             fitContainer: true,
-            items: [
-              treePanel,
-              grow(this.editor)
-            ]
+            items: [treePanel, grow(this.editor)]
           }).addStyleClass("cmModelColumns")
         )
       ]
@@ -234,7 +228,9 @@ export default class ConfigurationFeatureWorkspaceView {
       this.options.store.families.length +
       this.options.store.references.length;
     for (let index = 0; index < count; index++) {
-      if (this.tree?.getContextByIndex(index)?.getProperty("id") === this.options.getSelection()?.id) {
+      if (
+        this.tree?.getContextByIndex(index)?.getProperty("id") === this.options.getSelection()?.id
+      ) {
         this.tree.setSelectedIndex(index);
         break;
       }
@@ -253,7 +249,8 @@ export default class ConfigurationFeatureWorkspaceView {
             (family) =>
               family.id === selection.id &&
               this.options.store.groups.some(
-                (group) => group.id === family.groupId && group.contextId === this.options.context.id
+                (group) =>
+                  group.id === family.groupId && group.contextId === this.options.context.id
               )
           )
         : contextReferences(this.options.store, this.options.context.id).some(
@@ -326,7 +323,10 @@ export default class ConfigurationFeatureWorkspaceView {
     else {
       const expanded = new Set(this.options.expandedNodeIds);
       for (let pass = 0; pass < 3; pass++) {
-        const length = (this.tree.getBinding("rows") as unknown as { getLength(): number } | undefined)?.getLength() ?? 0;
+        const length =
+          (
+            this.tree.getBinding("rows") as unknown as { getLength(): number } | undefined
+          )?.getLength() ?? 0;
         for (let index = 0; index < length; index++)
           if (expanded.has(String(this.tree.getContextByIndex(index)?.getProperty("id"))))
             this.tree.expand(index);
@@ -337,7 +337,10 @@ export default class ConfigurationFeatureWorkspaceView {
   public expandedNodeIds(): string[] {
     if (!this.tree) return [];
     const ids: string[] = [];
-    const length = (this.tree.getBinding("rows") as unknown as { getLength(): number } | undefined)?.getLength() ?? 0;
+    const length =
+      (
+        this.tree.getBinding("rows") as unknown as { getLength(): number } | undefined
+      )?.getLength() ?? 0;
     for (let index = 0; index < length; index++) {
       const context = this.tree.getContextByIndex(index);
       if (context && this.tree.isExpanded(index)) ids.push(String(context.getProperty("id")));
@@ -356,8 +359,7 @@ export default class ConfigurationFeatureWorkspaceView {
   }
 
   private selectedGroup(selection = this.options.getSelection()): FeatureGroup | undefined {
-    const id =
-      selection?.kind === "group" ? selection.id : this.selectedFamily(selection)?.groupId;
+    const id = selection?.kind === "group" ? selection.id : this.selectedFamily(selection)?.groupId;
     return this.options.store.groups.find((group) => group.id === id);
   }
 
@@ -404,7 +406,9 @@ export default class ConfigurationFeatureWorkspaceView {
     const selectedDefinition =
       selection.kind === "feature"
         ? (() => {
-            const reference = this.options.store.references.find((item) => item.id === selection.id);
+            const reference = this.options.store.references.find(
+              (item) => item.id === selection.id
+            );
             return reference ? resolveDefinition(this.options.store, reference) : undefined;
           })()
         : undefined;
@@ -413,19 +417,38 @@ export default class ConfigurationFeatureWorkspaceView {
       items.push(
         menuItem("新增同级 Group", "sap-icon://add", () => this.options.onEditGroup()),
         menuItem("新增子级 Family", "sap-icon://question-mark", () => this.options.onEditFamily()),
-        menuItem("编辑 Group 属性", "sap-icon://edit", () => this.options.onEditGroup(selectedGroup), true)
+        menuItem(
+          "编辑 Group 属性",
+          "sap-icon://edit",
+          () => this.options.onEditGroup(selectedGroup),
+          true
+        )
       );
     } else if (selection.kind === "family") {
       items.push(
         menuItem("新增同级 Family", "sap-icon://add", () => this.options.onEditFamily()),
-        menuItem("新增子级 Feature", "sap-icon://action-settings", () => this.options.onAddFeature()),
-        menuItem("编辑 Family 属性", "sap-icon://edit", () => this.options.onEditFamily(selectedFamily), true)
+        menuItem("新增子级 Feature", "sap-icon://action-settings", () =>
+          this.options.onAddFeature()
+        ),
+        menuItem(
+          "编辑 Family 属性",
+          "sap-icon://edit",
+          () => this.options.onEditFamily(selectedFamily),
+          true
+        )
       );
     } else {
       items.push(
         menuItem("新增同级 Feature", "sap-icon://add", () => this.options.onAddFeature()),
         ...(selectedDefinition
-          ? [menuItem("编辑 Feature 属性", "sap-icon://edit", () => this.options.onEditDefinition(selectedDefinition), true)]
+          ? [
+              menuItem(
+                "编辑 Feature 属性",
+                "sap-icon://edit",
+                () => this.options.onEditDefinition(selectedDefinition),
+                true
+              )
+            ]
           : [])
       );
     }
@@ -438,9 +461,11 @@ export default class ConfigurationFeatureWorkspaceView {
     const menu = new UnifiedMenu({
       items,
       itemSelect: (menuEvent: Event) => {
-        const selectedItem = (menuEvent as Event & {
-          getParameter: (name: "item") => UnifiedMenuItem | undefined;
-        }).getParameter("item");
+        const selectedItem = (
+          menuEvent as Event & {
+            getParameter: (name: "item") => UnifiedMenuItem | undefined;
+          }
+        ).getParameter("item");
         const action = selectedItem ? actions.get(selectedItem.getId()) : undefined;
         if (action) window.setTimeout(action, 0);
       }
@@ -449,14 +474,7 @@ export default class ConfigurationFeatureWorkspaceView {
     tree.addDependent(menu);
     const rootBounds = root.getBoundingClientRect();
     const offset = `${Math.round(event.clientX - rootBounds.left)} ${Math.round(event.clientY - rootBounds.top)}`;
-    menu.open(
-      false,
-      target,
-      Popup.Dock.LeftTop,
-      Popup.Dock.LeftTop,
-      root,
-      offset
-    );
+    menu.open(false, target, Popup.Dock.LeftTop, Popup.Dock.LeftTop, root, offset);
   }
 
   private renderSelected(): void {
@@ -481,22 +499,81 @@ export default class ConfigurationFeatureWorkspaceView {
     const family = this.selectedFamily(selection);
     const group = this.selectedGroup(selection);
     const record = (definition ?? (selection.kind === "family" ? family : group))!;
+    const selectedTab = this.options.editorTab === "general" ? "values" : this.options.editorTab;
+    const breadcrumbs = new Breadcrumbs({
+      links: [
+        new Link({ text: this.options.context.name }),
+        ...(group ? [new Link({ text: group.name })] : [])
+      ],
+      currentLocationText: family?.name ?? record.name
+    }).addStyleClass("cmFeatureBreadcrumbs");
+    const objectTags = new HBox({
+      alignItems: "Center",
+      wrap: "Wrap",
+      items: [
+        status(record.dimension),
+        status(
+          selection.kind === "group"
+            ? "组织分组"
+            : definition
+              ? definition.dataType
+              : "业务主题 / Family"
+        ),
+        ...(definition
+          ? [status(definition.sourceType), status(`V${definition.version}`)]
+          : family
+            ? [status(family.sourceType), status(family.active ? "Active" : "Inactive")]
+            : [])
+      ]
+    }).addStyleClass("cmObjectTags");
+    const detailHeader = new DynamicPageHeader({
+      pinnable: false,
+      content: [this.generalContent(selection, definition, family, group)]
+    });
+    const detailPage = new DynamicPage({
+      fitContent: true,
+      headerExpanded: true,
+      preserveHeaderStateOnScroll: true,
+      toggleHeaderOnTitleClick: true,
+      title: new DynamicPageTitle({
+        heading: new HBox({
+          alignItems: "Center",
+          wrap: "Wrap",
+          items: [
+            new VBox({
+              items: [
+                new Title({ text: record.name, level: "H3" }),
+                new Text({ text: record.code, wrapping: false })
+              ]
+            }).addStyleClass("cmFeatureTitleBlock"),
+            breadcrumbs
+          ]
+        }).addStyleClass("cmFeatureTitleHeading"),
+        expandedContent: [objectTags],
+        actions: [
+          button("编辑完整属性", () =>
+            selection.kind === "group"
+              ? this.options.onEditGroup(group)
+              : selection.kind === "family"
+                ? this.options.onEditFamily(family)
+                : this.options.onEditDefinition(definition!)
+          )
+        ]
+      }),
+      header: detailHeader
+    }).addStyleClass("cmFeatureDynamicPage");
+    const valuesContent = this.contentView.valuesContent(definition, family);
     const tabs = new IconTabBar({
       expandable: false,
       applyContentPadding: false,
-      selectedKey: this.options.editorTab,
-      select: (event) =>
-        this.options.onEditorTabChanged(event.getParameter("key") ?? "general"),
+      stretchContentHeight: true,
+      selectedKey: selectedTab,
+      select: (event) => this.options.onEditorTabChanged(event.getParameter("key") ?? "values"),
       items: [
-        new IconTabFilter({
-          key: "general",
-          text: tr("General"),
-          content: [this.generalContent(selection, definition, family, group)]
-        }),
         new IconTabFilter({
           key: "values",
           text: tr("Values"),
-          content: [this.contentView.valuesContent(definition, family)]
+          content: [valuesContent]
         }),
         new IconTabFilter({
           key: "usage",
@@ -521,58 +598,7 @@ export default class ConfigurationFeatureWorkspaceView {
         })
       ]
     });
-    const breadcrumbs = new Breadcrumbs({
-      links: [
-        new Link({ text: this.options.context.name }),
-        ...(group ? [new Link({ text: group.name })] : [])
-      ],
-      currentLocationText: family?.name ?? record.name
-    }).addStyleClass("cmFeatureBreadcrumbs");
-    const detailPage = new DynamicPage({
-      fitContent: false,
-      headerExpanded: true,
-      preserveHeaderStateOnScroll: true,
-      toggleHeaderOnTitleClick: false,
-      title: new DynamicPageTitle({
-        heading: new HBox({
-          alignItems: "Center",
-          wrap: "Wrap",
-          items: [
-            new VBox({
-              items: [
-                new Title({ text: record.name, level: "H3" }),
-                new Text({ text: record.code, wrapping: false })
-              ]
-            }).addStyleClass("cmFeatureTitleBlock"),
-            breadcrumbs
-          ]
-        }).addStyleClass("cmFeatureTitleHeading")
-      }),
-      header: new DynamicPageHeader({
-        pinnable: true,
-        content: [
-          new HBox({
-            wrap: "Wrap",
-            items: [
-              status(record.dimension),
-              status(
-                selection.kind === "group"
-                  ? "组织分组"
-                  : definition
-                    ? definition.dataType
-                    : "业务主题 / Family"
-              ),
-              ...(definition
-                ? [status(definition.sourceType), status(`V${definition.version}`)]
-                : family
-                  ? [status(family.sourceType), status(family.active ? "Active" : "Inactive")]
-                  : [])
-            ]
-          }).addStyleClass("cmObjectTags")
-        ]
-      }),
-      content: tabs
-    }).addStyleClass("cmFeatureDynamicPage");
+    detailPage.setContent(tabs);
     detailPage.setStickySubheaderProvider(tabs);
     this.editor.addItem(detailPage);
   }
@@ -589,7 +615,6 @@ export default class ConfigurationFeatureWorkspaceView {
     if (selection.kind === "group")
       fields.push(
         ["Dimension", group!.dimension],
-        ["Sort Order", String(group!.sort)],
         ["Purpose", "只负责组织业务问题，不参与配置取值"]
       );
     else if (definition) {
@@ -603,36 +628,42 @@ export default class ConfigurationFeatureWorkspaceView {
         ["Unit", definition.unit],
         ["Value Domain", this.domainSummary(definition)],
         ...(definition.dataType === "Multi Enumeration"
-          ? [["Selection Count", `${definition.minSelections} – ${definition.maxSelections}`] as [string, string]]
+          ? [
+              ["Selection Count", `${definition.minSelections} – ${definition.maxSelections}`] as [
+                string,
+                string
+              ]
+            ]
           : [])
       );
-    }
-    else if (family)
+    } else if (family)
       fields.push(
         ["Display Name", family.displayName],
         ["Business Question", family.businessQuestion],
         ["Dimension", family.dimension],
         ["Source", family.sourceType],
-        ["Sort Order", String(family.sort)],
         ["Active", family.active ? "Yes" : "No"]
       );
-    const items: Control[] = [
-        new Toolbar({
-          content: [
-            title(selection.kind === "family" ? "Business Question" : "Overview"),
-            new ToolbarSpacer(),
-            button("编辑完整属性", () =>
-              selection.kind === "group"
-                ? this.options.onEditGroup(group)
-                : selection.kind === "family"
-                  ? this.options.onEditFamily(family)
-                  : this.options.onEditDefinition(definition!)
-            )
-          ]
-        }),
-        form(fields)
-      ];
-    return new VBox({ items });
+    return new HBox({
+      width: "100%",
+      wrap: "Wrap",
+      alignItems: "Start",
+      items: fields.map(([label, value]) => {
+        const valueControl = typeof value === "string" ? txt(value || "—") : value;
+        return new HBox({
+          alignItems: "Start",
+          items: [new Label({ text: tr(label) }), grow(valueControl)]
+        })
+          .setLayoutData(
+            new FlexItemData({
+              growFactor: 0,
+              shrinkFactor: 1,
+              baseSize: "calc(50% - 0.375rem)"
+            })
+          )
+          .addStyleClass("cmFeatureGeneralField");
+      })
+    }).addStyleClass("cmFeatureGeneralContent");
   }
 
   private domainSummary(definition: FeatureDefinition): string {
@@ -665,13 +696,17 @@ export default class ConfigurationFeatureWorkspaceView {
     if (definition) {
       fields.push(
         { key: "dataType", label: "Data Type", value: definition.dataType, options: dataTypes },
-        { key: "sourceType", label: "Source", value: definition.sourceType, options: ["Local", "Enterprise Library"] },
+        {
+          key: "sourceType",
+          label: "Source",
+          value: definition.sourceType,
+          options: ["Local", "Enterprise Library"]
+        },
         { key: "active", label: "Active", value: definition.active },
         { key: "mandatory", label: "Mandatory", value: definition.mandatory },
         { key: "unit", label: "Unit", value: definition.unit }
       );
-    }
-    else if (selection.kind === "family" && family)
+    } else if (selection.kind === "family" && family)
       fields.push(
         {
           key: "businessQuestion",
@@ -707,10 +742,17 @@ export default class ConfigurationFeatureWorkspaceView {
       else {
         const input = field.multiline
           ? new TextArea({ value: String(field.value), width: "100%", rows: 3, editable: !locked })
-          : new Input({ value: String(field.value), width: "100%", type: field.numeric ? "Number" : "Text", editable: !locked });
+          : new Input({
+              value: String(field.value),
+              width: "100%",
+              type: field.numeric ? "Number" : "Text",
+              editable: !locked
+            });
         input.attachEvent("liveChange", () => {
           draft[field.key] = input.getValue();
-          input.setValueState(field.required && !String(draft[field.key]).trim() ? "Error" : "None");
+          input.setValueState(
+            field.required && !String(draft[field.key]).trim() ? "Error" : "None"
+          );
         });
         controls.push(input);
         inputs.push({ field, input });
@@ -720,7 +762,11 @@ export default class ConfigurationFeatureWorkspaceView {
       (controls[index] as Label).setLabelFor(controls[index + 1]);
     this.inspector.addItem(
       new Toolbar({
-        content: [title("Properties"), new ToolbarSpacer(), status(locked ? "Read Only" : "Editable")]
+        content: [
+          title("Properties"),
+          new ToolbarSpacer(),
+          status(locked ? "Read Only" : "Editable")
+        ]
       })
     );
     const box = new VBox({ items: controls }).addStyleClass("cmInspectorForm");
@@ -735,7 +781,9 @@ export default class ConfigurationFeatureWorkspaceView {
           showIcon: true
         })
       );
-    this.inspector.addItem(grow(new ScrollContainer({ height: "100%", vertical: true, content: [box] })));
+    this.inspector.addItem(
+      grow(new ScrollContainer({ height: "100%", vertical: true, content: [box] }))
+    );
     this.inspector.addItem(
       new Toolbar({
         content: [
@@ -795,7 +843,12 @@ export default class ConfigurationFeatureWorkspaceView {
     return [
       { key: "name", label: "Name / 名称", value: record.name, required: true },
       { key: "code", label: "Code / 编码", value: record.code, required: true },
-      { key: "description", label: "Description / 描述", value: record.description, multiline: true }
+      {
+        key: "description",
+        label: "Description / 描述",
+        value: record.description,
+        multiline: true
+      }
     ];
   }
 }

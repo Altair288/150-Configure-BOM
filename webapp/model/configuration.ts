@@ -97,6 +97,15 @@ export interface ValueDomain {
   maximumDate?: string;
   referenceTarget?: string;
 }
+export function normalizeNumericValueDomain(domain: ValueDomain, dataType: DataType): ValueDomain {
+  if (
+    (dataType === "Integer" || dataType === "Decimal") &&
+    domain.minimum === 0 &&
+    domain.maximum === 0
+  )
+    return { ...domain, minimum: undefined, maximum: undefined };
+  return domain;
+}
 export interface FeatureDefinition extends Named {
   version: number;
   sourceType: "Local" | "Enterprise Library";

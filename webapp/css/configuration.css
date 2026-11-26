@@ -603,6 +603,9 @@
   padding-top: 0.35rem;
   padding-bottom: 0.35rem;
 }
+.cmFeatureDynamicPage .sapFDynamicPageTitleMainNoContent .sapFDynamicPageTitleMainContent {
+  display: none;
+}
 .cmFeatureDynamicPage .sapFDynamicPageTitleMainHeading .sapMTitle {
   font-size: 1.125rem;
   line-height: 1.35rem;
@@ -627,6 +630,21 @@
 .cmFeatureDynamicPage .sapFDynamicPageHeaderContent {
   padding: 0.25rem 1rem;
 }
+.cmFeatureDynamicPage .cmFeatureGeneralContent {
+  min-width: 0;
+  gap: 0.5rem 0.75rem;
+}
+.cmFeatureDynamicPage .cmFeatureGeneralField {
+  min-width: 0;
+  gap: 0.4rem;
+}
+.cmFeatureDynamicPage .cmFeatureGeneralField .sapMLabel {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.cmFeatureDynamicPage .cmFeatureGeneralField .sapMText {
+  min-width: 0;
+}
 .cmFeatureDynamicPage .cmObjectTags {
   gap: 0.35rem;
   padding: 0;
@@ -634,11 +652,33 @@
 .cmFeatureDynamicPage .cmObjectTags .sapMObjStatusText {
   font-size: 0.6875rem;
 }
+@media (max-width: 50rem) {
+  .cmFeatureDynamicPage .cmFeatureGeneralContent > .sapMFlexItem {
+    flex-basis: 100% !important;
+  }
+}
 .cmFeatureDynamicPage .sapMITBHead {
   margin-left: 0.75rem;
 }
 .cmFeatureDynamicPage .sapMITBContent {
   border-bottom: 0;
+}
+.cmFeatureValueObjectPage,
+.cmFeatureValueBlock {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+.cmFeatureValueBlock > .sapMFlexItem {
+  min-width: 0;
+}
+.cmFeatureValueDomain {
+  min-width: 0;
+  overflow-x: auto;
+}
+.cmFeatureValueBlock .sapMListTblCnt,
+.cmFeatureValueBlock .sapMListTbl {
+  width: 100%;
 }
 .cmObjectTags {
   gap: 1rem;

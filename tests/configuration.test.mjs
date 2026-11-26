@@ -5,6 +5,7 @@ import {
   validateStore,
   validateDefinition,
   validateValue,
+  normalizeNumericValueDomain,
   resolveDefinition,
   publishDefinition,
   copyContext,
@@ -274,6 +275,24 @@ test("numeric domain checks bounds, integer values, ranges and step without floa
   assert.ok(validateValue(range, "~").length);
   battery.domain = { values: [], minimum: 0, maximum: 1, step: 0.1 };
   assert.deepEqual(validateValue(battery, 0.3), []);
+});
+
+test("integer and decimal domains treat zero-to-zero as an unrestricted range", () => {
+  const domain = { values: [], minimum: 0, maximum: 0, step: 1 };
+  const integerDomain = normalizeNumericValueDomain(domain, "Integer");
+  const decimalDomain = normalizeNumericValueDomain(domain, "Decimal");
+
+  assert.equal(integerDomain.minimum, undefined);
+  assert.equal(integerDomain.maximum, undefined);
+  assert.equal(decimalDomain.minimum, undefined);
+  assert.equal(decimalDomain.maximum, undefined);
+  assert.equal(integerDomain.step, 1);
+  assert.deepEqual(domain, { values: [], minimum: 0, maximum: 0, step: 1 });
+  assert.deepEqual(
+    normalizeNumericValueDomain({ values: [], minimum: 0, maximum: 10 }, "Decimal"),
+    { values: [], minimum: 0, maximum: 10 }
+  );
+  assert.deepEqual(normalizeNumericValueDomain(domain, "Range"), domain);
 });
 
 test("enum defaults, inactive values, date boundaries and string patterns are validated", () => {

@@ -10,6 +10,9 @@ import Table from "sap/m/Table";
 import Toolbar from "sap/m/OverflowToolbar";
 import ToolbarSpacer from "sap/m/ToolbarSpacer";
 import VBox from "sap/m/VBox";
+import ObjectPageLayout from "sap/uxap/ObjectPageLayout";
+import ObjectPageSection from "sap/uxap/ObjectPageSection";
+import ObjectPageSubSection from "sap/uxap/ObjectPageSubSection";
 import {
   contextReferences,
   definitionUsage,
@@ -54,30 +57,47 @@ export default class ConfigurationFeatureContentView {
         text: "分组不定义取值。请在 Family 下添加 Feature。",
         showIcon: true
       });
-    return new VBox({
-      items: definitions.map(
+    const objectPage = new ObjectPageLayout({
+      height: "100%",
+      showAnchorBar: false,
+      showHeaderContent: false,
+      sections: definitions.map(
         (item) =>
-          new VBox({
-            items: [
-              new Toolbar({
-                content: [
-                  title(item.name),
-                  status(item.dataType),
-                  new ToolbarSpacer(),
-                  button("编辑值域", () => this.options.onEditDomain(item))
+          new ObjectPageSection({
+            title: item.name,
+            titleUppercase: false,
+            subSections: [
+              new ObjectPageSubSection({
+                title: item.name,
+                titleUppercase: false,
+                blocks: [
+                  new VBox({
+                    width: "100%",
+                    items: [
+                      new Toolbar({
+                        content: [
+                          status(item.dataType),
+                          new ToolbarSpacer(),
+                          button("编辑值域", () => this.options.onEditDomain(item))
+                        ]
+                      }),
+                      this.domainDisplay(item)
+                    ]
+                  }).addStyleClass("cmFeatureValueBlock")
                 ]
-              }),
-              this.domainDisplay(item)
+              })
             ]
           })
       )
-    });
+    }).addStyleClass("cmFeatureValueObjectPage");
+    return objectPage;
   }
 
   public domainDisplay(definition: FeatureDefinition): Control {
     const domain = definition.domain ?? { values: [] };
     if (["Enumeration", "Multi Enumeration", "Reference"].includes(definition.dataType)) {
       return new VBox({
+        width: "100%",
         items: [
           ...(definition.dataType === "Multi Enumeration"
             ? [
@@ -89,7 +109,7 @@ export default class ConfigurationFeatureContentView {
             : []),
           this.valueTable(domain.values)
         ]
-      });
+      }).addStyleClass("cmFeatureValueDomain");
     }
     const pairs: [string, string][] = [
       ["Data Type", definition.dataType],

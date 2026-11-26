@@ -55,6 +55,7 @@ import {
   contextReferences,
   copyContext,
   publishDefinition,
+  normalizeNumericValueDomain,
   normalizeFeatureModelStore
 } from "../model/configuration";
 import type {
@@ -110,7 +111,7 @@ export default class ConfigurationController extends BaseController {
   private dimensionFilter = "All Dimensions";
   private mainLayout?: FlexibleColumnLayout;
   private librarySearch = "";
-  private editorTab = "general";
+  private editorTab = "values";
   private profileOpen = false;
   private profileFullscreen = false;
   private profileFullscreenButton?: Button;
@@ -1093,7 +1094,7 @@ export default class ConfigurationController extends BaseController {
       },
       onSelection: (selection) => {
         this.selection = selection;
-        this.editorTab = "general";
+        this.editorTab = "values";
       },
       onEditGroup: (group) => this.editGroup(group),
       onEditFamily: (family) => this.editFamily(family),
@@ -1496,9 +1497,10 @@ export default class ConfigurationController extends BaseController {
       MessageBox.information("公共值域请在企业特征库修改。已有引用保留当前版本。");
       return;
     }
-    const draft = { ...structuredClone(d), domain: d.domain ?? { values: [] } };
+    const draft = structuredClone(d);
+    draft.domain ??= { values: [] };
     const dataType = d.dataType ?? "Enumeration";
-    const domain = d.domain ?? { values: [] };
+    const domain = draft.domain;
     if (["Enumeration", "Multi Enumeration", "Reference"].includes(dataType)) {
       let selected = -1;
       const table = new Table({
@@ -1655,14 +1657,27 @@ export default class ConfigurationController extends BaseController {
       MessageBox.information("Boolean 类型固定提供 Yes / No，无需维护额外值域。");
       return;
     }
-    this.editDialog(`${d.name} · Value Domain`, fields, (v) => {
-      for (const key of ["minimum", "maximum", "step", "maxLength"] as const)
-        if (key in v) draft.domain[key] = String(v[key]).trim() === "" ? undefined : Number(v[key]);
-      for (const key of ["pattern", "minimumDate", "maximumDate"] as const)
-        if (key in v) draft.domain[key] = String(v[key]);
-      if ("unit" in v) draft.unit = String(v.unit);
-      return this.saveDefinition(draft);
-    });
+    this.editDialog(
+      `${d.name} · Value Domain`,
+      fields,
+      (v) => {
+        for (const key of ["minimum", "maximum", "step", "maxLength"] as const)
+          if (key in v)
+            draft.domain[key] = String(v[key]).trim() === "" ? undefined : Number(v[key]);
+        for (const key of ["pattern", "minimumDate", "maximumDate"] as const)
+          if (key in v) draft.domain[key] = String(v[key]);
+        if ("unit" in v) draft.unit = String(v.unit);
+        draft.domain = normalizeNumericValueDomain(draft.domain, dataType);
+        return this.saveDefinition(draft);
+      },
+      ["Integer", "Decimal"].includes(dataType)
+        ? new MessageStrip({
+            text: tr("cmFeatureNumericRangeHelp"),
+            type: "Information",
+            showIcon: true
+          })
+        : undefined
+    );
   }
   private reuseFeature(): void {
     if (!this.canEdit()) return;
